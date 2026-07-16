@@ -1,0 +1,164 @@
+/* ——— KUROGANE : habillage de l'interface ——— */
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
+  overflow: hidden;
+  background: #151a2c;
+  color: #f0e8d8;
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  touch-action: none; /* on gère nous-mêmes les swipes */
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+#game {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+/* ——— HUD : score + sort équipé ——— */
+#hud {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  display: flex;
+  justify-content: space-between;
+  padding: max(14px, env(safe-area-inset-top)) 18px 0;
+  font-size: 1.25rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-shadow: 0 2px 6px rgba(0, 0, 0, 0.7);
+  pointer-events: none;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ——— Barre de progression de la course ——— */
+#progressbar {
+  position: fixed;
+  top: max(58px, calc(env(safe-area-inset-top) + 44px));
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(46%, 340px);
+  height: 7px;
+  border-radius: 100px;
+  background: rgba(61, 69, 96, 0.55);
+  border: 1px solid #3d4560;
+  overflow: hidden;
+}
+#progressfill {
+  height: 100%;
+  width: 0%;
+  background: linear-gradient(90deg, #e24b3a, #d6ac5a);
+  border-radius: 100px;
+  transition: width 0.2s linear;
+}
+
+/* ——— Compte à rebours 3, 2, 1, GO ! ——— */
+#count {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  font-size: clamp(4rem, 18vw, 8rem);
+  font-weight: 800;
+  color: #d6ac5a;
+  text-shadow: 0 4px 30px rgba(214, 172, 90, 0.5);
+  pointer-events: none;
+  opacity: 0;
+}
+#count.show {
+  opacity: 1;
+}
+
+/* ——— Flash rouge quand on se prend un obstacle ——— */
+#flash {
+  position: fixed;
+  inset: 0;
+  background: radial-gradient(ellipse at center, transparent 40%, rgba(226, 75, 58, 0.55));
+  opacity: 0;
+  transition: opacity 0.4s;
+  pointer-events: none;
+}
+#flash.show {
+  opacity: 1;
+  transition: opacity 0.05s;
+}
+
+/* ——— Petits messages temporaires ——— */
+#toast {
+  position: fixed;
+  left: 50%;
+  bottom: 18%;
+  transform: translateX(-50%);
+  background: rgba(21, 26, 44, 0.85);
+  border: 1px solid #3d4560;
+  border-radius: 100px;
+  padding: 8px 20px;
+  font-size: 0.95rem;
+  opacity: 0;
+  transition: opacity 0.25s;
+  pointer-events: none;
+  white-space: nowrap;
+}
+#toast.show {
+  opacity: 1;
+}
+
+/* ——— Menu / Game over ——— */
+#overlay {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  text-align: center;
+  padding: 24px;
+  background: rgba(13, 16, 28, 0.82);
+  backdrop-filter: blur(5px);
+}
+#overlay.hidden {
+  display: none;
+}
+#overlay .jp {
+  font-family: "Yu Mincho", "Hiragino Mincho ProN", serif;
+  font-size: 3.4rem;
+  color: #e24b3a;
+  line-height: 1;
+}
+#overlay h1 {
+  font-size: 2rem;
+  letter-spacing: 0.35em;
+  margin-right: -0.35em; /* compense la dernière lettre */
+}
+#overlay p {
+  opacity: 0.85;
+  max-width: 34ch;
+  line-height: 1.6;
+}
+#overlay button {
+  margin-top: 14px;
+  font-size: 1.15rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  padding: 14px 46px;
+  border: none;
+  border-radius: 10px;
+  background: #e24b3a;
+  color: #fff;
+  cursor: pointer;
+  box-shadow: 0 6px 22px rgba(226, 75, 58, 0.35);
+}
+#overlay button:active {
+  transform: scale(0.96);
+}
