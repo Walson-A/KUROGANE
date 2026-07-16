@@ -21,12 +21,20 @@ export interface NetCallbacks {
 }
 
 /**
+ * L'adresse du serveur de jeu EN PRODUCTION (Railway).
+ * ⚠️ À remplir après la mise en ligne du serveur — ex : 'wss://kurogane.up.railway.app'
+ */
+const PROD_SERVER_URL = ''
+
+/**
  * L'adresse du serveur de jeu :
  * - en local / sur le wifi : même machine que le site, port 2567
- * - en production : l'adresse donnée à la mise en ligne (variable VITE_SERVER_URL)
+ * - en production (site en https) : l'adresse Railway ci-dessus
+ * - la variable VITE_SERVER_URL, si définie, gagne toujours
  */
 const WS_URL: string =
-  import.meta.env.VITE_SERVER_URL ?? `ws://${location.hostname}:2567`
+  import.meta.env.VITE_SERVER_URL ??
+  (location.protocol === 'https:' ? PROD_SERVER_URL : `ws://${location.hostname}:2567`)
 
 /**
  * La connexion au serveur Colyseus.
