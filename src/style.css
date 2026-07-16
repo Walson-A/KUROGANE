@@ -61,6 +61,22 @@ body {
   border-radius: 100px;
   transition: width 0.2s linear;
 }
+/* La position de l'adversaire sur la barre */
+#oppmark {
+  position: absolute;
+  top: -4px;
+  left: 0%;
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  background: #2e2333;
+  border: 2px solid #d6ac5a;
+  transform: translateX(-50%);
+  transition: left 0.2s linear;
+}
+#oppmark.hidden {
+  display: none;
+}
 
 /* ——— Compte à rebours 3, 2, 1, GO ! ——— */
 #count {
@@ -146,18 +162,33 @@ body {
   max-width: 34ch;
   line-height: 1.6;
 }
-#overlay button {
+#btns {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
   margin-top: 14px;
-  font-size: 1.15rem;
+}
+#btns.hidden {
+  display: none;
+}
+#overlay button {
+  font-size: 1.1rem;
   font-weight: 700;
-  letter-spacing: 0.12em;
-  padding: 14px 46px;
+  letter-spacing: 0.1em;
+  padding: 14px 40px;
   border: none;
   border-radius: 10px;
   background: #e24b3a;
   color: #fff;
   cursor: pointer;
   box-shadow: 0 6px 22px rgba(226, 75, 58, 0.35);
+}
+#overlay button.secondary {
+  background: transparent;
+  border: 2px solid #3d4560;
+  box-shadow: none;
+  color: #f0e8d8;
+  opacity: 0.9;
 }
 #overlay button:active {
   transform: scale(0.96);

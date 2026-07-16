@@ -14,7 +14,10 @@
       <div id="score">0.0 s</div>
       <div id="spell">📜 —</div>
     </div>
-    <div id="progressbar"><div id="progressfill"></div></div>
+    <div id="progressbar">
+      <div id="progressfill"></div>
+      <div id="oppmark" class="hidden"></div>
+    </div>
     <div id="count"></div>
     <div id="flash"></div>
     <div id="toast"></div>
@@ -28,7 +31,10 @@
         Swipe ⬅️ ➡️ ⬆️ ⬇️ pour esquiver, double-tap : sort.<br />
         Clavier : flèches ou ZQSD.
       </p>
-      <button id="btn">DÉPART</button>
+      <div id="btns">
+        <button id="btnOnline">⚔️ COURSE EN LIGNE</button>
+        <button id="btnSolo" class="secondary">ENTRAÎNEMENT SOLO</button>
+      </div>
     </div>
 
     <script type="module" src="/src/main.ts"></script>

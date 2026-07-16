@@ -1,0 +1,21 @@
+{
+  "name": "kurogane-server",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Serveur de course multijoueur de KUROGANE (Colyseus)",
+  "main": "dist/index.js",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js"
+  },
+  "dependencies": {
+    "@colyseus/schema": "^4.0.27",
+    "colyseus": "^0.17.10"
+  },
+  "devDependencies": {
+    "@types/node": "^26.1.1",
+    "tsx": "^4.23.1",
+    "typescript": "^7.0.2"
+  }
+}

@@ -4,7 +4,7 @@ import { LANES } from './player'
 /** Les 3 familles d'obstacles : comment les franchir */
 type Kind = 'saut' | 'glissade' | 'mur'
 
-const SPAWN_Z = -85 // les obstacles naissent loin devant (cachés par la brume)
+const LOOKAHEAD = 85 // les obstacles apparaissent 85 m devant (cachés par la brume)
 const DESPAWN_Z = 8 // et disparaissent derrière la caméra
 
 interface Obstacle {
@@ -13,9 +13,31 @@ interface Obstacle {
   active: boolean
 }
 
+/** Un obstacle prévu sur la piste : à quelle distance, quelle ligne, quel type */
+interface PlannedObstacle {
+  d: number
+  lane: number
+  kind: Kind
+}
+
+/**
+ * Générateur de nombres pseudo-aléatoires AVEC GRAINE (algorithme mulberry32).
+ * Même graine → même suite de nombres → même piste pour les deux joueurs.
+ * C'est LA clé du multijoueur équitable !
+ */
+export function mulberry32(seed: number) {
+  return function () {
+    seed |= 0
+    seed = (seed + 0x6d2b79f5) | 0
+    let t = Math.imul(seed ^ (seed >>> 15), 1 | seed)
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296
+  }
+}
+
 /**
  * La piste : le sol, les pointillés qui défilent (sensation de vitesse),
- * les torii décoratifs, et surtout les obstacles.
+ * les torii décoratifs, la ligne d'arrivée et surtout les obstacles.
  */
 export class Track {
   private scene: THREE.Scene
@@ -23,7 +45,9 @@ export class Track {
   private stripes: THREE.Mesh[] = []
   private toriis: THREE.Group[] = []
   private finish: THREE.Group // la ligne d'arrivée : le torii sacré
-  private gap = 15 // distance avant le prochain obstacle
+  private plan: PlannedObstacle[] = [] // tous les obstacles de la course, décidés à l'avance
+  private planIdx = 0 // le prochain obstacle à faire apparaître
+  private courseLength = 0
 
   constructor(scene: THREE.Scene) {
     this.scene = scene
@@ -63,24 +87,27 @@ export class Track {
     scene.add(this.finish)
   }
 
-  /** Prépare une nouvelle course de `length` mètres */
-  reset(length: number) {
+  /**
+   * Prépare une nouvelle course de `length` mètres à partir d'une graine.
+   * En multi, la graine vient du serveur : les deux joueurs ont LA MÊME piste.
+   */
+  reset(length: number, seed: number) {
     for (const o of this.obstacles) {
       o.active = false
       o.mesh.visible = false
     }
-    this.gap = 15
+    this.courseLength = length
     this.finish.position.z = -length
+    this.plan = buildPlan(length, seed)
+    this.planIdx = 0
   }
 
   /**
-   * Fait défiler le décor. `remaining` = mètres restants avant l'arrivée
-   * (Infinity au menu : pas de ligne d'arrivée à gérer).
+   * Fait défiler le décor. `distance` = mètres parcourus par le joueur
+   * (omise au menu : décor seul, pas d'obstacles ni d'arrivée).
    */
-  update(dt: number, speed: number, remaining = Infinity) {
+  update(dt: number, speed: number, distance = -1) {
     const dz = speed * dt // tout le décor avance de dz vers le joueur
-
-    if (remaining !== Infinity) this.finish.position.z += dz
 
     for (const s of this.stripes) {
       s.position.z += dz
@@ -101,28 +128,24 @@ export class Track {
       }
     }
 
-    // Fait naître les obstacles à intervalle régulier —
-    // mais plus aucun dans les 60 derniers mètres : sprint final dégagé !
-    this.gap -= dz
-    if (this.gap <= 0 && remaining > 60 + -SPAWN_Z) {
-      this.spawnRow()
-      this.gap = 10 + Math.random() * 7
+    if (distance >= 0) {
+      // La ligne d'arrivée est TOUJOURS placée d'après la distance parcourue :
+      // impossible qu'elle se désynchronise.
+      this.finish.position.z = -(this.courseLength - distance)
+
+      // Fait apparaître les obstacles prévus qui entrent dans notre champ de vision
+      while (
+        this.planIdx < this.plan.length &&
+        this.plan[this.planIdx].d <= distance + LOOKAHEAD
+      ) {
+        const p = this.plan[this.planIdx]
+        this.spawn(p.kind, p.lane, -(p.d - distance))
+        this.planIdx++
+      }
     }
   }
 
-  /** Une "rangée" = 1 ou 2 obstacles sur des lignes différentes (jamais 3 : toujours un passage !) */
-  private spawnRow() {
-    const kinds: Kind[] = ['saut', 'glissade', 'mur']
-    const lanes = [0, 1, 2].sort(() => Math.random() - 0.5)
-    const count = Math.random() < 0.6 ? 1 : 2
-
-    for (let i = 0; i < count; i++) {
-      const kind = kinds[Math.floor(Math.random() * kinds.length)]
-      this.spawn(kind, lanes[i])
-    }
-  }
-
-  private spawn(kind: Kind, lane: number) {
+  private spawn(kind: Kind, lane: number, z: number) {
     // On réutilise un obstacle éteint du même type si possible (recyclage)
     let o = this.obstacles.find((o) => !o.active && o.kind === kind)
     if (!o) {
@@ -131,7 +154,7 @@ export class Track {
       this.scene.add(o.mesh)
     }
     o.mesh.position.x = LANES[lane]
-    o.mesh.position.z = SPAWN_Z
+    o.mesh.position.z = z
     o.mesh.visible = true
     o.active = true
   }
@@ -148,6 +171,28 @@ export class Track {
     }
     return false
   }
+}
+
+/**
+ * Décide de TOUS les obstacles de la course à l'avance, à partir de la graine.
+ * 1 ou 2 obstacles par rangée, jamais 3 : il y a toujours un passage !
+ * Les 60 derniers mètres sont dégagés : sprint final.
+ */
+function buildPlan(length: number, seed: number): PlannedObstacle[] {
+  const rng = mulberry32(seed)
+  const kinds: Kind[] = ['saut', 'glissade', 'mur']
+  const plan: PlannedObstacle[] = []
+
+  let d = 45 // premiers mètres tranquilles pour se chauffer
+  while (d < length - 60) {
+    const lanes = [0, 1, 2].sort(() => rng() - 0.5)
+    const count = rng() < 0.6 ? 1 : 2
+    for (let i = 0; i < count; i++) {
+      plan.push({ d, lane: lanes[i], kind: kinds[Math.floor(rng() * kinds.length)] })
+    }
+    d += 10 + rng() * 7
+  }
+  return plan
 }
 
 /** Fabrique le visuel d'un obstacle selon son type */

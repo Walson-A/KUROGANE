@@ -49,6 +49,15 @@ export class Player {
     return this.mesh.position.y <= 0.001
   }
 
+  /** Infos qu'on envoie au serveur pour que l'adversaire nous voie */
+  get currentLane() {
+    return this.lane
+  }
+
+  get isSliding() {
+    return this.sliding > 0
+  }
+
   moveLeft() {
     this.lane = Math.max(0, this.lane - 1)
   }

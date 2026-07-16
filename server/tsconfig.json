@@ -1,0 +1,18 @@
+{
+  "compilerOptions": {
+    "target": "ES2021",
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+    "outDir": "dist",
+    "rootDir": "src",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+
+    // Nécessaire pour les décorateurs @type() de Colyseus
+    "experimentalDecorators": true,
+    "useDefineForClassFields": false
+  },
+  "include": ["src"]
+}
