@@ -89,26 +89,87 @@ jamais la position brute reçue. Elle seule est honnête.
 - **Le temps de chaque image** : la simulation locale est en `dt` variable ;
   seul le résumé 20 Hz part sur le réseau.
 
-## Les limites connues (par ordre d'importance)
+## L'état de l'art — recherche du 17/07/2026
 
-1. **Confiance au client** : le serveur croit le `distance` et le `finished`
-   qu'on lui envoie. Un tricheur peut mentir. Parade : le serveur connaît la
-   graine ET les règles → il pourrait valider que le temps annoncé est
-   physiquement possible (vitesse max × durée), voire simuler la course.
-   Acceptable pour un jeu entre cousins, à durcir si le jeu devient public.
-2. **Événements fondus dans le 20 Hz** : un changement de ligne part avec le
-   prochain envoi (jusqu'à 50 ms d'attente). Envoyer les actions (saut,
-   changement de ligne, trébuchement) **immédiatement en événements** rendrait
-   les esquives du rival plus nettes, et permettrait de les rejouer exactement.
-3. **Horloges non synchronisées** : on date les messages à leur *arrivée*,
-   pas à leur *envoi*. Une synchro d'horloge (offset serveur estimé via le
-   ping) daterait précisément chaque position → extrapolation encore plus juste,
-   moins sensible à la gigue.
-4. **WebSocket = TCP** : une perte de paquet bloque brièvement tout le flux
-   (head-of-line blocking). Les alternatives type WebTransport/UDP ne valent
-   le coût qu'à haut niveau de jeu.
-5. **Une seule région serveur** : la latence plancher, c'est la géographie.
-   Deux joueurs en France sur un serveur européen ≈ 20-40 ms : très bien.
+*Ce que font les vrais jeux, croisé avec notre situation. Sources principales :
+la série [Fast-Paced Multiplayer de Gabriel Gambetta](https://www.gabrielgambetta.com/client-server-game-architecture.html)
+(LA référence du domaine), [Gaffer On Games](https://gafferongames.com/post/snapshot_interpolation/),
+la [doc Colyseus](https://docs.colyseus.io/state), et
+[l'étude « Hiding latency » du jeu de course mobile Razor](https://www.decarpentier.nl/hiding-latency).*
+
+### Ce que la recherche VALIDE dans notre netcode ✅
+
+- **Contrôles 100 % locaux** : nos inputs ne passent jamais par le réseau →
+  0 ms de latence ressentie. C'est pour ça qu'on n'a pas besoin de la
+  « client-side prediction + réconciliation » de Gambetta : elle sert aux jeux
+  où le serveur simule TON perso. Chez nous, par design, il ne le fait pas.
+- **Extrapolation plutôt qu'interpolation tamponnée** : le buffer
+  d'interpolation ([Gaffer](https://gafferongames.com/post/snapshot_interpolation/),
+  Valve) affiche l'adversaire *en retard mais exact* — parfait pour un shooter,
+  faux pour une course où « qui est devant ? » EST le jeu. L'étude Razor
+  utilise du dead reckoning sophistiqué (3 simulations mélangées) parce que
+  des *voitures tournent* ; notre coureur avance en 1D à vitesse quasi
+  constante : le cas idéal de l'extrapolation simple. Bon choix confirmé.
+- **Payload minuscule** : la quantization/compression que font les gros jeux
+  est déjà couverte par les patchs binaires delta de
+  [@colyseus/schema](https://github.com/colyseus/schema). Rien à gagner ici.
+
+### Les optimisations restantes, priorisées
+
+| # | Optimisation | Gain | Effort | Verdict |
+|---|---|---|---|---|
+| 1 | **Actions en événements instantanés** | Esquives du rival nettes (−50 à −80 ms) | S | ✅ à faire |
+| 2 | **Reconnexion mobile** | Écran verrouillé ≠ défaite | M | ✅ à faire |
+| 3 | **Synchro d'horloge** (NTP-style) | Extrapolation moins sensible à la gigue | S | 👍 si motivés |
+| 4 | **Lag compensation** (Valve) | Nécessaire quand les sorts viseront l'autre | M | 📜 avec les sorts |
+| 5 | Validation serveur (anti-triche) | Classements fiables | M | si jeu public |
+| 6 | WebTransport (datagrammes) | Moins de blocage sur réseaux avec pertes | L | plus tard |
+
+**1. Actions en événements instantanés.** La
+[doc Colyseus](https://docs.colyseus.io/state) est claire : l'état est
+diffusé *au rythme des patchs* (33 ms chez nous), mais **les messages
+partent immédiatement**. Un saut/changement de ligne/trébuchement envoyé en
+message `action` arrive donc ~50 ms plus tôt que fondu dans le flux 20 Hz —
+et le trébuchement en événement permettrait enfin de jouer la vraie anim
+chez l'autre (aujourd'hui on voit juste sa vitesse chuter).
+
+**2. Reconnexion mobile — la priorité que la recherche a révélée.** Sur
+téléphone, verrouiller l'écran ou passer du wifi à la 4G **coupe le
+WebSocket** → aujourd'hui : défaite par forfait immédiate. Colyseus 0.17 a
+[tout ce qu'il faut](https://docs.colyseus.io/room/reconnection) :
+`onDrop()` (déconnexion anormale) → `allowReconnection(client, délai)` garde
+la place → `onReconnect()` si le joueur revient. Règle d'or de la doc : ne
+nettoyer les données du joueur que dans `onLeave()`, jamais dans `onDrop()`.
+Pendant l'absence, notre extrapolation continue déjà d'animer le fantôme ~0,5 s,
+puis il freine — comportement idéal en attendant le retour.
+
+**3. Synchro d'horloge.** Formule
+[NTP simplifiée](https://daposto.medium.com/game-networking-2-time-tick-clock-synchronisation-9a0e76101fe5) :
+le client envoie `t0`, le serveur répond avec son heure `ts`, le client reçoit
+à `t1` → `offset ≈ ts − (t0 + t1)/2` (moyenne sur plusieurs pings, en écartant
+ceux dont le RTT s'écarte trop). On peut alors **horodater chaque position à
+l'envoi** : l'extrapolation utilise l'âge exact du message au lieu de
+« arrivée + RTT/2 », et la gigue ne la fait plus respirer.
+
+**4. Lag compensation.** Le jour où un kunai « touche » l'adversaire, se
+poser la question de [Valve](https://www.gabrielgambetta.com/lag-compensation.html) :
+le lanceur visait la position d'il y a 100 ms. Le serveur devra juger le
+coup dans le passé (ou, plus simple pour nous : le sort annonce sa cible et
+l'effet est validé par le serveur, sans hitbox précise).
+
+**6. WebTransport.** Nouveauté : c'est
+[Baseline depuis mars 2026](https://webrtc.ventures/2026/04/webtransport-is-now-baseline-what-it-means-for-real-time-media/)
+(Safari 26.4 a enfin suivi). Datagrammes non fiables = plus de blocage TCP
+quand un paquet se perd (P99 de latence divisé par ~8 sur réseau avec
+pertes). Pertinent le jour où des joueurs jouent en 4G instable — pas tant
+que vous jouez en wifi. À réévaluer quand Colyseus stabilisera son transport
+WebTransport.
+
+### La limite qu'aucun code ne franchira
+
+La géographie : deux joueurs en France sur un serveur européen ≈ 20-40 ms
+d'aller-retour incompressible. Tout le netcode du monde ne fait que *cacher*
+ce délai — c'est exactement le travail de l'extrapolation.
 
 ## Étendre le netcode (pour les sorts 📜)
 
