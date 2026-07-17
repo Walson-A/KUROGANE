@@ -15,6 +15,7 @@ import {
   FUMIGENE_DUREE,
   SENBON_DUREE,
   MALUS_ADRESSE,
+  tirerParchemin,
   type ParcheminKind,
 } from './parchemin'
 
@@ -250,7 +251,9 @@ export class Bot {
   private ramasser() {
     while (this.rIdx < this.rouleaux.length && this.distance > this.rouleaux[this.rIdx].d) {
       const r = this.rouleaux[this.rIdx]
-      if (r.lane === this.lane && this.slots.length < 2) this.slots.push(r.kind)
+      // Le contenu est tiré ICI, avec SA propre graine : chaque bot décroche
+      // ses propres pouvoirs, jamais tous le même sur la même boîte.
+      if (r.lane === this.lane && this.slots.length < 2) this.slots.push(tirerParchemin(this.rng))
       this.rIdx++
     }
   }

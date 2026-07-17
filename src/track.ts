@@ -1,6 +1,6 @@
 import * as THREE from 'three'
 import { LANES } from './player'
-import { TIRAGE, type ParcheminKind } from './parchemin'
+import { tirerParchemin, type ParcheminKind } from './parchemin'
 
 /**
  * Les 3 familles d'obstacles : comment les franchir.
@@ -32,16 +32,17 @@ export interface PlannedObstacle {
   kind: Kind
 }
 
-/** Un rouleau posé sur la piste. Le `kind` est déjà tiré, mais invisible. */
+/**
+ * Un rouleau posé sur la piste : juste une POSITION. Son contenu n'est PAS
+ * décidé ici — il est tiré au ramassage, propre à chacun (cf. tirerParchemin).
+ */
 export interface PlannedParchemin {
   d: number
   lane: number
-  kind: ParcheminKind
 }
 
 interface Rouleau {
   mesh: THREE.Group
-  kind: ParcheminKind
   active: boolean
 }
 
@@ -235,20 +236,19 @@ export class Track {
         this.parcheminPlan[this.parcheminIdx].d <= distance + LOOKAHEAD
       ) {
         const p = this.parcheminPlan[this.parcheminIdx]
-        this.spawnRouleau(p.kind, p.lane, -(p.d - distance))
+        this.spawnRouleau(p.lane, -(p.d - distance))
         this.parcheminIdx++
       }
     }
   }
 
-  private spawnRouleau(kind: ParcheminKind, lane: number, z: number) {
+  private spawnRouleau(lane: number, z: number) {
     let r = this.rouleaux.find((r) => !r.active)
     if (!r) {
-      r = { mesh: makeRouleauMesh(), kind, active: false }
+      r = { mesh: makeRouleauMesh(), active: false }
       this.rouleaux.push(r)
       this.scene.add(r.mesh)
     }
-    r.kind = kind // recyclé : le rouleau change de contenu, pas d'apparence
     r.mesh.position.x = LANES[lane]
     r.mesh.position.z = z
     r.mesh.visible = true
@@ -256,8 +256,9 @@ export class Track {
   }
 
   /**
-   * Le joueur ramasse-t-il un rouleau ? Renvoie le parchemin décroché (et le
-   * retire de la piste), ou null. On ne sait ce qu'on a gagné qu'ici.
+   * Le joueur ramasse-t-il un rouleau ? Renvoie un parchemin TIRÉ AU HASARD
+   * (et retire la boîte de la piste), ou null. Le contenu n'est décidé qu'ici :
+   * deux joueurs qui prennent la même boîte n'ont pas forcément le même pouvoir.
    */
   ramasse(playerBox: THREE.Box3): ParcheminKind | null {
     const box = new THREE.Box3()
@@ -269,7 +270,7 @@ export class Track {
       if (box.intersectsBox(playerBox)) {
         r.active = false
         r.mesh.visible = false
-        return r.kind
+        return tirerParchemin() // Math.random : mon tirage, rien qu'à moi
       }
     }
     return null
@@ -330,7 +331,8 @@ function buildPlan(length: number, seed: number): PlannedObstacle[] {
 
 /**
  * Place les rouleaux : environ un tous les 130 à 210 m, jamais dans la zone de
- * sprint. Le contenu est tiré ici, mais reste invisible jusqu'au ramassage.
+ * sprint. Seules les POSITIONS sont décidées ici (à la graine, donc communes à
+ * tous les joueurs) ; le contenu de chaque boîte est tiré au ramassage.
  *
  * L'espacement vise **un ramassage toutes les ~6,5 s** (on court à ~26 m/s) :
  * assez pour que les parchemins rythment vraiment la course, assez peu pour
@@ -369,10 +371,9 @@ function buildParcheminPlan(
       pos += 3 // deux rangées serrées bouchent les 3 lignes : on avance un peu
     }
     // Vraiment aucune ligne libre : on saute ce rouleau plutôt que d'en poser
-    // un dans un mur. Le suivant tombera 130 à 210 m plus loin.
-    if (lane >= 0) {
-      plan.push({ d: pos, lane, kind: TIRAGE[Math.floor(rng() * TIRAGE.length)] })
-    }
+    // un dans un mur. Le suivant tombera 130 à 210 m plus loin. Le contenu, lui,
+    // n'est pas décidé ici : chacun le tire à son ramassage (cf. tirerParchemin).
+    if (lane >= 0) plan.push({ d: pos, lane })
     d += 130 + rng() * 80
   }
   return plan

@@ -54,7 +54,7 @@ export const PARCHEMINS: Record<ParcheminKind, Parchemin> = {
   onmyoji: { icone: '🔮', nom: 'Onmyōji', cible: 'projectile', cri: '🔮 Le portail file droit !' },
 }
 
-/** Les parchemins que la piste peut faire tomber, dans l'ordre du tirage. */
+/** Les parchemins que la piste peut faire tomber. */
 export const TIRAGE: ParcheminKind[] = [
   'vent',
   'grue',
@@ -67,6 +67,19 @@ export const TIRAGE: ParcheminKind[] = [
   'senbon',
   'onmyoji',
 ]
+
+/**
+ * Le tirage d'un parchemin, AU MOMENT DU RAMASSAGE — pas à la génération de la
+ * piste. C'est ce qui évite que tout le monde décroche le même pouvoir sur la
+ * même boîte : les rouleaux sont aux mêmes endroits pour tous (piste partagée),
+ * mais leur contenu est propre à chacun, comme une boîte de Mario Kart.
+ *
+ * `rng` : Math.random pour un vrai joueur (chacun son tirage) ; le générateur
+ * à graine d'un bot, pour qu'il reste rejouable tout en tirant AILLEURS.
+ */
+export function tirerParchemin(rng: () => number = Math.random): ParcheminKind {
+  return TIRAGE[Math.floor(rng() * TIRAGE.length)]
+}
 
 /** Les sorts qui partent chez quelqu'un d'autre — les seuls que le serveur relaie. */
 export const OFFENSIFS: ParcheminKind[] = ['kunai', 'kusarigama', 'fumigene', 'senbon', 'onmyoji']

@@ -286,6 +286,12 @@ On ramasse des rouleaux sur la piste (environ un toutes les **7 secondes**).
 **Tous les rouleaux se ressemblent** : on ne sait ce qu'on a décroché qu'une
 fois dans la main — comme les boîtes de Mario Kart.
 
+Le **contenu est tiré au ramassage**, pas à la génération de la piste. Les
+boîtes sont aux **mêmes endroits pour tous** (piste partagée, à la graine), mais
+chacun tire le sien : deux joueurs qui prennent la même boîte n'ont **pas
+forcément le même pouvoir**. Un vrai joueur tire avec `Math.random` ; un bot
+avec sa propre graine, pour rester rejouable ([`tirerParchemin`](src/parchemin.ts)).
+
 Un rouleau est toujours posé dans une **ligne libre** : on ne cherche pas un
 trou vide entre deux rangées (avec des obstacles tous les 10-17 m, il n'en
 existe pas toujours), mais une ligne que personne n'occupe autour de ce point.
