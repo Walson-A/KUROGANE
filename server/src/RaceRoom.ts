@@ -16,6 +16,10 @@ export class PlayerState extends Schema {
   @type('string') name = ''
   /** Le guerrier choisi (cf. src/roster.ts côté jeu) */
   @type('string') fighter = 'yasuke'
+  /** false pendant une coupure : sa place est gardée, il peut revenir (cf. onDrop) */
+  @type('boolean') connected = true
+  /** Heure SERVEUR (ms) à laquelle sa dernière position a été envoyée */
+  @type('number') at = 0
 }
 
 /** L'état complet d'une course */
@@ -67,10 +71,23 @@ export class RaceRoom extends Room<{ state: RaceState }> {
     // Diffuse l'état 30 fois/s au lieu de 20 : l'adversaire bouge plus finement
     this.setPatchRate(33)
 
-    // Mesure du ping : on renvoie l'heure telle quelle, le client fait la
-    // soustraction. Sert à compenser le retard d'affichage de l'adversaire.
+    // Mesure du ping + synchro d'horloge : on renvoie l'heure du client telle
+    // quelle (il en déduit l'aller-retour) ET la nôtre (il en déduit le
+    // décalage entre nos horloges — méthode NTP simplifiée).
     this.onMessage('ping', (client, sentAt: number) => {
-      client.send('pong', sentAt)
+      client.send('pong', { sentAt: Number(sentAt) || 0, server: Date.now() })
+    })
+
+    // Les ACTIONS (saut, changement de ligne, glissade, trébuchement) sont
+    // relayées IMMÉDIATEMENT à l'autre joueur — sans attendre le tick de
+    // diffusion à 30 Hz. C'est ce qui rend ses esquives nettes à l'écran.
+    const ACTIONS = ['lane', 'jump', 'slide', 'stumble']
+    this.onMessage('action', (client, data: any) => {
+      if (this.state.phase !== 'racing') return
+      if (!data || !ACTIONS.includes(data.t)) return
+      for (const other of this.clients) {
+        if (other.sessionId !== client.sessionId) other.send('action', data)
+      }
     })
 
     // Un joueur nous envoie sa position (~10 fois/s) → on la range dans l'état,
@@ -82,6 +99,7 @@ export class RaceRoom extends Room<{ state: RaceState }> {
       p.y = Number(data.y) || 0
       p.distance = Number(data.distance) || 0
       p.sliding = !!data.sliding
+      p.at = Number(data.at) || 0 // l'heure serveur d'envoi, estimée par le client
     })
 
     // Un joueur a franchi la ligne !
@@ -117,6 +135,27 @@ export class RaceRoom extends Room<{ state: RaceState }> {
         this.state.phase = 'racing'
       }, COUNTDOWN_MS)
     }
+  }
+
+  /**
+   * Coupure ANORMALE (écran verrouillé, wifi qui saute, tunnel…) : on garde
+   * sa place 30 secondes. S'il revient → onReconnect. Sinon → onLeave.
+   * Règle d'or de la doc Colyseus : on ne supprime RIEN ici.
+   */
+  onDrop(client: Client) {
+    const p = this.state.players.get(client.sessionId)
+    if (!p) return
+    if (this.state.phase === 'countdown' || this.state.phase === 'racing') {
+      this.allowReconnection(client, 30)
+      p.connected = false
+      console.log(`📡 ${p.name || client.sessionId} a coupé — place gardée 30 s`)
+    }
+  }
+
+  onReconnect(client: Client) {
+    const p = this.state.players.get(client.sessionId)
+    if (p) p.connected = true
+    console.log(`📡 ${client.sessionId} est revenu !`)
   }
 
   onLeave(client: Client) {

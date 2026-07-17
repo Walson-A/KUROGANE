@@ -103,6 +103,7 @@ let countdown = 0 // secondes avant le GO !
 let stumble = 0 // invincibilité après un trébuchement
 let netTimer = 0 // pour n'envoyer notre position que 10 fois/s
 let oppFinishedSeen = false
+let oppConnected = true // le rival est-il encore connecté ? (cf. reconnexion)
 let oppName = '' // le pseudo du rival, appris par le réseau
 let sprintTaps: number[] = [] // instants des derniers taps → cadence
 let sprintCharge = 0 // la jauge de sprint, 0 → 1
@@ -142,6 +143,7 @@ function startRace(seed: number) {
   netTimer = 0
   raceGo = false
   oppFinishedSeen = false
+  oppConnected = true
   sprintTaps = []
   sprintCharge = 0
   sprintSeen = false
@@ -204,13 +206,36 @@ const net = new Net({
     // Son identité : le corps n'est refait que si le guerrier change vraiment
     opponent.setFighter(op.fighter)
     oppName = op.name
-    // On nourrit l'extrapolation — le marqueur et l'écart, eux, sont mis à
-    // jour à chaque image dans la boucle de jeu, sur la position ESTIMÉE.
-    opponent.onNetUpdate({ lane: op.lane, y: op.y, distance: op.distance, sliding: op.sliding })
+    // On nourrit l'extrapolation, avec l'âge RÉEL du message quand la synchro
+    // d'horloge est prête. Le marqueur et l'écart, eux, sont mis à jour à
+    // chaque image dans la boucle de jeu, sur la position ESTIMÉE.
+    opponent.onNetUpdate(
+      { lane: op.lane, y: op.y, distance: op.distance, sliding: op.sliding },
+      net.ageOf(op.at)
+    )
+    // Sa connexion : coupée (écran verrouillé ?) ou revenue
+    if (op.connected !== oppConnected) {
+      oppConnected = op.connected
+      if (state === 'course' || state === 'depart') {
+        toast(
+          op.connected
+            ? `📡 ${rivalLabel()} est de retour !`
+            : `📡 ${rivalLabel()} a coupé… il a 30 s pour revenir`
+        )
+      }
+    }
     if (op.finished && !oppFinishedSeen) {
       oppFinishedSeen = true
       if (state === 'course') toast('⚔️ Le rival a franchi le torii !')
     }
+  },
+  onAction(a) {
+    // Une action du rival, reçue à l'instant même où il l'a faite
+    opponent.applyAction(a)
+  },
+  onLink(up) {
+    // NOTRE connexion qui vacille — le SDK retente tout seul derrière
+    toast(up ? '📡 Reconnecté !' : '📡 Connexion instable… reconnexion en cours')
   },
   onResults(iWon, oppTime) {
     const mine = `Ton temps : <b>${time.toFixed(2)} s</b>`
@@ -258,11 +283,29 @@ applyQuality(menu.settings.quality)
 menu.showTitle()
 
 // ————— Les contrôles —————
+// Chaque action est AUSSI envoyée au serveur en événement instantané : le
+// rival la voit ~50 ms plus tôt que si elle était fondue dans le flux 20 Hz.
 new Input(document.body, {
-  left: () => state === 'course' && player.moveLeft(),
-  right: () => state === 'course' && player.moveRight(),
-  jump: () => state === 'course' && player.jump(),
-  slide: () => state === 'course' && player.slide(),
+  left: () => {
+    if (state !== 'course') return
+    player.moveLeft()
+    if (online) net.sendAction({ t: 'lane', lane: player.currentLane })
+  },
+  right: () => {
+    if (state !== 'course') return
+    player.moveRight()
+    if (online) net.sendAction({ t: 'lane', lane: player.currentLane })
+  },
+  jump: () => {
+    if (state !== 'course') return
+    const v = player.jump()
+    if (online && v > 0) net.sendAction({ t: 'jump', v })
+  },
+  slide: () => {
+    if (state !== 'course') return
+    const d = player.slide()
+    if (online && d > 0) net.sendAction({ t: 'slide', d })
+  },
   spell: () => state === 'course' && toast('📜 Pas de parchemin équipé… (bientôt !)'),
   // On horodate chaque coup : la boucle de jeu en déduit la cadence
   sprint: () => sprintTaps.push(time),
@@ -326,6 +369,9 @@ function tick(now?: number) {
       stumble = 1.2 // brève invincibilité le temps de se relever
       flash()
       toast('💥 Trébuché !')
+      // Le rival doit le voir TOUT DE SUITE : sa version de nous ralentit
+      // immédiatement (au lieu que son extrapolation nous fasse dépasser à tort)
+      if (online) net.sendAction({ t: 'stumble', keep: player.grip })
     }
     // Le perso clignote tant qu'il se relève
     player.mesh.visible = stumble <= 0 || Math.floor(stumble * 12) % 2 === 0

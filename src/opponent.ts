@@ -1,6 +1,7 @@
 import * as THREE from 'three'
 import { LANES } from './player'
 import { buildFighter, clearFighter, fighterById, type Fighter } from './roster'
+import type { OppAction } from './net'
 
 /** Ce que le réseau nous apprend sur l'adversaire à chaque message */
 export interface NetInfo {
@@ -39,9 +40,15 @@ export class Opponent {
   private targetY = 0
   private sliding = false
   private lastDistance = 0 // la dernière position REÇUE
-  private lastMsgAt = 0 // quand on l'a reçue (secondes)
+  private lastMsgAt = 0 // quand elle a été ENVOYÉE, dans notre horloge (s)
+  private stamped = false // était-elle horodatée ? (sinon on ajoute `latency`)
   private netSpeed = 0 // sa vitesse, déduite des deux derniers messages
   private estDistance = 0 // où on l'affiche : notre meilleure estimation
+
+  // Les actions instantanées (cf. applyAction)
+  private vy = 0 // son saut, rejoué en physique locale
+  private slideTimer = 0 // sa glissade, déclenchée à l'instant
+  private stumbleT = 0 // il se relève d'un trébuchement (clignote)
 
   private fighter: Fighter = fighterById('kurokumo')
 
@@ -74,27 +81,60 @@ export class Opponent {
     this.sliding = false
     this.lastDistance = 0
     this.lastMsgAt = 0
+    this.stamped = false
     this.netSpeed = 0
     this.estDistance = 0
+    this.vy = 0
+    this.slideTimer = 0
+    this.stumbleT = 0
     this.mesh.position.set(0, 0, -2)
     this.mesh.scale.y = 1
     this.mesh.visible = false
   }
 
-  /** Un message réseau vient d'arriver : on met à jour ce qu'on sait de lui */
-  onNetUpdate(op: NetInfo) {
+  /**
+   * Un message réseau vient d'arriver : on met à jour ce qu'on sait de lui.
+   * `age` = ancienneté RÉELLE du message en secondes, connue grâce à la synchro
+   * d'horloge (net.ageOf). −1 si pas encore synchronisé → on se rabat sur
+   * l'heure d'arrivée + la latence estimée.
+   */
+  onNetUpdate(op: NetInfo, age = -1) {
     const now = performance.now() / 1000
-    const gap = now - this.lastMsgAt
+    this.stamped = age >= 0
+    const sentAt = this.stamped ? now - age : now
+
+    const gap = sentAt - this.lastMsgAt
     if (this.lastMsgAt > 0 && gap > 0.001) {
       const v = (op.distance - this.lastDistance) / gap
       // On borne à une vitesse humaine : un à-coup réseau ne le téléporte pas
       if (v >= 0 && v < 45) this.netSpeed = v
     }
-    this.lastMsgAt = now
+    this.lastMsgAt = Math.max(this.lastMsgAt, sentAt)
     this.lastDistance = op.distance
     this.lane = op.lane
     this.targetY = op.y
     this.sliding = op.sliding
+  }
+
+  /**
+   * Une action du rival, relayée IMMÉDIATEMENT par le serveur (hors 30 Hz) :
+   * on la rejoue tout de suite, sans attendre de la déduire des positions.
+   */
+  applyAction(a: OppAction) {
+    if (a.t === 'lane') {
+      this.lane = Math.max(0, Math.min(2, Math.round(a.lane)))
+    } else if (a.t === 'jump') {
+      // On rejoue son saut en physique locale : mêmes règles que player.ts
+      this.vy = Math.min(20, Math.max(5, a.v))
+    } else if (a.t === 'slide') {
+      this.slideTimer = Math.min(1.5, Math.max(0, a.d))
+    } else if (a.t === 'stumble') {
+      // Il trébuche : sa vitesse chute TOUT DE SUITE dans notre extrapolation
+      // (au lieu d'attendre de la mesurer sur ses prochaines positions)…
+      this.netSpeed *= Math.min(1, Math.max(0, a.keep))
+      // …et il clignote le temps de se relever, comme chez lui
+      this.stumbleT = 1.2
+    }
   }
 
   /**
@@ -113,10 +153,12 @@ export class Opponent {
     }
 
     // ————— L'extrapolation —————
-    // Si les messages s'arrêtent (gros lag), on n'invente pas plus de 0,5 s
-    // de course : mieux vaut le voir freiner que le voir traverser un mur.
+    // L'âge du message : exact si horodaté (synchro d'horloge), sinon estimé
+    // via la latence. Si les messages s'arrêtent (gros lag), on n'invente pas
+    // plus de 0,5 s de course : mieux vaut le voir freiner que traverser un mur.
     const now = performance.now() / 1000
-    const age = this.lastMsgAt > 0 ? Math.min(now - this.lastMsgAt + this.latency, 0.5) : 0
+    const raw = now - this.lastMsgAt + (this.stamped ? 0 : this.latency)
+    const age = this.lastMsgAt > 0 ? Math.min(raw, 0.5) : 0
     const predicted = this.lastDistance + this.netSpeed * age
 
     // On glisse vers la prédiction ; en cas d'erreur énorme, on saute dessus
@@ -126,20 +168,36 @@ export class Opponent {
       this.estDistance += (predicted - this.estDistance) * Math.min(1, dt * 12)
     }
 
-    // Ligne et hauteur (saut)
+    // Ligne
     const k = Math.min(1, dt * 10)
     this.mesh.position.x += (LANES[this.lane] - this.mesh.position.x) * k
-    this.mesh.position.y += (this.targetY - this.mesh.position.y) * Math.min(1, dt * 14)
+
+    // Hauteur : si un événement « saut » est arrivé, on rejoue sa physique
+    // nous-mêmes (net et immédiat) ; sinon on suit la hauteur reçue du réseau
+    if (this.vy !== 0 || this.mesh.position.y > 0.001) {
+      this.mesh.position.y += this.vy * dt
+      if (this.mesh.position.y > 0) {
+        this.vy -= 42 * dt // même gravité que player.ts
+      } else {
+        this.mesh.position.y = 0
+        this.vy = 0
+      }
+    } else {
+      this.mesh.position.y += (this.targetY - this.mesh.position.y) * Math.min(1, dt * 14)
+    }
 
     // Son avance par rapport à nous : devant (z négatif) ou derrière (z positif)
     const zTarget = THREE.MathUtils.clamp(-(this.estDistance - myDistance), -70, 9)
     this.mesh.position.z += (zTarget - this.mesh.position.z) * Math.min(1, dt * 10)
 
-    // Glissade
-    const targetScale = this.sliding ? 0.45 : 1
+    // Glissade : l'événement instantané d'abord, le flux d'état en secours
+    this.slideTimer = Math.max(0, this.slideTimer - dt)
+    const targetScale = this.sliding || this.slideTimer > 0 ? 0.45 : 1
     this.mesh.scale.y += (targetScale - this.mesh.scale.y) * Math.min(1, dt * 18)
 
-    // Invisible s'il est trop loin (perdu dans la brume)
-    this.mesh.visible = this.mesh.position.z > -69
+    // Invisible s'il est trop loin (brume) ; il clignote s'il se relève
+    this.stumbleT = Math.max(0, this.stumbleT - dt)
+    const blink = this.stumbleT <= 0 || Math.floor(this.stumbleT * 12) % 2 === 0
+    this.mesh.visible = this.mesh.position.z > -69 && blink
   }
 }

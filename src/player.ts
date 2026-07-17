@@ -74,16 +74,23 @@ export class Player {
     this.lane = Math.min(2, this.lane + 1)
   }
 
-  jump() {
-    if (this.onGround) {
-      this.vy = JUMP_SPEED * this.fighter.jump
-      this.sliding = 0
-    }
+  /** Saute si possible. Renvoie l'impulsion utilisée (0 = pas sauté) — le
+   *  réseau s'en sert pour rejouer le même saut chez l'adversaire. */
+  jump(): number {
+    if (!this.onGround) return 0
+    this.vy = JUMP_SPEED * this.fighter.jump
+    this.sliding = 0
+    return this.vy
   }
 
-  slide() {
-    if (this.onGround) this.sliding = SLIDE_TIME * this.fighter.slide
-    else this.vy = -18 // en l'air : plonge vite vers le sol
+  /** Glisse au sol (renvoie la durée) ou plonge en l'air (renvoie 0). */
+  slide(): number {
+    if (this.onGround) {
+      this.sliding = SLIDE_TIME * this.fighter.slide
+      return this.sliding
+    }
+    this.vy = -18 // en l'air : plonge vite vers le sol
+    return 0
   }
 
   update(dt: number) {

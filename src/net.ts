@@ -12,7 +12,21 @@ export interface RemotePlayer {
   name: string
   /** Le guerrier qu'il a choisi (cf. roster.ts) */
   fighter: string
+  /** false = il a coupé (écran verrouillé…) mais peut revenir sous 30 s */
+  connected: boolean
+  /** Heure serveur (ms) à laquelle il a envoyé cette position — 0 si inconnue */
+  at: number
 }
+
+/**
+ * Une action du rival, relayée IMMÉDIATEMENT par le serveur (hors du flux
+ * d'état à 30 Hz) : c'est ce qui rend ses esquives nettes à l'écran.
+ */
+export type OppAction =
+  | { t: 'lane'; lane: number }
+  | { t: 'jump'; v: number }
+  | { t: 'slide'; d: number }
+  | { t: 'stumble'; keep: number }
 
 /** Les événements réseau que le jeu doit gérer */
 export interface NetCallbacks {
@@ -20,6 +34,8 @@ export interface NetCallbacks {
   onCountdown(seed: number): void // adversaire trouvé ! 3, 2, 1…
   onGo(): void // GO officiel du serveur
   onOpponent(op: RemotePlayer | null): void // nouvelles infos sur l'adversaire
+  onAction(a: OppAction): void // le rival vient de sauter/esquiver/trébucher
+  onLink(up: boolean): void // NOTRE connexion : coupée (false) / rétablie (true)
   onResults(iWon: boolean, oppTime: number): void // fin de course
   onError(message: string): void // serveur injoignable, déconnexion…
 }
@@ -51,12 +67,31 @@ export class Net {
   private lastPhase = ''
   private resultsSent = false
   private pingTimer: ReturnType<typeof setInterval> | null = null
+  private leaving = false // on part volontairement (≠ coupure subie)
   myFinished = false
   /**
    * Le ping (aller-retour, en secondes), mesuré en continu.
    * Sert à compenser le temps de trajet des positions de l'adversaire.
    */
   rtt = 0
+
+  // ————— Synchro d'horloge (NTP simplifié) —————
+  // L'heure du serveur correspond au MILIEU de l'aller-retour d'un ping.
+  // En comparant, on estime le décalage entre son horloge et la nôtre :
+  // les deux joueurs partagent alors une référence de temps commune.
+  private offset = 0 // heure serveur − notre performance.now(), en ms
+  private offsetReady = false
+
+  /** L'heure du serveur, estimée (ms) — la référence commune aux 2 joueurs */
+  serverNow(): number {
+    return performance.now() + this.offset
+  }
+
+  /** L'âge d'un horodatage serveur, en secondes. −1 si pas encore synchronisé. */
+  ageOf(at: number): number {
+    if (!at || !this.offsetReady) return -1
+    return Math.max(0, (this.serverNow() - at) / 1000)
+  }
 
   constructor(cb: NetCallbacks) {
     this.cb = cb
@@ -75,6 +110,10 @@ export class Net {
     this.lastPhase = ''
     this.resultsSent = false
     this.myFinished = false
+    this.leaving = false
+    this.rtt = 0
+    this.offset = 0
+    this.offsetReady = false
 
     try {
       const client = new Client(WS_URL)
@@ -91,15 +130,35 @@ export class Net {
     this.room.onLeave(() => {
       this.stopPing()
       this.room = null
+      // Coupure DÉFINITIVE (reconnexion épuisée) en pleine course : ni un
+      // départ volontaire, ni une fin normale → on prévient le jeu.
+      if (!this.leaving && !this.resultsSent) this.cb.onError('Connexion perdue.')
     })
 
-    // ————— La mesure du ping —————
-    // Toutes les 2 s on envoie l'heure ; le serveur la renvoie telle quelle ;
-    // le temps écoulé = l'aller-retour. Moyenne glissante : un à-coup isolé
-    // ne fait pas sursauter l'estimation.
-    this.room.onMessage('pong', (sentAt: number) => {
-      const sample = (performance.now() - sentAt) / 1000
+    // Les actions du rival, relayées immédiatement (hors flux 30 Hz)
+    this.room.onMessage('action', (a: OppAction) => this.cb.onAction(a))
+
+    // ————— Reconnexion automatique —————
+    // Écran verrouillé, wifi qui saute : le SDK retente tout seul (et met nos
+    // messages en tampon), le serveur nous garde la place 30 s (RaceRoom.onDrop).
+    this.room.onDrop(() => this.cb.onLink(false))
+    this.room.onReconnect(() => this.cb.onLink(true))
+
+    // ————— La mesure du ping + la synchro d'horloge —————
+    // Toutes les 2 s on envoie notre heure ; le serveur renvoie la sienne en
+    // face. Le temps écoulé = l'aller-retour (rtt). Et l'heure serveur datant
+    // du MILIEU du trajet, on en déduit le décalage entre nos horloges.
+    // Moyennes glissantes ; les pings anormalement lents mentent → écartés.
+    this.room.onMessage('pong', (p: { sentAt: number; server: number }) => {
+      const now = performance.now()
+      const sample = (now - p.sentAt) / 1000
+      const clean = this.rtt === 0 || sample < this.rtt * 2
       this.rtt = this.rtt === 0 ? sample : this.rtt * 0.7 + sample * 0.3
+      if (clean) {
+        const est = p.server - (p.sentAt + now) / 2
+        this.offset = this.offsetReady ? this.offset * 0.7 + est * 0.3 : est
+        this.offsetReady = true
+      }
     })
     this.room.send('ping', performance.now())
     this.pingTimer = setInterval(() => this.room?.send('ping', performance.now()), 2000)
@@ -134,6 +193,8 @@ export class Net {
           time: p.time,
           name: p.name ?? '',
           fighter: p.fighter ?? '',
+          connected: p.connected ?? true,
+          at: p.at ?? 0,
         }
       }
     })
@@ -148,9 +209,14 @@ export class Net {
     }
   }
 
-  /** Envoie ma position au serveur (appelé ~10 fois par seconde) */
+  /** Envoie ma position au serveur (appelé 20 fois par seconde), horodatée */
   sendProgress(p: { lane: number; y: number; distance: number; sliding: boolean }) {
-    this.room?.send('progress', p)
+    this.room?.send('progress', { ...p, at: this.offsetReady ? this.serverNow() : 0 })
+  }
+
+  /** Envoie une action (saut, esquive, trébuchement) — relayée immédiatement */
+  sendAction(a: OppAction) {
+    this.room?.send('action', a)
   }
 
   /** Prévient le serveur : j'ai franchi la ligne ! */
@@ -159,8 +225,9 @@ export class Net {
     this.room?.send('finished', { time })
   }
 
-  /** Quitte la course en cours */
+  /** Quitte la course en cours (volontairement) */
   leave() {
+    this.leaving = true
     this.stopPing()
     this.room?.leave()
     this.room = null

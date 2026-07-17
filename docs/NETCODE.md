@@ -83,11 +83,18 @@ jamais la position brute reçue. Elle seule est honnête.
 ## Ce qu'on N'ENVOIE PAS (et pourquoi)
 
 - **Les obstacles** : jamais. La graine suffit (piste déterministe).
-- **Les trébuchements du rival** : pas encore — on voit juste sa vitesse
-  chuter via l'extrapolation. Un événement `stumble` dédié ferait une
-  meilleure anim (à faire).
 - **Le temps de chaque image** : la simulation locale est en `dt` variable ;
-  seul le résumé 20 Hz part sur le réseau.
+  seuls le résumé 20 Hz et les événements d'action partent sur le réseau.
+
+## Les deux canaux (à connaître avant d'ajouter une feature réseau)
+
+| Canal | Cadence | Pour quoi | Exemples |
+|---|---|---|---|
+| **État** (schema) | patchs 30 Hz | ce qui EST (persiste, rejoint tard, survit à une reconnexion) | position, pseudo, phase, `connected` |
+| **Messages** | immédiat | ce qui ARRIVE (événements ponctuels) | `action` (saut, esquive, trébuchement), `ping/pong`, futurs sorts |
+
+Règle simple : *un fait durable → l'état ; un instant → un message.* Les deux
+ensemble : l'action donne la réaction immédiate, l'état corrige derrière.
 
 ## L'état de l'art — recherche du 17/07/2026
 
@@ -118,38 +125,46 @@ la [doc Colyseus](https://docs.colyseus.io/state), et
 
 | # | Optimisation | Gain | Effort | Verdict |
 |---|---|---|---|---|
-| 1 | **Actions en événements instantanés** | Esquives du rival nettes (−50 à −80 ms) | S | ✅ à faire |
-| 2 | **Reconnexion mobile** | Écran verrouillé ≠ défaite | M | ✅ à faire |
-| 3 | **Synchro d'horloge** (NTP-style) | Extrapolation moins sensible à la gigue | S | 👍 si motivés |
+| 1 | **Actions en événements instantanés** | Esquives du rival nettes (−50 à −80 ms) | S | ✅ **fait** (17/07) |
+| 2 | **Reconnexion mobile** | Écran verrouillé ≠ défaite | M | ✅ **fait** (17/07) |
+| 3 | **Synchro d'horloge** (NTP-style) | Extrapolation moins sensible à la gigue | S | ✅ **fait** (17/07) |
 | 4 | **Lag compensation** (Valve) | Nécessaire quand les sorts viseront l'autre | M | 📜 avec les sorts |
 | 5 | Validation serveur (anti-triche) | Classements fiables | M | si jeu public |
 | 6 | WebTransport (datagrammes) | Moins de blocage sur réseaux avec pertes | L | plus tard |
 
-**1. Actions en événements instantanés.** La
+**1. Actions en événements instantanés — FAIT.** La
 [doc Colyseus](https://docs.colyseus.io/state) est claire : l'état est
 diffusé *au rythme des patchs* (33 ms chez nous), mais **les messages
-partent immédiatement**. Un saut/changement de ligne/trébuchement envoyé en
-message `action` arrive donc ~50 ms plus tôt que fondu dans le flux 20 Hz —
-et le trébuchement en événement permettrait enfin de jouer la vraie anim
-chez l'autre (aujourd'hui on voit juste sa vitesse chuter).
+partent immédiatement**. Chaque action (saut, changement de ligne, glissade,
+trébuchement) est donc envoyée en message `action`, que le serveur **relaie
+aussitôt** à l'autre joueur (liste blanche de types, le reste est refusé).
+À la réception, le rival la rejoue sur-le-champ : son saut est simulé en
+physique locale (mêmes constantes que `player.ts`), son trébuchement fait
+chuter sa vitesse **dans notre extrapolation** au moment même — c'était la
+dernière source de « je le double alors que non » (l'extrapolation le voyait
+continuer à pleine vitesse pendant ~100 ms après sa faute).
 
-**2. Reconnexion mobile — la priorité que la recherche a révélée.** Sur
-téléphone, verrouiller l'écran ou passer du wifi à la 4G **coupe le
-WebSocket** → aujourd'hui : défaite par forfait immédiate. Colyseus 0.17 a
-[tout ce qu'il faut](https://docs.colyseus.io/room/reconnection) :
-`onDrop()` (déconnexion anormale) → `allowReconnection(client, délai)` garde
-la place → `onReconnect()` si le joueur revient. Règle d'or de la doc : ne
-nettoyer les données du joueur que dans `onLeave()`, jamais dans `onDrop()`.
-Pendant l'absence, notre extrapolation continue déjà d'animer le fantôme ~0,5 s,
-puis il freine — comportement idéal en attendant le retour.
+**2. Reconnexion mobile — FAIT.** Sur téléphone, verrouiller l'écran ou
+passer du wifi à la 4G **coupe le WebSocket** → avant : défaite par forfait
+immédiate. Maintenant, côté serveur
+([RaceRoom.ts](../server/src/RaceRoom.ts)) : `onDrop()` →
+`allowReconnection(client, 30)` garde la place 30 s et marque
+`connected = false` (l'autre joueur voit « 📡 il a coupé… ») → `onReconnect()`
+remet `connected = true`. Le ménage ne se fait QUE dans `onLeave()` (règle
+d'or de la [doc](https://docs.colyseus.io/room/reconnection)). Côté client,
+**l'auto-reconnexion du SDK 0.17 fait tout** : retentatives progressives,
+messages mis en tampon, mêmes `sessionId` — vérifié par le test simulé
+(coupure en pleine course → retour 0,2 s après → la course continue).
+Pendant l'absence, l'extrapolation anime le fantôme ~0,5 s puis le freine.
 
-**3. Synchro d'horloge.** Formule
+**3. Synchro d'horloge — FAIT.** Formule
 [NTP simplifiée](https://daposto.medium.com/game-networking-2-time-tick-clock-synchronisation-9a0e76101fe5) :
-le client envoie `t0`, le serveur répond avec son heure `ts`, le client reçoit
-à `t1` → `offset ≈ ts − (t0 + t1)/2` (moyenne sur plusieurs pings, en écartant
-ceux dont le RTT s'écarte trop). On peut alors **horodater chaque position à
-l'envoi** : l'extrapolation utilise l'âge exact du message au lieu de
-« arrivée + RTT/2 », et la gigue ne la fait plus respirer.
+le `pong` du serveur renvoie désormais AUSSI son heure, qui date du **milieu**
+de l'aller-retour → `offset ≈ serveur − (envoi + réception)/2`, en moyenne
+glissante et en écartant les pings anormalement lents. Chaque position est
+alors **horodatée à l'envoi** (`at`, en heure serveur — la référence commune
+aux deux joueurs) : l'extrapolation utilise l'âge exact du message au lieu
+de « heure d'arrivée + RTT/2 », et la gigue ne la fait plus respirer.
 
 **4. Lag compensation.** Le jour où un kunai « touche » l'adversaire, se
 poser la question de [Valve](https://www.gabrielgambetta.com/lag-compensation.html) :
