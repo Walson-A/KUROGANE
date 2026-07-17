@@ -61,6 +61,18 @@ body {
   border-radius: 100px;
   transition: width 0.2s linear;
 }
+/* L'écart avec le rival : « Rival +12 m » (lui devant) ou « −12 m » (toi devant) */
+#gap {
+  font-size: 1.05rem;
+  color: #9aa4c0;
+}
+#gap.ahead {
+  color: #d6ac5a; /* il est devant : doré, comme son bandeau */
+}
+#gap.hidden {
+  display: none;
+}
+
 /* La position de l'adversaire sur la barre */
 #oppmark {
   position: absolute;

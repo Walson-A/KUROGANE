@@ -39,6 +39,15 @@ export class RaceRoom extends Room<{ state: RaceState }> {
   onCreate() {
     this.state.seed = Math.floor(Math.random() * 2 ** 31)
 
+    // Diffuse l'état 30 fois/s au lieu de 20 : l'adversaire bouge plus finement
+    this.setPatchRate(33)
+
+    // Mesure du ping : on renvoie l'heure telle quelle, le client fait la
+    // soustraction. Sert à compenser le retard d'affichage de l'adversaire.
+    this.onMessage('ping', (client, sentAt: number) => {
+      client.send('pong', sentAt)
+    })
+
     // Un joueur nous envoie sa position (~10 fois/s) → on la range dans l'état,
     // Colyseus la transmet tout seul à l'autre joueur.
     this.onMessage('progress', (client, data: any) => {

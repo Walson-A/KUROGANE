@@ -46,7 +46,13 @@ export class Net {
   private cb: NetCallbacks
   private lastPhase = ''
   private resultsSent = false
+  private pingTimer: ReturnType<typeof setInterval> | null = null
   myFinished = false
+  /**
+   * Le ping (aller-retour, en secondes), mesuré en continu.
+   * Sert à compenser le temps de trajet des positions de l'adversaire.
+   */
+  rtt = 0
 
   constructor(cb: NetCallbacks) {
     this.cb = cb
@@ -75,8 +81,25 @@ export class Net {
     this.room.onStateChange((state: any) => this.readState(state))
     this.room.onError(() => this.cb.onError('Erreur de connexion.'))
     this.room.onLeave(() => {
+      this.stopPing()
       this.room = null
     })
+
+    // ————— La mesure du ping —————
+    // Toutes les 2 s on envoie l'heure ; le serveur la renvoie telle quelle ;
+    // le temps écoulé = l'aller-retour. Moyenne glissante : un à-coup isolé
+    // ne fait pas sursauter l'estimation.
+    this.room.onMessage('pong', (sentAt: number) => {
+      const sample = (performance.now() - sentAt) / 1000
+      this.rtt = this.rtt === 0 ? sample : this.rtt * 0.7 + sample * 0.3
+    })
+    this.room.send('ping', performance.now())
+    this.pingTimer = setInterval(() => this.room?.send('ping', performance.now()), 2000)
+  }
+
+  private stopPing() {
+    if (this.pingTimer !== null) clearInterval(this.pingTimer)
+    this.pingTimer = null
   }
 
   /** Lit l'état envoyé par le serveur et prévient le jeu de ce qui change */
@@ -128,6 +151,7 @@ export class Net {
 
   /** Quitte la course en cours */
   leave() {
+    this.stopPing()
     this.room?.leave()
     this.room = null
   }

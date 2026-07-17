@@ -59,6 +59,7 @@ const countEl = document.getElementById('count')!
 const flashEl = document.getElementById('flash')!
 const progressEl = document.getElementById('progressfill')!
 const oppmarkEl = document.getElementById('oppmark')!
+const gapEl = document.getElementById('gap')!
 const sprintEl = document.getElementById('sprint')!
 const sprintFillEl = document.getElementById('sprintfill')!
 
@@ -105,6 +106,7 @@ function showMenu(html: string) {
   online = false
   opponent.active = false
   oppmarkEl.classList.add('hidden')
+  gapEl.classList.add('hidden')
   countEl.classList.remove('show')
   msg.innerHTML = html
   btns.classList.remove('hidden')
@@ -135,11 +137,13 @@ function startRace(seed: number) {
   progressEl.style.width = '0%'
   opponent.active = online
   oppmarkEl.classList.toggle('hidden', !online)
+  gapEl.classList.toggle('hidden', !online)
 }
 
 function crossFinishLine() {
   player.mesh.visible = true // au cas où on franchit la ligne en plein clignotement
   sprintEl.classList.add('hidden')
+  gapEl.classList.add('hidden')
   const t = time.toFixed(2)
 
   if (online) {
@@ -182,8 +186,9 @@ const net = new Net({
   },
   onOpponent(op: RemotePlayer | null) {
     if (!op) return
-    opponent.target = { lane: op.lane, y: op.y, distance: op.distance, sliding: op.sliding }
-    oppmarkEl.style.left = `${Math.min(100, (op.distance / COURSE_LENGTH) * 100)}%`
+    // On nourrit l'extrapolation — le marqueur et l'écart, eux, sont mis à
+    // jour à chaque image dans la boucle de jeu, sur la position ESTIMÉE.
+    opponent.onNetUpdate({ lane: op.lane, y: op.y, distance: op.distance, sliding: op.sliding })
     if (op.finished && !oppFinishedSeen) {
       oppFinishedSeen = true
       if (state === 'course') toast('⚔️ L\'adversaire a franchi le torii !')
@@ -300,10 +305,10 @@ function tick(now?: number) {
       sprintFillEl.style.width = `${sprintCharge * 100}%`
     }
 
-    // En ligne : on envoie notre position 10 fois par seconde
+    // En ligne : on envoie notre position 20 fois par seconde
     if (online) {
       netTimer += dt
-      if (netTimer >= 0.1) {
+      if (netTimer >= 0.05) {
         netTimer = 0
         net.sendProgress({
           lane: player.currentLane,
@@ -312,6 +317,16 @@ function tick(now?: number) {
           sliding: player.isSliding,
         })
       }
+
+      // L'extrapolation a besoin de la latence mesurée (la moitié du ping)
+      opponent.latency = net.rtt / 2
+
+      // Marqueur + écart, sur la position ESTIMÉE du rival — la seule honnête
+      const oppD = opponent.distanceNow
+      oppmarkEl.style.left = `${Math.min(100, (oppD / COURSE_LENGTH) * 100)}%`
+      const lead = oppD - distance
+      gapEl.textContent = `Rival ${lead >= 0 ? '+' : '−'}${Math.abs(lead).toFixed(0)} m`
+      gapEl.classList.toggle('ahead', lead >= 0)
     }
 
     // ⛩️ Ligne d'arrivée !

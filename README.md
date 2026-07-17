@@ -82,7 +82,25 @@ endroits**. On n'envoie jamais les obstacles par le réseau — juste un nombre.
 
 Le serveur est **autoritaire** : c'est lui qui apparie les joueurs, donne le
 GO et déclare le vainqueur. Les clients ne font que lui raconter où ils en
-sont (10 fois par seconde).
+sont (20 fois par seconde).
+
+### Voir le rival là où il EST, pas là où il ÉTAIT
+
+Ses positions arrivent ~20 fois/s, après un temps de trajet. Les afficher
+telles quelles = le voir **toujours en retard** (5 à 8 m à pleine vitesse) :
+on croirait le doubler à tort. Trois parades, dans [opponent.ts](src/opponent.ts)
+et [net.ts](src/net.ts) :
+
+1. **Extrapolation** (dead reckoning) : on déduit sa vitesse de ses deux
+   derniers messages et on l'affiche là où il *doit* être maintenant —
+   `dernière position + vitesse × (âge du message + latence)`. Bornée à
+   0,5 s : en cas de gros lag, mieux vaut le voir freiner qu'inventer.
+2. **Mesure du ping** : toutes les 2 s, on envoie l'heure au serveur qui la
+   renvoie telle quelle ; l'écart = l'aller-retour (moyenne glissante).
+3. **Fantôme** : le rival est semi-transparent — au départ et à chaque
+   dépassement les deux coureurs se superposent, il faut voir à travers.
+   L'écart affiché dans le HUD (« Rival +12 m ») utilise la position
+   *estimée* — la seule honnête.
 
 ## 🔥 Le sprint final : départager sans refaire la course
 
