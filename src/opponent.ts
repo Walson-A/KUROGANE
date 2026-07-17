@@ -174,6 +174,10 @@ export class Opponent {
     return this.lane
   }
 
+  get currentFighter() {
+    return this.fighter
+  }
+
   update(dt: number, myDistance: number) {
     if (!this.active) {
       this.mesh.visible = false

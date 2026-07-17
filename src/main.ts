@@ -301,6 +301,16 @@ function drawRank() {
     })),
   ]
 
+  if (online && opponent.active) {
+    coureurs.push({
+      nom: rivalLabel(),
+      couleur: opponent.currentFighter.band,
+      d: opponent.distanceNow,
+      arrivee: oppFinishedSeen ? 0 : -1,
+      moi: false,
+    })
+  }
+
   // Arrivés d'abord (départagés au chrono), puis les autres à la distance
   coureurs.sort((a, b) => {
     if (a.arrivee >= 0 && b.arrivee >= 0) return a.arrivee - b.arrivee
@@ -545,10 +555,10 @@ function startRace(seed: number) {
     botMarks[i].style.left = '0%'
   })
 
-  // Le classement en direct : entraînement seulement (en ligne, il y a le repère)
-  rankEl.classList.toggle('hidden', online)
+  // Le classement en direct : visible dans les deux modes !
+  rankEl.classList.remove('hidden')
   rankTimer = 0
-  if (!online) drawRank()
+  drawRank()
 
   countdown = 3
   state = 'depart'
@@ -562,7 +572,8 @@ function startRace(seed: number) {
   progressEl.style.width = '0%'
   opponent.active = online
   oppmarkEl.classList.toggle('hidden', !online)
-  gapEl.classList.toggle('hidden', !online)
+  // La bulle d'écart : visible dans les deux modes !
+  gapEl.classList.remove('hidden')
 }
 
 /**
@@ -945,7 +956,7 @@ function tick(now?: number) {
 
     // 10 fois par seconde suffisent : à 60, on réécrirait le DOM pour rien
     rankTimer += dt
-    if (!online && rankTimer >= 0.1) {
+    if (rankTimer >= 0.1) {
       rankTimer = 0
       drawRank()
     }
@@ -1047,6 +1058,22 @@ function tick(now?: number) {
       // textContent, pas innerHTML : le pseudo vient de l'autre joueur
       gapEl.textContent = `${rivalLabel()} ${lead >= 0 ? '+' : '−'}${Math.abs(lead).toFixed(0)} m`
       gapEl.classList.toggle('ahead', lead >= 0)
+    } else {
+      // Solo : écart par rapport au robot le plus proche
+      let closestBot: Bot | null = null
+      let minDiff = Infinity
+      for (const b of botsEnCourse()) {
+        const diff = b.distance - distance
+        if (Math.abs(diff) < minDiff) {
+          minDiff = Math.abs(diff)
+          closestBot = b
+        }
+      }
+      if (closestBot) {
+        const lead = closestBot.distance - distance
+        gapEl.textContent = `${closestBot.profil.nom} ${lead >= 0 ? '+' : '−'}${Math.abs(lead).toFixed(0)} m`
+        gapEl.classList.toggle('ahead', lead >= 0)
+      }
     }
 
     // ⛩️ Ligne d'arrivée !
