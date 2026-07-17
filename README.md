@@ -102,6 +102,9 @@ et [net.ts](src/net.ts) :
    L'écart affiché dans le HUD (« Rival +12 m ») utilise la position
    *estimée* — la seule honnête.
 
+📖 Le détail complet (schémas, limites connues, comment brancher les sorts
+en ligne) : **[docs/NETCODE.md](docs/NETCODE.md)**.
+
 ## 🔥 Le sprint final : départager sans refaire la course
 
 Sur les **120 derniers mètres**, marteler l'écran fait accélérer. La zone est
