@@ -1,5 +1,6 @@
 import * as THREE from 'three'
-import { ROSTER, buildFighter, clearFighter, type Fighter } from './roster'
+import { NameTag } from './nametag'
+import { ROSTER, buildFighter, clearFighter, cssColor, type Fighter } from './roster'
 
 /** Les 3 lignes de course (positions X dans le monde 3D) */
 export const LANES = [-2.2, 0, 2.2]
@@ -20,6 +21,8 @@ const LANE_LERP = 12 // vitesse de glissement vers la ligne visée
  */
 export class Player {
   mesh = new THREE.Group()
+  /** Ton pseudo, qui flotte au-dessus de ta tête. Piloté par main.ts. */
+  readonly tag: NameTag
   private fighter: Fighter = ROSTER[0]
   private lane = 1 // 0 = gauche, 1 = centre, 2 = droite
   private vy = 0 // vitesse verticale
@@ -27,6 +30,7 @@ export class Player {
 
   constructor(scene: THREE.Scene) {
     scene.add(this.mesh)
+    this.tag = new NameTag(scene)
     this.setFighter(ROSTER[0])
   }
 
@@ -35,6 +39,14 @@ export class Player {
     this.fighter = f
     clearFighter(this.mesh)
     this.mesh.add(...buildFighter(f))
+  }
+
+  /**
+   * Écrit le nom porté au-dessus de la tête, dans la couleur du bandeau.
+   * Sans pseudo, on affiche le nom du guerrier plutôt qu'une étiquette vide.
+   */
+  setName(pseudo: string) {
+    this.tag.set(pseudo || this.fighter.name.split(' ')[0], cssColor(this.fighter.band))
   }
 
   /**

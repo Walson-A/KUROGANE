@@ -168,10 +168,23 @@ un `localStorage` bidouillé à la main ne doit pas pouvoir casser le jeu.
 
 ### Le pseudo
 
-Saisi dans les options, il s'affiche en course en haut à gauche sous le chrono,
-**dans la couleur du bandeau de ton guerrier** (`弥助 Yasuke`). Sans pseudo, on
-montre le nom du guerrier plutôt qu'un vide. En duel il voyage par le réseau et
-apparaît chez l'adversaire, dans le HUD : « Noslow +12 m ».
+Saisi dans les options, il **flotte au-dessus de la tête** du coureur, dans la
+couleur de son bandeau ([`nametag.ts`](src/nametag.ts)). Les deux coureurs en
+portent un : c'est surtout au-dessus du **rival** que ça compte — savoir qui on
+double. Sans pseudo, on montre le nom du guerrier plutôt qu'une étiquette vide.
+En duel il voyage aussi par le réseau et apparaît dans le HUD : « Noslow +12 m ».
+
+L'étiquette est un **sprite** : un panneau qui fait toujours face à la caméra,
+sur lequel on colle une image dessinée dans un canvas 2D. Pas de police 3D, pas
+d'asset — zéro octet à télécharger. Trois détails qui font qu'elle vit :
+
+- **Elle suit la tête**, pas le sol : quand le perso s'écrase pour glisser
+  (`scale.y = 0.45`), elle descend avec lui ; quand il saute, elle monte.
+- **Elle grossit avec la distance** (plafonnée à ×3,2). Sans ça, le rival à
+  70 m aurait une étiquette de 3 pixels — illisible exactement au moment où on
+  a le plus besoin de savoir qui c'est.
+- **La brume ne l'efface pas** (`fog: false`) : le corps du rival s'estompe au
+  loin, son nom reste net.
 
 > ⚠️ **Le pseudo de l'autre joueur n'est jamais du HTML.** Le serveur le coupe à
 > 12 caractères, et il est **échappé à l'affichage** (`escapeHtml`, dans
