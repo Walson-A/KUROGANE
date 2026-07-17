@@ -13,13 +13,20 @@ avec Claude Code comme développeur.
 ## 🎮 Le jeu
 
 - **Une course de 1 920 m** (≈ 75 s) sur 3 lignes, départ 3-2-1-GO, arrivée au torii doré
+- **🥷 4 guerriers** au choix, chacun avec son mini-passif
+  ([voir l'équilibrage](#-le-roster--un-choix-pas-un-piège))
 - **Esquive** : barrières (saute !), barres hautes (glisse !), murs (change de ligne !)
 - Toucher un obstacle ne tue pas : tu **trébuches** et perds ta vitesse — le
   perdant est celui qui arrive 2ᵉ
 - **🔥 Sprint final** : sur les 120 derniers mètres, martèle l'écran pour
   accélérer et voler la victoire sur le fil ([voir le calibrage](#-le-sprint-final--départager-sans-refaire-la-course))
-- **⚔️ Duel en ligne** : matchmaking automatique, les deux joueurs affrontent
-  exactement la même piste, le serveur déclare le vainqueur
+- **🚀 Départ canon** : martèle pendant le 3-2-1 — à fond, tu pars directement
+  à la vitesse de croisière (≈ 0,3 s de gagnées, toujours moins qu'un
+  trébuchement). Le GO est **programmé à la même milliseconde** sur les deux
+  téléphones, peu importe le ping
+- **⚔️ Duel en ligne** : matchmaking automatique, **grille de départ** (chacun
+  sa ligne), les deux joueurs affrontent exactement la même piste, le serveur
+  déclare le vainqueur
 - 🏋️ Mode **entraînement solo** contre **1 à 4 rivaux** (voir
   [le roster](#-les-rivaux-dentraînement)), avec record personnel sauvegardé
 
@@ -59,13 +66,17 @@ npm install && npm run dev     # → http://localhost:5173
 
 ```
 kurogane/
-├── index.html          La page + le HUD (chrono, progression, menus)
+├── index.html          La page, le HUD (chrono, progression) et les écrans de menu
 ├── src/
 │   ├── main.ts         Le chef d'orchestre : scène 3D, boucle de jeu, états
-│   ├── player.ts       Yasuke : 3 lignes, saut, gravité, glissade, hitbox
-│   ├── opponent.ts     Kurokumo, le rival : position reçue du réseau, interpolée
+│   ├── roster.ts       🥷 LA FICHE DES GUERRIERS : look, passifs, fabrique des corps
+│   ├── menu.ts         Les écrans : titre, choix du guerrier, options, aide
+│   ├── settings.ts     Les réglages gardés sur le téléphone (perso, pseudo, qualité)
+│   ├── player.ts       Le coureur : 3 lignes, saut, gravité, glissade, hitbox
+│   ├── opponent.ts     Le rival : position reçue du réseau, extrapolée, en fantôme
 │   ├── track.ts        La piste : obstacles + rouleaux PLANIFIÉS par graine
 │   ├── parchemin.ts    Le catalogue des sorts et tous leurs réglages
+│   ├── bot.ts          Les rivaux d'entraînement : esquive scriptée, parchemins
 │   ├── net.ts          La connexion au serveur : rejoindre, envoyer, recevoir
 │   ├── input.ts        Clavier + swipes + double-tap + martèlement du sprint
 │   └── style.css       L'habillage de l'interface
@@ -74,6 +85,10 @@ kurogane/
         ├── index.ts    Démarrage du serveur (port 2567)
         └── RaceRoom.ts  Une salle = 2 joueurs, 1 piste, 1 vainqueur
 ```
+
+`roster.ts` est la **source de vérité unique** : le menu, le joueur, le rival et
+l'aperçu 3D lisent tous la même fiche. Pour ajouter un guerrier, il suffit
+d'ajouter une entrée dans `ROSTER` — le reste du jeu suit tout seul.
 
 ## 🧠 L'idée clé du multi : la graine partagée
 
@@ -84,7 +99,119 @@ endroits**. On n'envoie jamais les obstacles par le réseau — juste un nombre.
 
 Le serveur est **autoritaire** : c'est lui qui apparie les joueurs, donne le
 GO et déclare le vainqueur. Les clients ne font que lui raconter où ils en
-sont (10 fois par seconde).
+sont (20 fois par seconde).
+
+### Voir le rival là où il EST, pas là où il ÉTAIT
+
+Ses positions arrivent ~20 fois/s, après un temps de trajet. Les afficher
+telles quelles = le voir **toujours en retard** (5 à 8 m à pleine vitesse) :
+on croirait le doubler à tort. Trois parades, dans [opponent.ts](src/opponent.ts)
+et [net.ts](src/net.ts) :
+
+1. **Extrapolation** (dead reckoning) : on déduit sa vitesse de ses deux
+   derniers messages et on l'affiche là où il *doit* être maintenant —
+   `dernière position + vitesse × (âge du message + latence)`. Bornée à
+   0,5 s : en cas de gros lag, mieux vaut le voir freiner qu'inventer.
+2. **Mesure du ping** : toutes les 2 s, on envoie l'heure au serveur qui la
+   renvoie telle quelle ; l'écart = l'aller-retour (moyenne glissante).
+3. **Fantôme** : le rival est semi-transparent — au départ et à chaque
+   dépassement les deux coureurs se superposent, il faut voir à travers.
+   L'écart affiché dans le HUD (« Rival +12 m ») utilise la position
+   *estimée* — la seule honnête.
+
+📖 Le détail complet (schémas, limites connues, comment brancher les sorts
+en ligne) : **[docs/NETCODE.md](docs/NETCODE.md)**.
+
+## 🥷 Le roster : un choix, pas un piège
+
+Quatre guerriers, choisis depuis l'écran-titre. **Yasuke est la référence** :
+tout est à 1 chez lui. Les trois autres ont **un bonus ET un malus** — sinon un
+seul perso serait le bon choix, et le menu ne serait qu'un piège à débutants.
+Yasuke, lui, n'a aucun point faible : c'est ça, son intérêt.
+
+| Guerrier | Saut | Esquive | Glissade | Vitesse gardée si on trébuche |
+|---|---|---|---|---|
+| 弥助 **Yasuke** — la référence | 1 | 1 | 1 | 35 % |
+| 花 **Hana** — agile, fragile | **1,18** | **1,3** | 1 | *0,28* |
+| 鬼丸 **Oni-Maru** — lourd, tenace | *0,88* | *0,8* | 1 | **52 %** |
+| 玉恵 **Tamae** — rusée, glissante | *0,9* | **1,15** | **1,6** | 35 % |
+
+Tout est dans [`src/roster.ts`](src/roster.ts). Deux règles d'équité s'appliquent :
+
+1. **La hitbox est la même pour tout le monde**, alors que les corps n'ont pas
+   la même largeur à l'écran. Une hitbox plus fine pour Hana serait un 5ᵉ
+   réglage *invisible* : personne ne l'aurait choisie en connaissance de cause,
+   et ça fausserait tous les duels.
+2. **Aucun passif ne touche au sprint final.** Son calibrage (ci-dessous)
+   suppose que les 120 derniers mètres se courent à armes égales.
+
+En duel, le rival porte les couleurs du guerrier qu'il a vraiment choisi
+(son identité passe par le réseau). Il reste **semi-transparent** : c'est ce qui
+permet de le distinguer même si vous avez choisi le même perso.
+
+> Tamae devait « recharger ses techniques plus vite » d'après la fiche de jeu.
+> Les parchemins n'existent pas encore : lui donner ce passif aujourd'hui, ce
+> serait la rendre strictement moins bonne que les autres. Elle a donc un passif
+> qui marche *maintenant* (la glissade), et héritera de l'autre le jour où les
+> sorts arriveront.
+
+## 🎌 Le menu & les réglages
+
+Cinq écrans, un seul visible à la fois — un petit routeur dans
+[`menu.ts`](src/menu.ts) : **titre**, **choix du guerrier** (avec l'aperçu 3D
+qui tourne), **options**, **comment jouer**, et l'écran de **message**
+(recherche d'adversaire, verdict de fin de course).
+
+La recherche d'adversaire a un bouton **Annuler** : sans lui, une fois lancée,
+on ne pouvait plus en sortir sans recharger la page.
+
+Les réglages sont gardés sur le téléphone ([`settings.ts`](src/settings.ts)) et
+relus au démarrage. Tout est **validé au passage** : une vieille sauvegarde ou
+un `localStorage` bidouillé à la main ne doit pas pouvoir casser le jeu.
+
+### Le pseudo
+
+Saisi dans les options, il **flotte au-dessus de la tête** du coureur, dans la
+couleur de son bandeau ([`nametag.ts`](src/nametag.ts)). Les deux coureurs en
+portent un : c'est surtout au-dessus du **rival** que ça compte — savoir qui on
+double. Sans pseudo, on montre le nom du guerrier plutôt qu'une étiquette vide.
+En duel il voyage aussi par le réseau et apparaît dans le HUD : « Noslow +12 m ».
+
+L'étiquette est un **sprite** : un panneau qui fait toujours face à la caméra,
+sur lequel on colle une image dessinée dans un canvas 2D. Pas de police 3D, pas
+d'asset — zéro octet à télécharger. Trois détails qui font qu'elle vit :
+
+- **Elle suit la tête**, pas le sol : quand le perso s'écrase pour glisser
+  (`scale.y = 0.45`), elle descend avec lui ; quand il saute, elle monte.
+- **Elle grossit avec la distance** (plafonnée à ×3,2). Sans ça, le rival à
+  70 m aurait une étiquette de 3 pixels — illisible exactement au moment où on
+  a le plus besoin de savoir qui c'est.
+- **La brume ne l'efface pas** (`fog: false`) : le corps du rival s'estompe au
+  loin, son nom reste net.
+
+> ⚠️ **Le pseudo de l'autre joueur n'est jamais du HTML.** Le serveur le coupe à
+> 12 caractères, et il est **échappé à l'affichage** (`escapeHtml`, dans
+> [menu.ts](src/menu.ts)). Sans ça, quelqu'un pouvait s'appeler
+> `<img src=x onerror=…>` et faire exécuter son code sur ton téléphone. Partout
+> où c'est possible on passe par `textContent`, qui ne *peut pas* fabriquer une
+> balise.
+
+### La qualité graphique
+
+| Réglage | Pixels dessinés |
+|---|---|
+| **Auto** | ×2 sur PC, ×1,5 sur mobile |
+| **Belle** | ×2 |
+| **Fluide** | ×1 — 4 fois moins de pixels qu'en « Belle » |
+
+Elle ne joue **que** sur le nombre de pixels (`pixelRatio`) : c'est de loin le
+plus gros coût sur mobile, et diviser la densité par 2, c'est 4 fois moins de
+pixels à dessiner.
+
+On ne touche **surtout pas à la brume**, alors que la rapprocher ferait gagner
+des images/s : c'est elle qui décide à quelle distance on découvre les
+obstacles. Moins de brume = moins de temps pour réagir. Ce serait un réglage de
+**difficulté déguisé en réglage graphique** — et un désavantage en duel.
 
 ## 🔥 Le sprint final : départager sans refaire la course
 
@@ -256,10 +383,16 @@ mêmes esquives et mêmes fautes, on peut donc retravailler une course ratée.
 - [x] Course solo 1 920 m : obstacles, trébuchement, chrono, record
 - [x] Duel en ligne : matchmaking, piste partagée, adversaire visible, victoire
 - [x] 🔥 Sprint final au martèlement, calibré pour départager les ex æquo
+- [x] 🥷 Le roster : Yasuke, Hana, Oni-Maru, Tamae — passifs, aperçu 3D, synchro en duel
+- [x] 🎌 Le menu : écran-titre, choix du guerrier, options (pseudo, qualité), aide
 - [x] 🥷 Le roster en entraînement : Hana, Oni-Maru, Tamae, et le boss Kurokumo
 - [x] 📜 Les 10 parchemins de la fiche, et des rivaux qui les jouent aussi
+- [ ] 🔊 **Le son** — il n'y en a aucun pour l'instant. À faire avant d'ajouter
+      l'option « Son » au menu : un interrupteur qui ne coupe rien serait pire
+      que pas d'interrupteur du tout.
 - [ ] 🌍 Mise en ligne publique (Vercel + Railway)
 - [ ] 🎨 Vrais modèles 3D low-poly, sons, décors variés
+- [ ] 👹 Kurokumo jouable (il est déjà dans `roster.ts`, en `pickable: false`)
 
 ## 📜 L'univers
 

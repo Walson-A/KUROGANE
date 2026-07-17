@@ -24,6 +24,8 @@ import {
   LUEUR_DUREE,
   type ParcheminKind,
 } from './parchemin'
+import { Menu, escapeHtml } from './menu'
+import type { Quality } from './settings'
 
 /**
  * La longueur de la course, en mètres. Départ → torii sacré.
@@ -42,6 +44,9 @@ const COURSE_LENGTH = 1920
  *    parfait vaut moins que ça, donc il ne rattrape jamais une vraie faute.
  *
  * Ne pas marteler ne pénalise pas : on garde la vitesse normale, c'est un bonus.
+ *
+ * ⚠️ Aucun passif de guerrier ne touche à ces valeurs : dans les 120 derniers
+ * mètres, tout le monde est à armes égales.
  */
 const SPRINT_BOOST = 0.15 // +15 % de vitesse à jauge pleine
 const SPRINT_FULL_RATE = 8 // taps/s pour remplir la jauge — au-delà, plus rien
@@ -50,7 +55,6 @@ const SPRINT_WINDOW = 0.6 // durée sur laquelle on mesure la cadence (s)
 // ————— La scène 3D —————
 const canvas = document.querySelector<HTMLCanvasElement>('#game')!
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true })
-renderer.setPixelRatio(Math.min(devicePixelRatio, 2))
 
 const scene = new THREE.Scene()
 scene.background = new THREE.Color(0x151a2c) // nuit indigo
@@ -73,12 +77,24 @@ const track = new Track(scene)
 // Les 4 rivaux existent dès le départ ; seuls les `nbBots` premiers courent.
 const bots = PROFILS.map((p) => new Bot(scene, p))
 
+/**
+ * La qualité graphique ne joue QUE sur le nombre de pixels dessinés — c'est de
+ * loin le plus gros coût sur mobile, et diviser par 2 le pixelRatio, c'est 4
+ * fois moins de pixels.
+ *
+ * On ne touche SURTOUT pas à la brume : c'est elle qui décide à quelle distance
+ * on découvre les obstacles. La rapprocher pour gagner des images/s donnerait
+ * moins de temps pour réagir — ce serait un réglage de difficulté déguisé en
+ * réglage graphique, et un désavantage en duel.
+ */
+function applyQuality(q: Quality) {
+  const mobile = matchMedia('(pointer: coarse)').matches
+  const cap = q === 'bas' ? 1 : q === 'haut' ? 2 : mobile ? 1.5 : 2
+  renderer.setPixelRatio(Math.min(devicePixelRatio, cap))
+  resize() // setSize doit être rappelé après un changement de pixelRatio
+}
+
 // ————— L'interface —————
-const overlay = document.getElementById('overlay')!
-const msg = document.getElementById('msg')!
-const btns = document.getElementById('btns')!
-const btnSolo = document.getElementById('btnSolo')!
-const btnOnline = document.getElementById('btnOnline')!
 const scoreEl = document.getElementById('score')!
 const toastEl = document.getElementById('toast')!
 const countEl = document.getElementById('count')!
@@ -86,21 +102,16 @@ const flashEl = document.getElementById('flash')!
 const fumeeEl = document.getElementById('fumee')!
 const progressEl = document.getElementById('progressfill')!
 const oppmarkEl = document.getElementById('oppmark')!
+const gapEl = document.getElementById('gap')!
 const sprintEl = document.getElementById('sprint')!
 const sprintFillEl = document.getElementById('sprintfill')!
 const slotEls = [document.getElementById('slot0')!, document.getElementById('slot1')!]
 const progressbarEl = document.getElementById('progressbar')!
-const botPickEl = document.getElementById('botpick')!
+const rankEl = document.getElementById('rank')!
+const sprintLabelEl = document.getElementById('sprintlabel')!
 const botRowEl = document.getElementById('botrow')!
 const botNamesEl = document.getElementById('botnames')!
 const btnGo = document.getElementById('btnGo')!
-const btnBack = document.getElementById('btnBack')!
-const rankEl = document.getElementById('rank')!
-
-const MENU_TEXT = `1 920 m jusqu'au torii sacré. Les obstacles te ralentissent !<br />
-  Swipe ⬅️ ➡️ ⬆️ ⬇️ pour esquiver, double-tap : sort.<br />
-  🔥 Sur les 120 derniers mètres : <b>martèle l'écran</b> pour accélérer !<br />
-  Clavier : flèches ou ZQSD, espace pour le sprint.`
 
 let toastTimer = 0
 function toast(text: string) {
@@ -126,6 +137,8 @@ let countdown = 0 // secondes avant le GO !
 let stumble = 0 // invincibilité après un trébuchement
 let netTimer = 0 // pour n'envoyer notre position que 10 fois/s
 let oppFinishedSeen = false
+let oppConnected = true // le rival est-il encore connecté ? (cf. reconnexion)
+let oppName = '' // le pseudo du rival, appris par le réseau
 let sprintTaps: number[] = [] // instants des derniers taps → cadence
 let sprintCharge = 0 // la jauge de sprint, 0 → 1
 let sprintSeen = false // la bannière ne s'annonce qu'une fois
@@ -221,9 +234,9 @@ scene.add(lueurJoueur, lueurRival)
 let lueurFin = 0 // les deux lueurs brillent jusqu'à cet instant
 let lueurCible: THREE.Object3D | null = null // le corps de l'échangé
 
-/** Dans les derniers mètres, les taps accélèrent au lieu de lancer un sort. */
-function inSprintZone() {
-  return state === 'course' && distance >= COURSE_LENGTH - SPRINT_ZONE
+/** Comment appeler le rival à l'écran quand il n'a pas mis de pseudo */
+function rivalLabel() {
+  return oppName || 'Rival'
 }
 
 /** Redessine les 2 slots. Le 1er est mis en avant : c'est le prochain lancé. */
@@ -265,16 +278,6 @@ for (let n = 1; n <= BOTS_MAX; n++) {
   botRowEl.appendChild(b)
 }
 drawBotPick()
-
-/**
- * Le menu a 2 écrans : le choix du mode, puis — pour l'entraînement seulement —
- * le choix des rivaux. On ne montre jamais les deux : le sélecteur n'a aucun
- * sens tant qu'on n'a pas dit qu'on s'entraînait.
- */
-function ecranBots(afficher: boolean) {
-  botPickEl.classList.toggle('hidden', !afficher)
-  btns.classList.toggle('hidden', afficher)
-}
 
 /** Les rivaux qui courent vraiment sur cette course. */
 function botsEnCourse() {
@@ -450,7 +453,29 @@ function lancerParchemin() {
   }
 }
 
-function showMenu(html: string) {
+/**
+ * Ton pseudo, sur ton étiquette au-dessus de ta tête.
+ * Relu à chaque départ : c'est le seul moment qui compte, et le pseudo comme le
+ * perso ont pu changer dans le menu entre deux courses.
+ */
+function updateMeLabel() {
+  player.setName(menu.settings.name)
+}
+
+/**
+ * Quand les taps servent à MARTELER plutôt qu'à esquiver :
+ * - le sprint final (les derniers mètres)
+ * - le décompte 3-2-1 : le DÉPART CANON — plus tu martèles, plus tu pars vite
+ */
+function inSprintZone() {
+  return (
+    (state === 'course' && distance >= COURSE_LENGTH - SPRINT_ZONE) ||
+    state === 'depart'
+  )
+}
+
+/** Retour à l'écran-titre. `banner` : le mot de la fin de la course précédente. */
+function backToMenu(banner?: string) {
   state = 'menu'
   online = false
   opponent.active = false
@@ -464,17 +489,17 @@ function showMenu(html: string) {
   kunaiMesh.visible = false
   oppmarkEl.classList.add('hidden')
   rankEl.classList.add('hidden')
+  gapEl.classList.add('hidden')
   countEl.classList.remove('show')
-  msg.innerHTML = html
-  ecranBots(false) // on revient toujours sur le choix du mode
-  overlay.classList.remove('hidden')
   sprintEl.classList.add('hidden')
+  menu.showTitle(banner)
 }
 
 /** Lance une course. En ligne, la graine vient du serveur : même piste pour les deux ! */
 function startRace(seed: number) {
-  player.reset()
-  opponent.reset()
+  // En duel : la grille de départ du serveur (gauche/droite). En solo : au centre.
+  player.reset(online ? net.myStartLane : 1)
+  opponent.reset(net.oppStartLane)
   track.reset(COURSE_LENGTH, seed)
   time = 0
   distance = 0
@@ -483,6 +508,7 @@ function startRace(seed: number) {
   netTimer = 0
   raceGo = false
   oppFinishedSeen = false
+  oppConnected = true
   sprintTaps = []
   sprintCharge = 0
   sprintSeen = false
@@ -526,12 +552,17 @@ function startRace(seed: number) {
 
   countdown = 3
   state = 'depart'
-  overlay.classList.add('hidden')
+  menu.hide()
+  updateMeLabel()
   countEl.classList.add('show')
-  sprintEl.classList.add('hidden')
+  // Le départ canon : la jauge est là dès le décompte, prête à être martelée
+  sprintEl.classList.remove('hidden')
+  sprintLabelEl.textContent = '🚀 DÉPART CANON'
+  sprintFillEl.style.width = '0%'
   progressEl.style.width = '0%'
   opponent.active = online
   oppmarkEl.classList.toggle('hidden', !online)
+  gapEl.classList.toggle('hidden', !online)
 }
 
 /**
@@ -564,15 +595,14 @@ function classement(): string {
 function crossFinishLine() {
   player.mesh.visible = true // au cas où on franchit la ligne en plein clignotement
   sprintEl.classList.add('hidden')
+  gapEl.classList.add('hidden')
   const t = time.toFixed(2)
 
   if (online) {
     // On prévient le serveur, et on attend le verdict s'il manque l'adversaire
     net.sendFinished(time)
     state = 'fini'
-    msg.innerHTML = `⛩️ Ligne franchie en <b>${t} s</b> !<br>L'adversaire court encore…`
-    btns.classList.add('hidden')
-    overlay.classList.remove('hidden')
+    menu.showStatus(`⛩️ Ligne franchie en <b>${t} s</b> !<br>${escapeHtml(rivalLabel())} court encore…`)
     return
   }
 
@@ -589,16 +619,17 @@ function crossFinishLine() {
   } else {
     bestLine = `Record à battre : ${best.toFixed(2)} s`
   }
-  showMenu(`⛩️ Torii sacré franchi en <b>${t} s</b> !<br>${classement()}<br>${bestLine}`)
+  backToMenu(`⛩️ Torii sacré franchi en <b>${t} s</b> !<br>${classement()}<br>${bestLine}`)
 }
 
 // ————— Le réseau —————
 const net = new Net({
   onWaiting() {
     state = 'attente'
-    msg.innerHTML = '🔎 Recherche d\'un adversaire…<br>Ouvre le jeu sur un autre appareil pour le duel !'
-    btns.classList.add('hidden')
-    overlay.classList.remove('hidden')
+    menu.showStatus(
+      '🔎 Recherche d\'un adversaire…<br>Ouvre le jeu sur un autre appareil pour le duel !',
+      true // …avec un bouton pour annuler
+    )
   },
   onCountdown(seed) {
     toast('⚔️ Adversaire trouvé !')
@@ -609,11 +640,32 @@ const net = new Net({
   },
   onOpponent(op: RemotePlayer | null) {
     if (!op) return
-    opponent.target = { lane: op.lane, y: op.y, distance: op.distance, sliding: op.sliding }
-    oppmarkEl.style.left = `${Math.min(100, (op.distance / COURSE_LENGTH) * 100)}%`
+    // Son identité : le corps n'est refait que si le guerrier change vraiment,
+    // et l'étiquette n'est redessinée que si le nom ou la couleur bougent.
+    opponent.setFighter(op.fighter)
+    oppName = op.name
+    opponent.setName(rivalLabel())
+    // On nourrit l'extrapolation, avec l'âge RÉEL du message quand la synchro
+    // d'horloge est prête. Le marqueur et l'écart, eux, sont mis à jour à
+    // chaque image dans la boucle de jeu, sur la position ESTIMÉE.
+    opponent.onNetUpdate(
+      { lane: op.lane, y: op.y, distance: op.distance, sliding: op.sliding },
+      net.ageOf(op.at)
+    )
+    // Sa connexion : coupée (écran verrouillé ?) ou revenue
+    if (op.connected !== oppConnected) {
+      oppConnected = op.connected
+      if (state === 'course' || state === 'depart') {
+        toast(
+          op.connected
+            ? `📡 ${rivalLabel()} est de retour !`
+            : `📡 ${rivalLabel()} a coupé… il a 30 s pour revenir`
+        )
+      }
+    }
     if (op.finished && !oppFinishedSeen) {
       oppFinishedSeen = true
-      if (state === 'course') toast('⚔️ L\'adversaire a franchi le torii !')
+      if (state === 'course') toast('⚔️ Le rival a franchi le torii !')
     }
   },
   onSpell(kind, d) {
@@ -623,11 +675,20 @@ const net = new Net({
     if (kind === 'onmyoji') echangerAvec(d, 'ton rival')
     else subirSort(kind)
   },
+  onAction(a) {
+    // Une action du rival, reçue à l'instant même où il l'a faite
+    opponent.applyAction(a)
+  },
+  onLink(up) {
+    // NOTRE connexion qui vacille — le SDK retente tout seul derrière
+    toast(up ? '📡 Reconnecté !' : '📡 Connexion instable… reconnexion en cours')
+  },
   onResults(iWon, oppTime) {
     const mine = `Ton temps : <b>${time.toFixed(2)} s</b>`
-    const theirs = oppTime > 0 ? ` · Adversaire : <b>${oppTime.toFixed(2)} s</b>` : ''
+    // ⚠️ escapeHtml : le pseudo vient de l'autre joueur, jamais de confiance
+    const theirs = oppTime > 0 ? ` · ${escapeHtml(rivalLabel())} : <b>${oppTime.toFixed(2)} s</b>` : ''
     net.leave()
-    showMenu(
+    backToMenu(
       iWon
         ? `🏆 <b>VICTOIRE !</b> La lame légendaire est à toi.<br>${mine}${theirs}`
         : `☁️ Vaincu… la voie du guerrier est longue.<br>${mine}${theirs}`
@@ -635,33 +696,73 @@ const net = new Net({
   },
   onError(message) {
     net.leave()
-    showMenu(`⚠️ ${message}<br>${MENU_TEXT}`)
+    backToMenu(`⚠️ ${escapeHtml(message)}`)
   },
 })
 
-// L'entraînement passe par l'écran des rivaux : on choisit, PUIS on court
-btnSolo.addEventListener('click', () => ecranBots(true))
-btnBack.addEventListener('click', () => ecranBots(false))
+// ————— Les menus —————
+const menu = new Menu({
+  onSolo() {
+    online = false
+    menu.showBotPick()
+  },
+  onOnline() {
+    online = true
+    oppName = ''
+    net.join({ name: menu.settings.name, fighter: menu.settings.fighter })
+  },
+  onFighter(f) {
+    // Le guerrier qui court derrière le menu change tout de suite : on voit son
+    // choix avant même de lancer la course.
+    player.setFighter(f)
+  },
+  onQuality(q) {
+    applyQuality(q)
+  },
+  onCancel() {
+    net.leave()
+    backToMenu()
+  },
+})
+
 btnGo.addEventListener('click', () => {
   online = false
   startRace(Math.floor(Math.random() * 2 ** 31))
 })
 
-btnOnline.addEventListener('click', () => {
-  online = true
-  net.join()
-})
+applyQuality(menu.settings.quality)
+updateMeLabel()
+menu.showTitle()
 
 // ————— Les contrôles —————
+// Chaque action est AUSSI envoyée au serveur en événement instantané : le
+// rival la voit ~50 ms plus tôt que si elle était fondue dans le flux 20 Hz.
 new Input(document.body, {
-  left: () => state === 'course' && player.moveLeft(),
-  right: () => state === 'course' && player.moveRight(),
-  // 🕊️ Le Saut de la Grue arme un second saut en plein vol
-  jump: () => state === 'course' && player.jump(time < grueFin),
-  slide: () => state === 'course' && player.slide(),
+  left: () => {
+    if (state !== 'course') return
+    player.moveLeft()
+    if (online) net.sendAction({ t: 'lane', lane: player.currentLane })
+  },
+  right: () => {
+    if (state !== 'course') return
+    player.moveRight()
+    if (online) net.sendAction({ t: 'lane', lane: player.currentLane })
+  },
+  jump: () => {
+    if (state !== 'course') return
+    const v = player.jump(time < grueFin)
+    if (online && v > 0) net.sendAction({ t: 'jump', v })
+  },
+  slide: () => {
+    if (state !== 'course') return
+    const d = player.slide()
+    if (online && d > 0) net.sendAction({ t: 'slide', d })
+  },
   spell: () => state === 'course' && lancerParchemin(),
-  // On horodate chaque coup : la boucle de jeu en déduit la cadence
-  sprint: () => sprintTaps.push(time),
+  // On horodate chaque coup : la boucle de jeu en déduit la cadence.
+  // Horloge de la page (pas le chrono de course) : le chrono est figé à 0
+  // pendant le décompte, or le DÉPART CANON se martèle pendant le décompte !
+  sprint: () => sprintTaps.push(performance.now() / 1000),
   isSprint: inSprintZone,
 })
 
@@ -674,18 +775,48 @@ function tick(now?: number) {
   const dt = Math.min(timer.getDelta(), 0.05) // temps écoulé depuis la dernière image
 
   if (state === 'depart') {
-    // 3… 2… 1… GO ! (en ligne, c'est le serveur qui donne le vrai GO)
-    countdown -= dt
-    countEl.textContent = countdown > 0 ? `${Math.ceil(countdown)}` : 'GO !'
-    const ready = online ? raceGo : countdown <= -0.6
-    if (ready && countdown <= 0) {
+    // 3… 2… 1… GO ! En duel, le départ est PROGRAMMÉ à une heure serveur
+    // précise (startAt) : les deux téléphones tirent au même instant absolu,
+    // quel que soit leur ping. (Avant, chacun partait à la réception du
+    // signal — le mieux connecté partait toujours en premier !)
+    if (online && net.startAt > 0 && net.clockReady) {
+      countdown = (net.startAt - net.serverNow()) / 1000
+    } else {
+      countdown -= dt // solo, ou horloge pas encore synchronisée
+    }
+    countEl.textContent = countdown > 0 ? `${Math.min(3, Math.ceil(countdown))}` : 'GO !'
+
+    // ————— Le DÉPART CANON : marteler pendant le décompte —————
+    const pnow = performance.now() / 1000
+    sprintTaps = sprintTaps.filter((t) => pnow - t < SPRINT_WINDOW)
+    const startRate = sprintTaps.length / SPRINT_WINDOW
+    sprintCharge += (Math.min(1, startRate / SPRINT_FULL_RATE) - sprintCharge) * Math.min(1, dt * 8)
+    sprintFillEl.style.width = `${sprintCharge * 100}%`
+
+    // Le GO : à l'heure programmée en duel (petit temps d'affichage du
+    // « GO ! » identique pour les deux), au bout du décompte en solo.
+    const ready = online
+      ? net.startAt > 0 && net.clockReady
+        ? countdown <= -0.4
+        : raceGo && countdown <= 0 // secours si l'horloge n'est pas prête
+      : countdown <= -0.6
+    if (ready) {
       countEl.classList.remove('show')
       state = 'course'
-      speed = 12
+      // La jauge convertit le martèlement en vitesse initiale : à fond, on
+      // part directement à la vitesse de croisière (≈ 0,3 s de gagnées) —
+      // toujours moins qu'un trébuchement : ça départage, ça ne décide pas.
+      speed = 12 + 10 * sprintCharge
+      if (sprintCharge > 0.75) toast('🚀 Départ canon !')
+      if (online) opponent.go()
+      sprintTaps = []
+      sprintCharge = 0
+      sprintEl.classList.add('hidden')
+      sprintLabelEl.textContent = 'SPRINT FINAL'
     } else if (online && countdown < -4) {
       // Le GO du serveur n'arrive pas : connexion perdue
       net.leave()
-      showMenu(`⚠️ Connexion perdue au départ.<br>${MENU_TEXT}`)
+      backToMenu('⚠️ Connexion perdue au départ.')
     }
     player.update(dt)
     opponent.update(dt, distance)
@@ -696,7 +827,8 @@ function tick(now?: number) {
 
     // ————— Sprint final : plus on martèle vite, plus on accélère —————
     const sprinting = inSprintZone()
-    sprintTaps = sprintTaps.filter((t) => time - t < SPRINT_WINDOW)
+    const pnow = performance.now() / 1000
+    sprintTaps = sprintTaps.filter((t) => pnow - t < SPRINT_WINDOW)
 
     // La cadence est PLAFONNÉE à SPRINT_FULL_RATE : au-delà, plus aucun gain.
     // C'est ce qui met le pouce d'un mobile et un autoclicker à égalité.
@@ -776,14 +908,14 @@ function tick(now?: number) {
       } else if (
         online &&
         opponent.active &&
-        opponent.target.lane === portail.lane &&
-        opponent.target.distance > avant &&
-        opponent.target.distance <= portail.d
+        opponent.currentLane === portail.lane &&
+        opponent.distanceNow > avant &&
+        opponent.distanceNow <= portail.d
       ) {
         // En ligne : on lui envoie NOTRE place, il prendra la sienne. Chacun
         // calcule l'échange de son côté — à 100 ms de ping, l'écart est de ~3 m.
         net.sendSpell('onmyoji', distance)
-        const sien = opponent.target.distance
+        const sien = opponent.distanceNow
         portail = null
         portailMesh.visible = false
         echangerAvec(sien, 'ton rival', opponent.mesh)
@@ -847,10 +979,13 @@ function tick(now?: number) {
             : '🛡️ L\'armure vole en éclats !'
         )
       } else {
-        speed = Math.max(6, speed * 0.35) // grosse perte de vitesse
+        speed = Math.max(6, speed * player.grip)
         stumble = 1.2 // brève invincibilité le temps de se relever
         flash()
         toast('💥 Trébuché !')
+        // Le rival doit le voir TOUT DE SUITE : sa version de nous ralentit
+        // immédiatement (au lieu que son extrapolation nous fasse dépasser à tort)
+        if (online) net.sendAction({ t: 'stumble', keep: player.grip })
       }
     }
     // Le perso clignote tant qu'il se relève
@@ -889,10 +1024,10 @@ function tick(now?: number) {
       sprintFillEl.style.width = `${sprintCharge * 100}%`
     }
 
-    // En ligne : on envoie notre position 10 fois par seconde
+    // En ligne : on envoie notre position 20 fois par seconde
     if (online) {
       netTimer += dt
-      if (netTimer >= 0.1) {
+      if (netTimer >= 0.05) {
         netTimer = 0
         net.sendProgress({
           lane: player.currentLane,
@@ -901,6 +1036,17 @@ function tick(now?: number) {
           sliding: player.isSliding,
         })
       }
+
+      // L'extrapolation a besoin de la latence mesurée (la moitié du ping)
+      opponent.latency = net.rtt / 2
+
+      // Marqueur + écart, sur la position ESTIMÉE du rival — la seule honnête
+      const oppD = opponent.distanceNow
+      oppmarkEl.style.left = `${Math.min(100, (oppD / COURSE_LENGTH) * 100)}%`
+      const lead = oppD - distance
+      // textContent, pas innerHTML : le pseudo vient de l'autre joueur
+      gapEl.textContent = `${rivalLabel()} ${lead >= 0 ? '+' : '−'}${Math.abs(lead).toFixed(0)} m`
+      gapEl.classList.toggle('ahead', lead >= 0)
     }
 
     // ⛩️ Ligne d'arrivée !
@@ -915,7 +1061,17 @@ function tick(now?: number) {
   // La caméra suit en douceur la ligne du joueur
   camera.position.x += (player.mesh.position.x * 0.55 - camera.position.x) * Math.min(1, dt * 5)
 
+  // ————— Les étiquettes de nom, au-dessus des têtes —————
+  // Après le déplacement des persos ET de la caméra, sinon elles auraient une
+  // image de retard. Au menu, on les cache : le décor tourne à vide derrière.
+  const racing = state === 'depart' || state === 'course' || state === 'fini'
+  // player.mesh.visible clignote quand on se relève d'un trébuchement :
+  // l'étiquette clignote avec lui, c'est le même personnage.
+  player.tag.follow(player.mesh, camera, racing && player.mesh.visible)
+  opponent.tag.follow(opponent.mesh, camera, racing && opponent.active && opponent.mesh.visible)
+
   renderer.render(scene, camera)
+  menu.update(dt) // l'aperçu 3D du guerrier, quand le menu de sélection est ouvert
 }
 
 // ————— Adaptation à la taille de l'écran —————
