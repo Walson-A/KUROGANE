@@ -16,6 +16,7 @@ export interface NetCallbacks {
   onCountdown(seed: number): void // adversaire trouvé ! 3, 2, 1…
   onGo(): void // GO officiel du serveur
   onOpponent(op: RemotePlayer | null): void // nouvelles infos sur l'adversaire
+  onSpell(kind: string): void // l'adversaire nous a lancé un sort !
   onResults(iWon: boolean, oppTime: number): void // fin de course
   onError(message: string): void // serveur injoignable, déconnexion…
 }
@@ -73,6 +74,8 @@ export class Net {
     this.cb.onWaiting()
 
     this.room.onStateChange((state: any) => this.readState(state))
+    // Un sort nous arrive dessus : le serveur l'a relayé depuis l'adversaire
+    this.room.onMessage('spell', (msg: any) => this.cb.onSpell(String(msg?.kind ?? '')))
     this.room.onError(() => this.cb.onError('Erreur de connexion.'))
     this.room.onLeave(() => {
       this.room = null
@@ -118,6 +121,11 @@ export class Net {
   /** Envoie ma position au serveur (appelé ~10 fois par seconde) */
   sendProgress(p: { lane: number; y: number; distance: number; sliding: boolean }) {
     this.room?.send('progress', p)
+  }
+
+  /** Envoie un sort offensif dans les pattes de l'adversaire */
+  sendSpell(kind: string) {
+    this.room?.send('spell', { kind })
   }
 
   /** Prévient le serveur : j'ai franchi la ligne ! */

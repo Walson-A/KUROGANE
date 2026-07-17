@@ -12,7 +12,7 @@ avec Claude Code comme développeur.
 
 ## 🎮 Le jeu
 
-- **Une course de 600 m** sur 3 lignes, départ 3-2-1-GO, arrivée au torii doré
+- **Une course de 1 920 m** (≈ 75 s) sur 3 lignes, départ 3-2-1-GO, arrivée au torii doré
 - **Esquive** : barrières (saute !), barres hautes (glisse !), murs (change de ligne !)
 - Toucher un obstacle ne tue pas : tu **trébuches** et perds ta vitesse — le
   perdant est celui qui arrive 2ᵉ
@@ -63,7 +63,8 @@ kurogane/
 │   ├── main.ts         Le chef d'orchestre : scène 3D, boucle de jeu, états
 │   ├── player.ts       Yasuke : 3 lignes, saut, gravité, glissade, hitbox
 │   ├── opponent.ts     Kurokumo, le rival : position reçue du réseau, interpolée
-│   ├── track.ts        La piste : obstacles PLANIFIÉS par graine, torii, arrivée
+│   ├── track.ts        La piste : obstacles + rouleaux PLANIFIÉS par graine
+│   ├── parchemin.ts    Le catalogue des sorts et tous leurs réglages
 │   ├── net.ts          La connexion au serveur : rejoindre, envoyer, recevoir
 │   ├── input.ts        Clavier + swipes + double-tap + martèlement du sprint
 │   └── style.css       L'habillage de l'interface
@@ -97,8 +98,8 @@ plutôt qu'au feeling, en prenant **le trébuchement comme étalon** :
 | Repère | Coût / gain |
 |---|---|
 | Un trébuchement | **0,53 s** (≈ 15 m) |
-| Sprint parfait (8 taps/s) | **0,37 s** (≈ 10 m) |
-| Sprint moyen (5 taps/s) | 0,25 s (≈ 7 m) |
+| Sprint parfait (8 taps/s) | **0,35 s** (≈ 10 m) |
+| Sprint moyen (5 taps/s) | 0,23 s (≈ 7 m) |
 | Ne pas marteler | 0 s — c'est un bonus, jamais une punition |
 
 Le sprint parfait vaut **moins qu'un trébuchement** : il départage deux joueurs
@@ -116,12 +117,44 @@ Les trois constantes sont en tête de [`src/main.ts`](src/main.ts) :
 zone est `SPRINT_ZONE` dans [`src/track.ts`](src/track.ts), partagée avec le
 générateur d'obstacles pour que les deux ne puissent pas se désynchroniser.
 
+## 📜 Les parchemins
+
+On ramasse des rouleaux sur la piste (environ un toutes les **8 secondes**).
+**Tous les rouleaux se ressemblent** : on ne sait ce qu'on a décroché qu'une
+fois dans la main — comme les boîtes de Mario Kart.
+
+On en porte **deux au maximum**, et on est obligé de lancer **le plus ancien
+d'abord** : une file d'attente, pas un choix. Impossible de garder le bon sort
+au chaud jusqu'à l'arrivée ; les mains pleines, on ne ramasse plus rien.
+
+| Parchemin | Effet | Réglage | Vaut |
+|---|---|---|---|
+| 🌀 **Vent du Nord** | dash | +35 % pendant 1,5 s | 0,53 s gagnées |
+| 🛡️ **Armure de Fer** | bouclier | absorbe un trébuchement | 0,53 s économisées |
+| ⛓️ **Kusarigama** | ralentit le rival | ×0,7 pendant 2 s | 0,60 s perdues par la victime |
+
+Les trois valent **volontairement la même chose** (≈ 0,53 s, soit un
+trébuchement). Sans ça, un seul serait joué et les deux autres feraient de la
+figuration : le choix doit être tactique, pas mathématique.
+
+Les réglages sont tous dans [`src/parchemin.ts`](src/parchemin.ts).
+
+**Le sort est coupé pendant le sprint final** : sur mobile, le pouce martèle
+déjà l'écran. Sans cette règle, le clavier (touche `E`) pourrait encore lancer
+là où le mobile ne peut plus. Il faut donc vider ses rouleaux **avant** les
+120 derniers mètres — c'est une vraie décision.
+
+Côté réseau, le serveur ne fait que **relayer** le Kusarigama : il ne simule
+aucun effet, c'est la victime qui l'applique. Il vérifie juste que le sort
+existe, pour qu'un client bricolé ne puisse pas inventer de sortilège.
+
 ## 🗺️ Roadmap
 
-- [x] Course solo 600 m : obstacles, trébuchement, chrono, record
+- [x] Course solo 1 920 m : obstacles, trébuchement, chrono, record
 - [x] Duel en ligne : matchmaking, piste partagée, adversaire visible, victoire
 - [x] 🔥 Sprint final au martèlement, calibré pour départager les ex æquo
-- [ ] 📜 Les parchemins de techniques (dash, bouclier, kunai explosif…)
+- [x] 📜 Parchemins, 1er lot : Vent du Nord, Armure de Fer, Kusarigama
+- [ ] 📜 Les 7 autres parchemins (Kunai explosif, Bombe fumigène, Onmyōji…)
 - [ ] 🌍 Mise en ligne publique (Vercel + Railway)
 - [ ] 🎨 Vrais modèles 3D low-poly, sons, décors variés
 - [ ] 🥷 Le roster : Hana, Oni-Maru, Tamae, et le boss Kurokumo

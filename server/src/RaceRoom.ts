@@ -29,6 +29,12 @@ export class RaceState extends Schema {
 const COUNTDOWN_MS = 3500
 
 /**
+ * Les seuls sorts qu'un client a le droit de relayer.
+ * Le serveur ne connaît pas les effets — juste la liste de ce qui est légal.
+ */
+const SORTS_OFFENSIFS = ['kusarigama']
+
+/**
  * Une salle de course : 2 joueurs, une piste, un vainqueur.
  * Colyseus crée une nouvelle salle automatiquement dès qu'une est pleine.
  */
@@ -48,6 +54,18 @@ export class RaceRoom extends Room<{ state: RaceState }> {
       p.y = Number(data.y) || 0
       p.distance = Number(data.distance) || 0
       p.sliding = !!data.sliding
+    })
+
+    // Un joueur lance un sort offensif sur l'autre. Le serveur ne fait que
+    // relayer : il ne simule pas l'effet, c'est la victime qui l'applique.
+    this.onMessage('spell', (client, data: any) => {
+      const p = this.state.players.get(client.sessionId)
+      if (!p || this.state.phase !== 'racing' || p.finished) return
+
+      // On ne relaie que des sorts connus : un client bricole est vite arrive
+      if (!SORTS_OFFENSIFS.includes(String(data?.kind))) return
+
+      this.broadcast('spell', { kind: String(data.kind) }, { except: client })
     })
 
     // Un joueur a franchi la ligne !

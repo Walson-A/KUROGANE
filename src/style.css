@@ -41,6 +41,38 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
+/* ——— Les 2 slots de parchemins ——— */
+#spells {
+  display: flex;
+  gap: 8px;
+}
+.slot {
+  width: 42px;
+  height: 42px;
+  display: grid;
+  place-items: center;
+  font-size: 1.35rem;
+  border-radius: 9px;
+  background: rgba(21, 26, 44, 0.6);
+  border: 1px solid #3d4560;
+  color: #6b7594;
+  text-shadow: none;
+}
+/* Le 1er slot est celui qu'on lancera : on ne choisit pas son ordre */
+.slot.actif {
+  border-color: #d6ac5a;
+  box-shadow: 0 0 12px rgba(214, 172, 90, 0.35);
+}
+/* Un rouleau vient d'arriver : petit sursaut pour le signaler */
+.slot.plein {
+  animation: slotpop 0.3s ease-out;
+}
+@keyframes slotpop {
+  50% {
+    transform: scale(1.25);
+  }
+}
+
 /* ——— Barre de progression de la course ——— */
 #progressbar {
   position: fixed;

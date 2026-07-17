@@ -5,9 +5,22 @@ import { Opponent } from './opponent'
 import { Track, SPRINT_ZONE } from './track'
 import { Input } from './input'
 import { Net, type RemotePlayer } from './net'
+import {
+  PARCHEMINS,
+  SLOTS_MAX,
+  VENT_BOOST,
+  VENT_DUREE,
+  KUSARIGAMA_FACTEUR,
+  KUSARIGAMA_DUREE,
+  type ParcheminKind,
+} from './parchemin'
 
-/** La longueur de la course, en mètres. Départ → torii sacré. */
-const COURSE_LENGTH = 600
+/**
+ * La longueur de la course, en mètres. Départ → torii sacré.
+ * Calibrée pour qu'une course propre — aucun parchemin, aucun trébuchement,
+ * aucun martèlement — dure 75 s à la vitesse de croisière ci-dessous.
+ */
+const COURSE_LENGTH = 1920
 
 /**
  * ————— Le sprint final —————
@@ -61,8 +74,9 @@ const progressEl = document.getElementById('progressfill')!
 const oppmarkEl = document.getElementById('oppmark')!
 const sprintEl = document.getElementById('sprint')!
 const sprintFillEl = document.getElementById('sprintfill')!
+const slotEls = [document.getElementById('slot0')!, document.getElementById('slot1')!]
 
-const MENU_TEXT = `600 m jusqu'au torii sacré. Les obstacles te ralentissent !<br />
+const MENU_TEXT = `1 920 m jusqu'au torii sacré. Les obstacles te ralentissent !<br />
   Swipe ⬅️ ➡️ ⬆️ ⬇️ pour esquiver, double-tap : sort.<br />
   🔥 Sur les 120 derniers mètres : <b>martèle l'écran</b> pour accélérer !<br />
   Clavier : flèches ou ZQSD, espace pour le sprint.`
@@ -95,9 +109,66 @@ let sprintTaps: number[] = [] // instants des derniers taps → cadence
 let sprintCharge = 0 // la jauge de sprint, 0 → 1
 let sprintSeen = false // la bannière ne s'annonce qu'une fois
 
+// ————— Les parchemins —————
+// Une FILE d'attente : on lance toujours le plus ancien ramassé. Impossible de
+// garder le bon sort au chaud — c'est ce qui rend le ramassage tendu.
+let slots: ParcheminKind[] = []
+let ventFin = 0 // 🌀 le dash court jusqu'à cet instant du chrono
+let kusarigamaFin = 0 // ⛓️ on est bridé jusqu'à cet instant
+let armure = false // 🛡️ un choc en réserve ?
+
 /** Dans les derniers mètres, les taps accélèrent au lieu de lancer un sort. */
 function inSprintZone() {
   return state === 'course' && distance >= COURSE_LENGTH - SPRINT_ZONE
+}
+
+/** Redessine les 2 slots. Le 1er est mis en avant : c'est le prochain lancé. */
+function drawSlots(pop = -1) {
+  slotEls.forEach((el, i) => {
+    const k = slots[i]
+    el.textContent = k ? PARCHEMINS[k].icone : '—'
+    el.classList.toggle('actif', i === 0 && !!k)
+    if (i === pop) {
+      el.classList.remove('plein')
+      void el.offsetWidth // relance l'animation même sur un ramassage consécutif
+      el.classList.add('plein')
+    }
+  })
+}
+
+/** Applique un sort reçu (ou lancé sur soi). */
+function subirSort(kind: string) {
+  if (kind === 'kusarigama') {
+    kusarigamaFin = time + KUSARIGAMA_DUREE
+    flash()
+    toast('⛓️ Kusarigama ! Tu es entravé…')
+  }
+}
+
+/** Lance le parchemin le plus ancien. Rien à faire s'il n'y en a pas. */
+function lancerParchemin() {
+  // Dans le sprint, tous les taps servent à marteler : pas de sort ici, sinon
+  // le clavier pourrait encore lancer (touche E) là où le mobile ne peut plus.
+  if (inSprintZone()) {
+    toast('🔥 Pas de parchemin dans le sprint !')
+    return
+  }
+  const kind = slots.shift()
+  if (!kind) {
+    toast('📜 Aucun parchemin en main')
+    return
+  }
+  const p = PARCHEMINS[kind]
+  drawSlots()
+  toast(p.cri)
+
+  if (kind === 'vent') ventFin = time + VENT_DUREE
+  else if (kind === 'armure') armure = true
+  else if (p.cible === 'adversaire') {
+    // Le serveur relaie à la victime, qui applique l'effet elle-même
+    if (online) net.sendSpell(kind)
+    else toast('⛓️ Kusarigama… mais tu cours seul !')
+  }
 }
 
 function showMenu(html: string) {
@@ -127,6 +198,11 @@ function startRace(seed: number) {
   sprintTaps = []
   sprintCharge = 0
   sprintSeen = false
+  slots = []
+  ventFin = 0
+  kusarigamaFin = 0
+  armure = false
+  drawSlots()
   countdown = 3
   state = 'depart'
   overlay.classList.add('hidden')
@@ -154,10 +230,13 @@ function crossFinishLine() {
 
   // Solo : meilleur temps gardé en mémoire sur le téléphone
   state = 'fini'
-  const best = Number(localStorage.getItem('kurogane-best') ?? Infinity)
+  // La clé porte la longueur : un record établi sur une course plus courte
+  // serait imbattable et resterait affiché à vie.
+  const CLE_RECORD = `kurogane-best-${COURSE_LENGTH}`
+  const best = Number(localStorage.getItem(CLE_RECORD) ?? Infinity)
   let bestLine: string
   if (time < best) {
-    localStorage.setItem('kurogane-best', String(time))
+    localStorage.setItem(CLE_RECORD, String(time))
     bestLine = '🏆 Nouveau record personnel !'
   } else {
     bestLine = `Record à battre : ${best.toFixed(2)} s`
@@ -188,6 +267,9 @@ const net = new Net({
       oppFinishedSeen = true
       if (state === 'course') toast('⚔️ L\'adversaire a franchi le torii !')
     }
+  },
+  onSpell(kind) {
+    if (state === 'course') subirSort(kind)
   },
   onResults(iWon, oppTime) {
     const mine = `Ton temps : <b>${time.toFixed(2)} s</b>`
@@ -221,7 +303,7 @@ new Input(document.body, {
   right: () => state === 'course' && player.moveRight(),
   jump: () => state === 'course' && player.jump(),
   slide: () => state === 'course' && player.slide(),
-  spell: () => state === 'course' && toast('📜 Pas de parchemin équipé… (bientôt !)'),
+  spell: () => state === 'course' && lancerParchemin(),
   // On horodate chaque coup : la boucle de jeu en déduit la cadence
   sprint: () => sprintTaps.push(time),
   isSprint: inSprintZone,
@@ -266,8 +348,12 @@ function tick(now?: number) {
 
     // La vitesse de croisière augmente au fil de la course…
     let cruise = 22 + 8 * (distance / COURSE_LENGTH)
-    // …et le martèlement la pousse encore un peu dans les derniers mètres
+    // …le martèlement la pousse encore un peu dans les derniers mètres…
     if (sprinting) cruise *= 1 + SPRINT_BOOST * sprintCharge
+    // …et les parchemins par-dessus. Un dash sous entrave reste bride : les
+    // deux effets se multiplient au lieu de s'annuler.
+    if (time < ventFin) cruise *= 1 + VENT_BOOST
+    if (time < kusarigamaFin) cruise *= KUSARIGAMA_FACTEUR
     speed += (cruise - speed) * Math.min(1, dt * 1.2)
 
     distance += speed * dt
@@ -275,13 +361,33 @@ function tick(now?: number) {
     opponent.update(dt, distance)
     track.update(dt, speed, distance)
 
+    // 📜 Ramassage d'un rouleau — on découvre son contenu maintenant
+    const trouve = track.ramasse(player.hitbox())
+    if (trouve) {
+      if (slots.length < SLOTS_MAX) {
+        slots.push(trouve)
+        drawSlots(slots.length - 1)
+        toast(`📜 ${PARCHEMINS[trouve].icone} ${PARCHEMINS[trouve].nom}`)
+      } else {
+        // Les deux mains sont pleines : il faut en lancer un pour reprendre
+        toast('✋ Mains pleines — lance un parchemin !')
+      }
+    }
+
     // Trébuchement : toucher un obstacle RALENTIT (on ne meurt pas, c'est une course)
     stumble = Math.max(0, stumble - dt)
     if (stumble <= 0 && track.hits(player.hitbox())) {
-      speed = Math.max(6, speed * 0.35) // grosse perte de vitesse
-      stumble = 1.2 // brève invincibilité le temps de se relever
-      flash()
-      toast('💥 Trébuché !')
+      if (armure) {
+        // 🛡️ L'Armure de Fer avale le choc : on garde toute sa vitesse
+        armure = false
+        stumble = 1.2
+        toast('🛡️ L\'armure encaisse !')
+      } else {
+        speed = Math.max(6, speed * 0.35) // grosse perte de vitesse
+        stumble = 1.2 // brève invincibilité le temps de se relever
+        flash()
+        toast('💥 Trébuché !')
+      }
     }
     // Le perso clignote tant qu'il se relève
     player.mesh.visible = stumble <= 0 || Math.floor(stumble * 12) % 2 === 0

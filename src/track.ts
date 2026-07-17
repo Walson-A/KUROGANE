@@ -1,5 +1,6 @@
 import * as THREE from 'three'
 import { LANES } from './player'
+import { TIRAGE, type ParcheminKind } from './parchemin'
 
 /** Les 3 familles d'obstacles : comment les franchir */
 type Kind = 'saut' | 'glissade' | 'mur'
@@ -25,6 +26,19 @@ interface PlannedObstacle {
   d: number
   lane: number
   kind: Kind
+}
+
+/** Un rouleau posé sur la piste. Le `kind` est déjà tiré, mais invisible. */
+interface PlannedParchemin {
+  d: number
+  lane: number
+  kind: ParcheminKind
+}
+
+interface Rouleau {
+  mesh: THREE.Group
+  kind: ParcheminKind
+  active: boolean
 }
 
 /**
@@ -54,6 +68,10 @@ export class Track {
   private finish: THREE.Group // la ligne d'arrivée : le torii sacré
   private plan: PlannedObstacle[] = [] // tous les obstacles de la course, décidés à l'avance
   private planIdx = 0 // le prochain obstacle à faire apparaître
+  private rouleaux: Rouleau[] = []
+  private parcheminPlan: PlannedParchemin[] = []
+  private parcheminIdx = 0
+  private tempsRouleaux = 0 // horloge d'animation des rouleaux (rotation, flottement)
   private courseLength = 0
 
   constructor(scene: THREE.Scene) {
@@ -103,10 +121,17 @@ export class Track {
       o.active = false
       o.mesh.visible = false
     }
+    for (const r of this.rouleaux) {
+      r.active = false
+      r.mesh.visible = false
+    }
     this.courseLength = length
     this.finish.position.z = -length
     this.plan = buildPlan(length, seed)
     this.planIdx = 0
+    // Les rouleaux sont places APRES les obstacles : ils doivent s'en ecarter
+    this.parcheminPlan = buildParcheminPlan(length, seed, this.plan)
+    this.parcheminIdx = 0
   }
 
   /**
@@ -135,6 +160,19 @@ export class Track {
       }
     }
 
+    // Les rouleaux tournent et flottent : impossible de les rater du regard
+    this.tempsRouleaux += dt
+    for (const r of this.rouleaux) {
+      if (!r.active) continue
+      r.mesh.position.z += dz
+      r.mesh.rotation.y = this.tempsRouleaux * 2.2
+      r.mesh.position.y = 1.15 + Math.sin(this.tempsRouleaux * 3) * 0.12
+      if (r.mesh.position.z > DESPAWN_Z) {
+        r.active = false
+        r.mesh.visible = false
+      }
+    }
+
     if (distance >= 0) {
       // La ligne d'arrivée est TOUJOURS placée d'après la distance parcourue :
       // impossible qu'elle se désynchronise.
@@ -149,7 +187,51 @@ export class Track {
         this.spawn(p.kind, p.lane, -(p.d - distance))
         this.planIdx++
       }
+
+      // Idem pour les rouleaux
+      while (
+        this.parcheminIdx < this.parcheminPlan.length &&
+        this.parcheminPlan[this.parcheminIdx].d <= distance + LOOKAHEAD
+      ) {
+        const p = this.parcheminPlan[this.parcheminIdx]
+        this.spawnRouleau(p.kind, p.lane, -(p.d - distance))
+        this.parcheminIdx++
+      }
     }
+  }
+
+  private spawnRouleau(kind: ParcheminKind, lane: number, z: number) {
+    let r = this.rouleaux.find((r) => !r.active)
+    if (!r) {
+      r = { mesh: makeRouleauMesh(), kind, active: false }
+      this.rouleaux.push(r)
+      this.scene.add(r.mesh)
+    }
+    r.kind = kind // recyclé : le rouleau change de contenu, pas d'apparence
+    r.mesh.position.x = LANES[lane]
+    r.mesh.position.z = z
+    r.mesh.visible = true
+    r.active = true
+  }
+
+  /**
+   * Le joueur ramasse-t-il un rouleau ? Renvoie le parchemin décroché (et le
+   * retire de la piste), ou null. On ne sait ce qu'on a gagné qu'ici.
+   */
+  ramasse(playerBox: THREE.Box3): ParcheminKind | null {
+    const box = new THREE.Box3()
+    for (const r of this.rouleaux) {
+      if (!r.active) continue
+      if (Math.abs(r.mesh.position.z) > 2.5) continue
+      box.setFromObject(r.mesh)
+      box.expandByScalar(0.25) // genereux : ramasser doit etre un plaisir, pas un test
+      if (box.intersectsBox(playerBox)) {
+        r.active = false
+        r.mesh.visible = false
+        return r.kind
+      }
+    }
+    return null
   }
 
   private spawn(kind: Kind, lane: number, z: number) {
@@ -200,6 +282,80 @@ function buildPlan(length: number, seed: number): PlannedObstacle[] {
     d += 10 + rng() * 7
   }
   return plan
+}
+
+/**
+ * Place les rouleaux : environ un tous les 180 à 270 m, jamais dans la zone de
+ * sprint. Le contenu est tiré ici, mais reste invisible jusqu'au ramassage.
+ *
+ * L'espacement vise **un ramassage toutes les ~8 s** (on court à ~26 m/s) :
+ * assez pour que chaque rouleau soit un petit évènement, assez peu pour ne pas
+ * avoir les deux mains pleines en permanence. Un rouleau toutes les 4 s rendait
+ * le système bavard et sans enjeu.
+ *
+ * On décale la graine (`^`) : sans ça les rouleaux suivraient exactement le
+ * même tirage que les obstacles et retomberaient toujours au même endroit.
+ */
+function buildParcheminPlan(
+  length: number,
+  seed: number,
+  obstacles: PlannedObstacle[]
+): PlannedParchemin[] {
+  const rng = mulberry32(seed ^ 0x5f3a7c1d)
+  const plan: PlannedParchemin[] = []
+
+  let d = 120 // on laisse le temps de prendre sa vitesse
+  while (d < length - SPRINT_ZONE - 15) {
+    // Un rouleau colle a une rangee d'obstacles serait un piege : il faudrait
+    // se prendre la barriere pour l'attraper. On l'ecarte jusqu'a 6 m de tout.
+    let pos = d
+    for (let i = 0; i < 10 && obstacles.some((o) => Math.abs(o.d - pos) < 6); i++) {
+      pos += 2
+    }
+    plan.push({
+      d: pos,
+      lane: Math.floor(rng() * 3),
+      kind: TIRAGE[Math.floor(rng() * TIRAGE.length)],
+    })
+    d += 180 + rng() * 90
+  }
+  return plan
+}
+
+/**
+ * Le visuel d'un rouleau : le MÊME pour les trois parchemins.
+ * On ne découvre son contenu qu'en le ramassant — comme une boîte de Mario Kart.
+ */
+function makeRouleauMesh(): THREE.Group {
+  const g = new THREE.Group()
+
+  // Le papier : un cylindre couche en travers de la piste
+  const papier = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.17, 0.17, 0.78, 12),
+    new THREE.MeshStandardMaterial({ color: 0xf0e8d8, roughness: 0.85 })
+  )
+  papier.rotation.z = Math.PI / 2
+
+  // Les deux embouts vermillon, et le lien rouge au centre
+  const bois = new THREE.MeshStandardMaterial({ color: 0xc33a2c, roughness: 0.5 })
+  for (const x of [-0.42, 0.42]) {
+    const embout = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.2, 0.09, 12), bois)
+    embout.rotation.z = Math.PI / 2
+    embout.position.x = x
+    g.add(embout)
+  }
+  const lien = new THREE.Mesh(new THREE.CylinderGeometry(0.19, 0.19, 0.1, 12), bois)
+  lien.rotation.z = Math.PI / 2
+
+  // Une lueur doree : le rouleau doit accrocher l'oeil dans la nuit
+  const halo = new THREE.Mesh(
+    new THREE.SphereGeometry(0.5, 10, 10),
+    new THREE.MeshBasicMaterial({ color: 0xd6ac5a, transparent: true, opacity: 0.12 })
+  )
+
+  g.add(papier, lien, halo)
+  g.position.y = 1.15
+  return g
 }
 
 /** Fabrique le visuel d'un obstacle selon son type */
