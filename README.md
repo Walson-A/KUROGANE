@@ -119,9 +119,14 @@ générateur d'obstacles pour que les deux ne puissent pas se désynchroniser.
 
 ## 📜 Les parchemins
 
-On ramasse des rouleaux sur la piste (environ un toutes les **8 secondes**).
+On ramasse des rouleaux sur la piste (environ un toutes les **7 secondes**).
 **Tous les rouleaux se ressemblent** : on ne sait ce qu'on a décroché qu'une
 fois dans la main — comme les boîtes de Mario Kart.
+
+Un rouleau est toujours posé dans une **ligne libre** : on ne cherche pas un
+trou vide entre deux rangées (avec des obstacles tous les 10-17 m, il n'en
+existe pas toujours), mais une ligne que personne n'occupe autour de ce point.
+Ramasser un parchemin ne doit jamais coûter un trébuchement.
 
 On en porte **deux au maximum**, et on est obligé de lancer **le plus ancien
 d'abord** : une file d'attente, pas un choix. Impossible de garder le bon sort
@@ -130,12 +135,17 @@ au chaud jusqu'à l'arrivée ; les mains pleines, on ne ramasse plus rien.
 | Parchemin | Effet | Réglage | Vaut |
 |---|---|---|---|
 | 🌀 **Vent du Nord** | dash | +35 % pendant 1,5 s | 0,53 s gagnées |
-| 🛡️ **Armure de Fer** | bouclier | absorbe un trébuchement | 0,53 s économisées |
+| 🛡️ **Armure de Fer** | jauge de solidité | 2 barrières **ou** 1 mur | 0,53 à 1,06 s économisées |
 | ⛓️ **Kusarigama** | ralentit le rival | ×0,7 pendant 2 s | 0,60 s perdues par la victime |
 
-Les trois valent **volontairement la même chose** (≈ 0,53 s, soit un
-trébuchement). Sans ça, un seul serait joué et les deux autres feraient de la
-figuration : le choix doit être tactique, pas mathématique.
+L'**Armure de Fer** n'est pas un bouclier à usage unique mais une jauge : une
+barrière ou une barre haute ne l'entame qu'à moitié, un **mur** la met en
+pièces d'un coup. Elle peut donc sauver deux petits chocs, ou un seul gros.
+
+Le dash et le Kusarigama valent **volontairement la même chose** (≈ 0,53 s,
+soit un trébuchement) : sans ça, un seul serait joué et l'autre ferait de la
+figuration. L'armure peut monter jusqu'au double — mais elle ne paie que si on
+se rate vraiment, alors que les deux autres paient à tous les coups.
 
 Les réglages sont tous dans [`src/parchemin.ts`](src/parchemin.ts).
 

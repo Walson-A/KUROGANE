@@ -12,6 +12,9 @@ import {
   VENT_DUREE,
   KUSARIGAMA_FACTEUR,
   KUSARIGAMA_DUREE,
+  ARMURE_SOLIDITE,
+  ARMURE_COUT_MUR,
+  ARMURE_COUT_PETIT,
   type ParcheminKind,
 } from './parchemin'
 
@@ -115,7 +118,7 @@ let sprintSeen = false // la bannière ne s'annonce qu'une fois
 let slots: ParcheminKind[] = []
 let ventFin = 0 // 🌀 le dash court jusqu'à cet instant du chrono
 let kusarigamaFin = 0 // ⛓️ on est bridé jusqu'à cet instant
-let armure = false // 🛡️ un choc en réserve ?
+let armure = 0 // 🛡️ solidité restante de l'armure (0 = pas d'armure)
 
 /** Dans les derniers mètres, les taps accélèrent au lieu de lancer un sort. */
 function inSprintZone() {
@@ -163,7 +166,7 @@ function lancerParchemin() {
   toast(p.cri)
 
   if (kind === 'vent') ventFin = time + VENT_DUREE
-  else if (kind === 'armure') armure = true
+  else if (kind === 'armure') armure = ARMURE_SOLIDITE
   else if (p.cible === 'adversaire') {
     // Le serveur relaie à la victime, qui applique l'effet elle-même
     if (online) net.sendSpell(kind)
@@ -201,7 +204,7 @@ function startRace(seed: number) {
   slots = []
   ventFin = 0
   kusarigamaFin = 0
-  armure = false
+  armure = 0
   drawSlots()
   countdown = 3
   state = 'depart'
@@ -376,12 +379,19 @@ function tick(now?: number) {
 
     // Trébuchement : toucher un obstacle RALENTIT (on ne meurt pas, c'est une course)
     stumble = Math.max(0, stumble - dt)
-    if (stumble <= 0 && track.hits(player.hitbox())) {
-      if (armure) {
-        // 🛡️ L'Armure de Fer avale le choc : on garde toute sa vitesse
-        armure = false
+    const touche = track.hits(player.hitbox())
+    if (stumble <= 0 && touche) {
+      if (armure > 0) {
+        // 🛡️ L'armure avale le choc : on garde toute sa vitesse. Mais un mur
+        // la met en pièces d'un coup, là où une barrière ne fait que l'entamer.
+        const cout = touche === 'mur' ? ARMURE_COUT_MUR : ARMURE_COUT_PETIT
+        armure = Math.max(0, armure - cout)
         stumble = 1.2
-        toast('🛡️ L\'armure encaisse !')
+        toast(
+          armure > 0
+            ? '🛡️ L\'armure encaisse — une plaque saute'
+            : '🛡️ L\'armure vole en éclats !'
+        )
       } else {
         speed = Math.max(6, speed * 0.35) // grosse perte de vitesse
         stumble = 1.2 // brève invincibilité le temps de se relever

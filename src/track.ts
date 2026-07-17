@@ -2,8 +2,12 @@ import * as THREE from 'three'
 import { LANES } from './player'
 import { TIRAGE, type ParcheminKind } from './parchemin'
 
-/** Les 3 familles d'obstacles : comment les franchir */
-type Kind = 'saut' | 'glissade' | 'mur'
+/**
+ * Les 3 familles d'obstacles : comment les franchir.
+ * `mur` est le GRAND obstacle (2,4 m de haut, il barre toute la ligne) ;
+ * `saut` et `glissade` sont les petits. L'Armure de Fer fait la différence.
+ */
+export type Kind = 'saut' | 'glissade' | 'mur'
 
 const LOOKAHEAD = 85 // les obstacles apparaissent 85 m devant (cachés par la brume)
 const DESPAWN_Z = 8 // et disparaissent derrière la caméra
@@ -248,17 +252,20 @@ export class Track {
     o.active = true
   }
 
-  /** Est-ce que le joueur touche un obstacle ? */
-  hits(playerBox: THREE.Box3): boolean {
+  /**
+   * Le joueur touche-t-il un obstacle ? Renvoie LEQUEL (ou null) : l'Armure de
+   * Fer n'encaisse pas de la même façon une barrière et un mur.
+   */
+  hits(playerBox: THREE.Box3): Kind | null {
     const box = new THREE.Box3()
     for (const o of this.obstacles) {
       if (!o.active) continue
       if (Math.abs(o.mesh.position.z) > 2.5) continue // trop loin, on ne teste pas
       box.setFromObject(o.mesh)
       box.expandByScalar(-0.12) // un peu de tolérance, plus sympa à jouer
-      if (box.intersectsBox(playerBox)) return true
+      if (box.intersectsBox(playerBox)) return o.kind
     }
-    return false
+    return null
   }
 }
 
@@ -285,13 +292,13 @@ function buildPlan(length: number, seed: number): PlannedObstacle[] {
 }
 
 /**
- * Place les rouleaux : environ un tous les 180 à 270 m, jamais dans la zone de
+ * Place les rouleaux : environ un tous les 130 à 210 m, jamais dans la zone de
  * sprint. Le contenu est tiré ici, mais reste invisible jusqu'au ramassage.
  *
- * L'espacement vise **un ramassage toutes les ~8 s** (on court à ~26 m/s) :
- * assez pour que chaque rouleau soit un petit évènement, assez peu pour ne pas
- * avoir les deux mains pleines en permanence. Un rouleau toutes les 4 s rendait
- * le système bavard et sans enjeu.
+ * L'espacement vise **un ramassage toutes les ~6,5 s** (on court à ~26 m/s) :
+ * assez pour que les parchemins rythment vraiment la course, assez peu pour
+ * qu'on ne soit pas les deux mains pleines en permanence. Un rouleau toutes les
+ * 4 s rendait le système bavard et sans enjeu.
  *
  * On décale la graine (`^`) : sans ça les rouleaux suivraient exactement le
  * même tirage que les obstacles et retomberaient toujours au même endroit.
@@ -306,18 +313,30 @@ function buildParcheminPlan(
 
   let d = 120 // on laisse le temps de prendre sa vitesse
   while (d < length - SPRINT_ZONE - 15) {
-    // Un rouleau colle a une rangee d'obstacles serait un piege : il faudrait
-    // se prendre la barriere pour l'attraper. On l'ecarte jusqu'a 6 m de tout.
+    // Un rouleau collé à une barrière serait un piège : il faudrait se blesser
+    // pour l'attraper. On ne cherche PAS un trou vide — les rangées tombent
+    // tous les 10-17 m, il n'en existe pas toujours. On cherche une LIGNE que
+    // personne n'occupe autour de ce point : une rangée n'ayant jamais 3
+    // obstacles, il y en a presque toujours une de libre.
     let pos = d
-    for (let i = 0; i < 10 && obstacles.some((o) => Math.abs(o.d - pos) < 6); i++) {
-      pos += 2
+    let lane = -1
+    for (let essai = 0; essai < 14; essai++) {
+      const occupees = new Set(
+        obstacles.filter((o) => Math.abs(o.d - pos) < 6).map((o) => o.lane)
+      )
+      const libres = [0, 1, 2].filter((l) => !occupees.has(l))
+      if (libres.length > 0) {
+        lane = libres[Math.floor(rng() * libres.length)]
+        break
+      }
+      pos += 3 // deux rangées serrées bouchent les 3 lignes : on avance un peu
     }
-    plan.push({
-      d: pos,
-      lane: Math.floor(rng() * 3),
-      kind: TIRAGE[Math.floor(rng() * TIRAGE.length)],
-    })
-    d += 180 + rng() * 90
+    // Vraiment aucune ligne libre : on saute ce rouleau plutôt que d'en poser
+    // un dans un mur. Le suivant tombera 130 à 210 m plus loin.
+    if (lane >= 0) {
+      plan.push({ d: pos, lane, kind: TIRAGE[Math.floor(rng() * TIRAGE.length)] })
+    }
+    d += 130 + rng() * 80
   }
   return plan
 }

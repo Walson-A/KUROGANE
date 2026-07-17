@@ -36,7 +36,7 @@ export const PARCHEMINS: Record<ParcheminKind, Parchemin> = {
     icone: '🛡️',
     nom: 'Armure de Fer',
     cible: 'soi',
-    cri: '🛡️ Armure de Fer — un choc absorbé',
+    cri: '🛡️ Armure de Fer — 2 barrières ou 1 mur',
   },
   kusarigama: {
     icone: '⛓️',
@@ -62,6 +62,11 @@ export const VENT_DUREE = 1.5
 export const KUSARIGAMA_FACTEUR = 0.7
 export const KUSARIGAMA_DUREE = 2
 
-// 🛡️ Armure de Fer : pas de réglage de puissance — sa valeur EST celle du
-// trébuchement qu'elle avale. Elle tient jusqu'au choc, sans minuteur : la
-// file de 2 slots empêche déjà de la thésauriser.
+// 🛡️ Armure de Fer : une jauge de solidité, pas un simple bouclier.
+// Elle encaisse DEUX petits obstacles (barrière, barre haute) — ou UN SEUL
+// grand mur, qui la met en pièces d'un coup. Tant qu'il reste de la solidité,
+// le choc est absorbé : c'est le mur qui coûte cher, pas la dernière plaque.
+// Pas de minuteur : la file de 2 slots empêche déjà de la thésauriser.
+export const ARMURE_SOLIDITE = 2
+export const ARMURE_COUT_MUR = 2 // un mur brise l'armure entière
+export const ARMURE_COUT_PETIT = 1 // une barrière ne l'entame qu'à moitié
