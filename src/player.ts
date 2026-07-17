@@ -45,11 +45,12 @@ export class Player {
     return this.fighter.grip
   }
 
-  reset() {
-    this.lane = 1
+  /** Se met en place. `lane` : sa ligne sur la grille de départ (duel). */
+  reset(lane = 1) {
+    this.lane = lane
     this.vy = 0
     this.sliding = 0
-    this.mesh.position.set(0, 0, 0)
+    this.mesh.position.set(LANES[lane], 0, 0)
     this.mesh.scale.y = 1
   }
 

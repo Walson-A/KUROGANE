@@ -75,8 +75,9 @@ export class Opponent {
     this.mesh.add(...buildFighter(this.fighter, true)) // true = fantôme
   }
 
-  reset() {
-    this.lane = 1
+  /** Se met en place. `lane` : sa ligne sur la grille de départ. */
+  reset(lane = 1) {
+    this.lane = lane
     this.targetY = 0
     this.sliding = false
     this.lastDistance = 0
@@ -87,7 +88,8 @@ export class Opponent {
     this.vy = 0
     this.slideTimer = 0
     this.stumbleT = 0
-    this.mesh.position.set(0, 0, -2)
+    // Sur SA ligne de la grille, à la même hauteur que nous : une vraie ligne de départ
+    this.mesh.position.set(LANES[lane], 0, 0)
     this.mesh.scale.y = 1
     this.mesh.visible = false
   }

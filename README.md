@@ -20,8 +20,9 @@ avec Claude Code comme développeur.
   perdant est celui qui arrive 2ᵉ
 - **🔥 Sprint final** : sur les 120 derniers mètres, martèle l'écran pour
   accélérer et voler la victoire sur le fil ([voir le calibrage](#-le-sprint-final--départager-sans-refaire-la-course))
-- **⚔️ Duel en ligne** : matchmaking automatique, les deux joueurs affrontent
-  exactement la même piste, le serveur déclare le vainqueur
+- **⚔️ Duel en ligne** : matchmaking automatique, **grille de départ** (chacun
+  sa ligne), les deux joueurs affrontent exactement la même piste, le serveur
+  déclare le vainqueur
 - 🏋️ Mode **entraînement solo** avec record personnel sauvegardé
 
 ### Contrôles

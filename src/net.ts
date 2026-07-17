@@ -16,6 +16,8 @@ export interface RemotePlayer {
   connected: boolean
   /** Heure serveur (ms) à laquelle il a envoyé cette position — 0 si inconnue */
   at: number
+  /** Sa ligne sur la grille de départ (0 = gauche, 2 = droite) */
+  startLane: number
 }
 
 /**
@@ -69,6 +71,9 @@ export class Net {
   private pingTimer: ReturnType<typeof setInterval> | null = null
   private leaving = false // on part volontairement (≠ coupure subie)
   myFinished = false
+  /** Nos lignes sur la grille de départ, décidées par le serveur */
+  myStartLane = 1
+  oppStartLane = 1
   /**
    * Le ping (aller-retour, en secondes), mesuré en continu.
    * Sert à compenser le temps de trajet des positions de l'adversaire.
@@ -173,17 +178,13 @@ export class Net {
   private readState(state: any) {
     if (!this.room) return
 
-    // Changement de phase : attente → décompte → course → résultats
-    if (state.phase !== this.lastPhase) {
-      this.lastPhase = state.phase
-      if (state.phase === 'countdown') this.cb.onCountdown(state.seed)
-      if (state.phase === 'racing') this.cb.onGo()
-    }
-
-    // Les infos de l'adversaire (tous les joueurs sauf moi)
+    // On lit les joueurs D'ABORD : le callback du décompte (qui lance la
+    // course) a besoin des lignes de la grille de départ.
     let opp: RemotePlayer | null = null
     state.players.forEach((p: any, id: string) => {
-      if (id !== this.room!.sessionId) {
+      if (id === this.room!.sessionId) {
+        this.myStartLane = p.startLane ?? 1
+      } else {
         opp = {
           lane: p.lane,
           y: p.y,
@@ -195,9 +196,19 @@ export class Net {
           fighter: p.fighter ?? '',
           connected: p.connected ?? true,
           at: p.at ?? 0,
+          startLane: p.startLane ?? 1,
         }
       }
     })
+    if (opp) this.oppStartLane = (opp as RemotePlayer).startLane
+
+    // Changement de phase : attente → décompte → course → résultats
+    if (state.phase !== this.lastPhase) {
+      this.lastPhase = state.phase
+      if (state.phase === 'countdown') this.cb.onCountdown(state.seed)
+      if (state.phase === 'racing') this.cb.onGo()
+    }
+
     this.cb.onOpponent(opp)
 
     // Résultats : dès qu'un vainqueur est connu ET que j'ai fini

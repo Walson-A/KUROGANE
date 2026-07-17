@@ -18,6 +18,12 @@ export class PlayerState extends Schema {
   @type('string') fighter = 'yasuke'
   /** false pendant une coupure : sa place est gardée, il peut revenir (cf. onDrop) */
   @type('boolean') connected = true
+  /**
+   * Sa ligne sur la GRILLE DE DÉPART (0 = gauche, 2 = droite) : fini les deux
+   * coureurs empilés au centre au coup d'envoi. Les obstacles ne commençant
+   * qu'à 45 m, chacun a largement le temps de se replacer — pas d'iniquité.
+   */
+  @type('number') startLane = 1
   /** Heure SERVEUR (ms) à laquelle sa dernière position a été envoyée */
   @type('number') at = 0
 }
@@ -173,6 +179,10 @@ export class RaceRoom extends Room<{ state: RaceState }> {
     const p = new PlayerState()
     p.name = cleanName(options?.name)
     p.fighter = cleanFighter(options?.fighter)
+    // La grille de départ : le premier arrivé à gauche, l'autre à droite
+    const taken = [...this.state.players.values()].map((pl) => pl.startLane)
+    p.startLane = taken.includes(0) ? 2 : 0
+    p.lane = p.startLane // sinon les patchs d'état le renverraient au centre
     this.state.players.set(client.sessionId, p)
     this.history.set(client.sessionId, [])
     console.log(

@@ -149,8 +149,9 @@ function backToMenu(banner?: string) {
 
 /** Lance une course. En ligne, la graine vient du serveur : même piste pour les deux ! */
 function startRace(seed: number) {
-  player.reset()
-  opponent.reset()
+  // En duel : la grille de départ du serveur (gauche/droite). En solo : au centre.
+  player.reset(online ? net.myStartLane : 1)
+  opponent.reset(net.oppStartLane)
   track.reset(COURSE_LENGTH, seed)
   time = 0
   distance = 0
