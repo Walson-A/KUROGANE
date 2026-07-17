@@ -127,5 +127,9 @@ export const MALUS_ADRESSE = 0.35
 // rangées tombent tous les 13 m : le projectile n'a que ~29 % de chances de
 // franchir 100 m. La PISTE est le garde-fou, pas un chiffre arbitraire.
 // Il faut donc aligner sa ligne sur le rival ET avoir la voie dégagée.
+// Sa PORTÉE EST INFINIE : aucun plafond de distance, il vole tant qu'il ne
+// rencontre rien. Seuls un rival ou un mur l'arrêtent.
 export const ONMYOJI_VITESSE = 55 // m/s, en plus de la vitesse du lanceur
-export const ONMYOJI_LARGEUR = 1.6 // tolérance de collision en X (m)
+
+/** La lueur jaune autour des deux échangés. Assez longue pour qu'on comprenne. */
+export const LUEUR_DUREE = 1.4

@@ -21,6 +21,7 @@ import {
   FUMIGENE_DUREE,
   SENBON_DUREE,
   ONMYOJI_VITESSE,
+  LUEUR_DUREE,
   type ParcheminKind,
 } from './parchemin'
 
@@ -169,6 +170,57 @@ const portailMesh = new THREE.Mesh(
 portailMesh.visible = false
 scene.add(portailMesh)
 
+/**
+ * ————— 🎯 Le kunai en vol —————
+ * Un simple rectangle : ici tout est encore en boîtes, Yasuke le premier.
+ *
+ * Il est PUREMENT décoratif. Le sort a déjà frappé quand la lame part : sa
+ * durée de vol ne doit rien coûter à personne, sinon on toucherait au 0,53 s
+ * calibré du Kunai. C'est un traceur, pas un projectile.
+ *
+ * Sans lui, le Kunai était le seul sabotage qu'on encaissait sans jamais RIEN
+ * voir — juste un toast et une vitesse qui s'effondre.
+ */
+const KUNAI_VOL = 0.28 // secondes de vol, quelle que soit la distance
+const kunaiMesh = new THREE.Mesh(
+  new THREE.BoxGeometry(0.16, 0.16, 1),
+  new THREE.MeshStandardMaterial({ color: 0xd8dfec, emissive: 0xe24b3a, emissiveIntensity: 0.35 })
+)
+kunaiMesh.visible = false
+scene.add(kunaiMesh)
+
+/** Le vol en cours, ou null. Un seul maillage : il n'y en a jamais deux. */
+let kunaiVol: { fin: number; de: THREE.Vector3; a: THREE.Vector3 } | null = null
+
+function lancerKunaiVisuel(de: THREE.Vector3, a: THREE.Vector3) {
+  // On part de positions AU SOL : on relève la lame à hauteur de poitrine une
+  // bonne fois, ici, plutôt qu'à chaque image — sinon la 1re s'affiche dans
+  // les pieds, le temps que la boucle corrige.
+  const poitrine = new THREE.Vector3(0, 0.6, 0)
+  kunaiVol = { fin: time + KUNAI_VOL, de: de.clone().add(poitrine), a: a.clone().add(poitrine) }
+  kunaiMesh.position.copy(kunaiVol.de)
+  kunaiMesh.visible = true
+}
+
+/**
+ * 🔮 La lueur jaune de l'échange. Elle enveloppe LES DEUX échangés : sans ça,
+ * on se téléporterait sans comprendre ce qui vient d'arriver ni avec qui.
+ */
+function makeLueur() {
+  return new THREE.Mesh(
+    new THREE.SphereGeometry(1.15, 16, 16),
+    new THREE.MeshBasicMaterial({ color: 0xffd94a, transparent: true, opacity: 0.4 })
+  )
+}
+const lueurJoueur = makeLueur()
+const lueurRival = makeLueur()
+lueurJoueur.visible = false
+lueurRival.visible = false
+scene.add(lueurJoueur, lueurRival)
+
+let lueurFin = 0 // les deux lueurs brillent jusqu'à cet instant
+let lueurCible: THREE.Object3D | null = null // le corps de l'échangé
+
 /** Dans les derniers mètres, les taps accélèrent au lieu de lancer un sort. */
 function inSprintZone() {
   return state === 'course' && distance >= COURSE_LENGTH - SPRINT_ZONE
@@ -289,6 +341,12 @@ function subirSort(kind: string, deBot: Bot | null = null): boolean {
     kusarigamaFin = time + KUSARIGAMA_DUREE
     toast('⛓️ Kusarigama ! Tu es entravé…')
   } else if (kind === 'kunai') {
+    // La lame arrive du lanceur : le bot qui l'a jeté, le rival en ligne, ou
+    // la brume si on ne sait pas d'où. Avant le test d'armure : on doit voir
+    // le kunai même quand il éclate dessus.
+    const lanceur = deBot?.mesh.position ?? (online && opponent.active ? opponent.mesh.position : null)
+    lancerKunaiVisuel(lanceur ?? new THREE.Vector3(player.mesh.position.x, 1.2, -22), player.mesh.position)
+
     // Le seul sort qui fait trébucher sec. L'armure peut encore l'avaler.
     if (armure > 0) {
       armure = Math.max(0, armure - ARMURE_COUT_PETIT)
@@ -311,9 +369,14 @@ function subirSort(kind: string, deBot: Bot | null = null): boolean {
   return false
 }
 
-/** 🔮 Échange nos places avec `d`. Le sort le plus violent du jeu. */
-function echangerAvec(d: number, qui: string) {
+/**
+ * 🔮 Échange nos places avec `d`. Le sort le plus violent du jeu.
+ * `corps` = le maillage de l'échangé, pour l'envelopper de la même lueur.
+ */
+function echangerAvec(d: number, qui: string, corps: THREE.Object3D | null = null) {
   distance = d
+  lueurFin = time + LUEUR_DUREE
+  lueurCible = corps
   toast(`🔮 Portail ! Tu échanges avec ${qui}`)
   flash()
 }
@@ -372,6 +435,11 @@ function lancerParchemin() {
       toast(`${p.icone} …mais tu mènes déjà !`)
       return
     }
+    // 🎯 La lame part vers sa victime. Si elle nous revient dans les dents,
+    // `subirSort` rejouera le vol dans l'autre sens : c'est le même maillage,
+    // donc le retour écrase l'aller — on ne voit que le trajet qui compte.
+    if (kind === 'kunai') lancerKunaiVisuel(player.mesh.position, cible.mesh.position)
+
     // Sa parade peut nous le renvoyer dans les dents : on l'a bien cherché
     if (cible.subir(kind, time)) {
       toast(`🪞 ${cible.profil.nom} te l'a renvoyé !`)
@@ -391,6 +459,9 @@ function showMenu(html: string) {
     b.cacher()
   }
   for (const m of botMarks) m.classList.add('hidden')
+  // Une lame encore en l'air à l'arrivée resterait plantée dans le menu
+  kunaiVol = null
+  kunaiMesh.visible = false
   oppmarkEl.classList.add('hidden')
   rankEl.classList.add('hidden')
   countEl.classList.remove('show')
@@ -425,7 +496,14 @@ function startRace(seed: number) {
   senbonFin = 0
   portail = null
   portailMesh.visible = false
+  kunaiVol = null
+  kunaiMesh.visible = false
+  lueurFin = 0
+  lueurCible = null
+  lueurJoueur.visible = false
+  lueurRival.visible = false
   fumeeEl.classList.remove('show')
+  canvas.classList.remove('poison')
   drawSlots()
 
   // Les rivaux : uniquement en entraînement (en ligne, l'adversaire est réel).
@@ -694,7 +772,7 @@ function tick(now?: number) {
         touche.distance = distance
         portail = null
         portailMesh.visible = false
-        echangerAvec(sien, touche.profil.nom)
+        echangerAvec(sien, touche.profil.nom, touche.mesh)
       } else if (
         online &&
         opponent.active &&
@@ -708,13 +786,28 @@ function tick(now?: number) {
         const sien = opponent.target.distance
         portail = null
         portailMesh.visible = false
-        echangerAvec(sien, 'ton rival')
-      } else if (portail.d - distance > 400) {
-        portail = null // il file dans la brume : personne à échanger
+        echangerAvec(sien, 'ton rival', opponent.mesh)
+      } else if (portail.d > COURSE_LENGTH) {
+        // Aucun plafond de distance : sa portée est INFINIE. Seuls un rival ou
+        // un mur l'arrêtent. Faute de quoi il finit par franchir le torii, et
+        // il n'y a plus personne à échanger derrière.
+        portail = null
         portailMesh.visible = false
       } else {
         portailMesh.visible = true
         portailMesh.position.set(LANES[portail.lane], 1.1, -(portail.d - distance))
+      }
+    }
+
+    // 🎯 Le kunai file vers sa victime en tournoyant, puis s'évanouit
+    if (kunaiVol) {
+      const reste = kunaiVol.fin - time
+      if (reste <= 0) {
+        kunaiVol = null
+        kunaiMesh.visible = false
+      } else {
+        kunaiMesh.position.lerpVectors(kunaiVol.de, kunaiVol.a, 1 - reste / KUNAI_VOL)
+        kunaiMesh.rotation.x += dt * 26 // il tournoie bout par-dessus bout
       }
     }
 
@@ -766,6 +859,21 @@ function tick(now?: number) {
     // 💨 la fumée aveugle, ☠️ le poison fait tanguer la scène
     fumeeEl.classList.toggle('show', time < fumigeneFin)
     canvas.classList.toggle('poison', time < senbonFin)
+
+    // 🔮 Les deux lueurs de l'échange : elles battent et s'éteignent en douceur
+    const lueurOn = time < lueurFin
+    lueurJoueur.visible = lueurOn
+    lueurRival.visible = lueurOn && !!lueurCible
+    if (lueurOn) {
+      const reste = (lueurFin - time) / LUEUR_DUREE // 1 → 0
+      const battement = (1 + Math.sin(time * 22) * 0.09) * (0.75 + reste * 0.45)
+      for (const l of [lueurJoueur, lueurRival]) {
+        ;(l.material as THREE.MeshBasicMaterial).opacity = 0.45 * reste
+        l.scale.setScalar(battement)
+      }
+      lueurJoueur.position.set(player.mesh.position.x, 0.85, player.mesh.position.z)
+      if (lueurCible) lueurRival.position.set(lueurCible.position.x, 0.85, lueurCible.position.z)
+    }
 
     // Interface : chrono + progression
     scoreEl.textContent = `${time.toFixed(1)} s`

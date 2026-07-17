@@ -164,6 +164,11 @@ si on se rate vraiment.
 
 ### 🔮 Onmyōji : pourquoi un échange complet ne casse pas le jeu
 
+Sa **portée est infinie** : aucun plafond de distance. Il vole tant qu'il ne
+rencontre rien. Les deux échangés s'enveloppent alors d'une **lueur jaune** —
+sans elle, on se téléporterait sans comprendre ce qui vient d'arriver, ni avec
+qui.
+
 Échanger les places viole frontalement la règle « aucun parchemin ne refait la
 course » — un joueur largué pourrait voler la 1re place. Ce qui le rachète :
 **il ne vise pas**. Il file tout droit dans ta ligne et **meurt au premier mur**.
@@ -171,12 +176,13 @@ course » — un joueur largué pourrait voler la 1re place. Ce qui le rachète 
 Un mur bouche une ligne donnée environ une rangée sur six, et les rangées
 tombent tous les 13 m. Mesuré sur 1 860 tirs simulés :
 
-| Portée | Part des tirs |
+| Portée (sans aucun plafond) | Part des tirs |
 |---|---|
 | médiane | **53 m** |
 | franchit 100 m | 27,8 % |
 | franchit 200 m | 8,2 % |
-| franchit 400 m | **1,8 %** |
+| franchit 400 m | **1,0 %** |
+| franchit 800 m | **0 %** — aucun tir, jamais |
 
 C'est **la piste qui borne le sort**, pas un plafond arbitraire — et il faut
 encore aligner sa ligne sur celle du rival. L'échange se mérite.
