@@ -1,10 +1,20 @@
-import { Room, Client } from 'colyseus'
+import { Room, Client, updateLobby } from 'colyseus'
 import { Schema, MapSchema, type } from '@colyseus/schema'
 
 /**
- * Tout ce que le serveur sait d'un joueur.
- * Ces infos sont synchronisées automatiquement vers les deux téléphones.
+ * ————— Le salon de course KUROGANE —————
+ *
+ * Une salle accueille jusqu'à 10 joueurs. Deux façons d'y entrer :
+ *  · un CODE à 4 lettres qu'on se partage entre amis (salon privé) ;
+ *  · la liste des salons PUBLICS, ou la « partie rapide » qui remplit
+ *    automatiquement un salon public.
+ *
+ * Le départ est à la « Among Us » : chacun se déclare PRÊT, et l'hôte lance
+ * la partie dès qu'au moins la moitié des joueurs le sont. Un décompte de
+ * 10 secondes, commun à tous, précède le GO.
  */
+
+/** Tout ce que le serveur sait d'un joueur, synchronisé vers tous les autres. */
 export class PlayerState extends Schema {
   @type('number') lane = 1
   @type('number') y = 0
@@ -12,66 +22,77 @@ export class PlayerState extends Schema {
   @type('boolean') sliding = false
   @type('boolean') finished = false
   @type('number') time = 0
-  /** Le pseudo choisi dans les options — nettoyé à l'arrivée, cf. onJoin() */
+  /** Le pseudo choisi dans les options — nettoyé à l'arrivée, cf. cleanName() */
   @type('string') name = ''
   /** Le guerrier choisi (cf. src/roster.ts côté jeu) */
   @type('string') fighter = 'yasuke'
   /** false pendant une coupure : sa place est gardée, il peut revenir (cf. onDrop) */
   @type('boolean') connected = true
-  /**
-   * Sa ligne sur la GRILLE DE DÉPART (0 = gauche, 2 = droite) : fini les deux
-   * coureurs empilés au centre au coup d'envoi. Les obstacles ne commençant
-   * qu'à 45 m, chacun a largement le temps de se replacer — pas d'iniquité.
-   */
+  /** S'est-il déclaré PRÊT dans le lobby ? */
+  @type('boolean') ready = false
+  /** Sa place à l'arrivée (1 = premier). 0 = pas encore fini. */
+  @type('number') rank = 0
+  /** Sa ligne sur la grille de départ (0, 1, 2), répartie — cf. onJoin */
   @type('number') startLane = 1
   /** Heure SERVEUR (ms) à laquelle sa dernière position a été envoyée */
   @type('number') at = 0
 }
 
-/** L'état complet d'une course */
+/** L'état complet d'un salon */
 export class RaceState extends Schema {
-  /** waiting → countdown → racing → results */
-  @type('string') phase = 'waiting'
-  /**
-   * L'heure SERVEUR (ms) du GO. Les deux clients démarrent à cet instant
-   * PRÉCIS (via la synchro d'horloge) — sinon, chacun partirait à la
-   * réception du signal, et le mieux connecté partirait toujours en premier.
-   */
+  /** lobby → countdown → racing → results → (retour) lobby */
+  @type('string') phase = 'lobby'
+  /** L'heure SERVEUR (ms) du GO. Tous démarrent à cet instant précis. */
   @type('number') startAt = 0
-  /** La graine de la piste : les deux joueurs ont les MÊMES obstacles */
+  /** La graine de la piste : tous les joueurs ont les MÊMES obstacles */
   @type('number') seed = 0
-  /** L'identifiant du vainqueur */
-  @type('string') winner = ''
+  /** Le code du salon (privé, ou 'PUBLIC' pour la partie rapide) */
+  @type('string') code = ''
+  /** L'hôte : le seul qui lance la partie. Réattribué s'il part. */
+  @type('string') hostId = ''
+  /** Salon listé publiquement ? (sinon on n'y entre que par le code) */
+  @type('boolean') isPublic = false
   @type({ map: PlayerState }) players = new MapSchema<PlayerState>()
 }
 
-/** Durée du décompte 3, 2, 1, GO (ms) — un poil plus long que côté client */
-const COUNTDOWN_MS = 3500
+/** Le salon accueille jusqu'à 10 guerriers. */
+const MAX_CLIENTS = 10
+
+/** Décompte avant le GO, une fois la partie lancée (ms). */
+const COUNTDOWN_MS = 10_000
 
 /** ⚠️ À garder en phase avec COURSE_LENGTH dans src/main.ts */
 const COURSE_LENGTH = 1920
 
 /**
- * Au-delà de TOUT ce que le jeu permet : croisière max 30 m/s × sprint 1,15
- * ≈ 34,5. La marge évite de punir un client honnête ; un tricheur, lui,
- * voudra annoncer bien plus que 45.
+ * Au-delà de TOUT ce que le jeu permet : croisière 30 × sprint 1,15 × dash 1,35
+ * ≈ 46,5. La marge évite de punir un client honnête ; un tricheur voudra
+ * annoncer bien plus.
  */
-const MAX_SPEED = 45
+const MAX_SPEED = 55
 
 /** Profondeur de l'historique des positions (ms) — cf. positionAt() */
 const HISTORY_MS = 2000
 
+/** Une fois le 1ᵉʳ arrivé, on laisse ce délai aux autres avant de clore. */
+const GRACE_MS = 25_000
+
 /** Les guerriers que le serveur accepte. Tout le reste → Yasuke. */
 const FIGHTERS = ['yasuke', 'hana', 'onimaru', 'tamae']
 const MAX_NAME = 12
+const MAX_CHAT = 120
+
+/**
+ * Les seuls sorts qu'un client a le droit de relayer.
+ * Le serveur ne connaît pas les effets — juste la liste de ce qui est légal.
+ * Doit rester aligné sur OFFENSIFS dans src/parchemin.ts.
+ */
+const SORTS_OFFENSIFS = ['kunai', 'kusarigama', 'fumigene', 'senbon', 'onmyoji']
 
 /**
  * Le pseudo et le guerrier viennent du joueur : on ne leur fait PAS confiance.
- * Un client bidouillé peut envoyer n'importe quoi — un pavé de 10 000 lettres,
- * un objet, rien du tout. Le serveur tranche, et n'accepte qu'une petite chaîne.
- *
- * (L'échappement HTML, lui, se fait à l'affichage côté jeu : c'est là que se
- * joue le risque d'injection, pas ici.)
+ * Un client bidouillé peut envoyer n'importe quoi. Le serveur tranche.
+ * (L'échappement HTML se fait à l'affichage côté jeu, pas ici.)
  */
 function cleanName(v: unknown): string {
   if (typeof v !== 'string') return ''
@@ -82,77 +103,103 @@ function cleanFighter(v: unknown): string {
   return typeof v === 'string' && FIGHTERS.includes(v) ? v : 'yasuke'
 }
 
-/**
- * Les seuls sorts qu'un client a le droit de relayer.
- * Le serveur ne connaît pas les effets — juste la liste de ce qui est légal.
- * Doit rester aligné sur OFFENSIFS dans src/parchemin.ts.
- */
-const SORTS_OFFENSIFS = ['kunai', 'kusarigama', 'fumigene', 'senbon', 'onmyoji']
+/** Un code de salon : lettres majuscules. 'PUBLIC' est réservé à la partie rapide. */
+function cleanCode(v: unknown): string {
+  if (typeof v !== 'string') return ''
+  return v.toUpperCase().replace(/[^A-Z]/g, '').slice(0, 6)
+}
 
-/**
- * Une salle de course : 2 joueurs, une piste, un vainqueur.
- * Colyseus crée une nouvelle salle automatiquement dès qu'une est pleine.
- */
 export class RaceRoom extends Room<{ state: RaceState }> {
-  maxClients = 2
+  maxClients = MAX_CLIENTS
   state = new RaceState()
 
   /** Heure (Date.now) du GO — la référence de TOUTES les validations anti-triche */
   private raceStartAt = 0
+  /** Le minuteur de grâce, armé quand le premier franchit la ligne */
+  private graceTimer: { clear: () => void } | null = null
 
   /**
    * L'historique des positions de chaque joueur sur les 2 dernières secondes
-   * — la fondation de la LAG COMPENSATION (cf. positionAt, pour les sorts).
+   * — la fondation de la LAG COMPENSATION (cf. positionAt).
    */
   private history = new Map<
     string,
     { t: number; distance: number; lane: number; y: number }[]
   >()
 
-  onCreate() {
+  onCreate(options: any) {
     this.state.seed = Math.floor(Math.random() * 2 ** 31)
+    this.state.code = cleanCode(options?.code) || 'PUBLIC'
+    this.state.isPublic = this.state.code === 'PUBLIC' || options?.isPublic === true
 
-    // Diffuse l'état 30 fois/s au lieu de 20 : l'adversaire bouge plus finement
+    // Diffuse l'état 30 fois/s : les adversaires bougent finement
     this.setPatchRate(33)
+    this.refreshMetadata()
 
-    // Mesure du ping + synchro d'horloge : on renvoie l'heure du client telle
-    // quelle (il en déduit l'aller-retour) ET la nôtre (il en déduit le
-    // décalage entre nos horloges — méthode NTP simplifiée).
+    // Ping + synchro d'horloge (NTP simplifié) : on renvoie l'heure du client
+    // telle quelle ET la nôtre. Il en déduit l'aller-retour ET le décalage.
     this.onMessage('ping', (client, sentAt: number) => {
       client.send('pong', { sentAt: Number(sentAt) || 0, server: Date.now() })
     })
 
-    // Les ACTIONS (saut, changement de ligne, glissade, trébuchement) sont
-    // relayées IMMÉDIATEMENT à l'autre joueur — sans attendre le tick de
-    // diffusion à 30 Hz. C'est ce qui rend ses esquives nettes à l'écran.
+    // ————— Le lobby : se déclarer prêt —————
+    this.onMessage('ready', (client, val: any) => {
+      const p = this.state.players.get(client.sessionId)
+      if (!p || this.state.phase !== 'lobby') return
+      p.ready = !!val
+      this.refreshMetadata()
+    })
+
+    // ————— L'hôte lance la partie —————
+    this.onMessage('start', (client) => {
+      if (client.sessionId !== this.state.hostId || this.state.phase !== 'lobby') return
+      const joueurs = [...this.state.players.values()].filter((p) => p.connected)
+      if (joueurs.length < 2) return
+      // Règle « à la moitié » : l'hôte peut lancer dès que la moitié est prête.
+      const prets = joueurs.filter((p) => p.ready).length
+      if (prets < Math.ceil(joueurs.length / 2)) return
+      this.lancer()
+    })
+
+    // ————— Le chat du lobby —————
+    this.onMessage('chat', (client, data: any) => {
+      const p = this.state.players.get(client.sessionId)
+      if (!p) return
+      const text = String(data?.text ?? '').replace(/\s+/g, ' ').trim().slice(0, MAX_CHAT)
+      if (!text) return
+      // On relaie à TOUS, l'auteur compris : son message s'affiche pareil.
+      this.broadcast('chat', { from: client.sessionId, name: p.name, text })
+    })
+
+    // Retour au salon après une course, pour rejouer ensemble (hôte seul).
+    this.onMessage('tolobby', (client) => {
+      if (client.sessionId !== this.state.hostId || this.state.phase !== 'results') return
+      this.retourLobby()
+    })
+
+    // ————— Les ACTIONS (saut, ligne, glissade, trébuchement) —————
+    // Relayées IMMÉDIATEMENT à tous les autres, avec l'identité de l'auteur.
     const ACTIONS = ['lane', 'jump', 'slide', 'stumble']
     this.onMessage('action', (client, data: any) => {
       if (this.state.phase !== 'racing') return
       if (!data || !ACTIONS.includes(data.t)) return
-      for (const other of this.clients) {
-        if (other.sessionId !== client.sessionId) other.send('action', data)
-      }
+      this.broadcast('action', { ...data, from: client.sessionId }, { except: client })
     })
 
-    // Un joueur nous envoie sa position (~10 fois/s) → on la range dans l'état,
-    // Colyseus la transmet tout seul à l'autre joueur.
+    // ————— La position (~20 fois/s) —————
     this.onMessage('progress', (client, data: any) => {
       const p = this.state.players.get(client.sessionId)
       if (!p || this.state.phase !== 'racing' || p.finished) return
       p.lane = Math.max(0, Math.min(2, Number(data.lane) || 0))
       p.y = Number(data.y) || 0
       p.sliding = !!data.sliding
-      p.at = Number(data.at) || 0 // l'heure serveur d'envoi, estimée par le client
+      p.at = Number(data.at) || 0
 
-      // ————— Anti-triche : la distance annoncée doit être crédible —————
-      // Elle ne peut ni reculer, ni dépasser ce qui est physiquement possible
-      // depuis le GO. Un client modifié qui crie « 600 m ! » à la 3ᵉ seconde
-      // est ramené au plafond — silencieusement, sans le déconnecter.
+      // Anti-triche : la distance ne peut ni reculer, ni dépasser le possible.
       const elapsed = (Date.now() - this.raceStartAt) / 1000
       const claimed = Number(data.distance) || 0
       p.distance = Math.min(Math.max(claimed, p.distance), elapsed * MAX_SPEED)
 
-      // ————— L'historique des positions (lag compensation) —————
       const h = this.history.get(client.sessionId)
       if (h) {
         const t = Date.now()
@@ -161,48 +208,48 @@ export class RaceRoom extends Room<{ state: RaceState }> {
       }
     })
 
-    // Un joueur lance un sort offensif sur l'autre. Le serveur ne fait que
-    // relayer : il ne simule pas l'effet, c'est la victime qui l'applique.
+    // ————— Un sort offensif —————
+    // Le lanceur désigne sa cible (le plus proche devant, calculé côté client).
+    // Le serveur relaie au SEUL visé — ou à tous en secours si la cible a filé.
     this.onMessage('spell', (client, data: any) => {
       const p = this.state.players.get(client.sessionId)
       if (!p || this.state.phase !== 'racing' || p.finished) return
-
-      // On ne relaie que des sorts connus : un client bricole est vite arrive
       if (!SORTS_OFFENSIFS.includes(String(data?.kind))) return
 
-      // `distance` ne sert qu'au portail : c'est la place de l'envoyeur, que
-      // la victime va prendre. Le serveur ne l'interprete pas, il la transmet.
-      this.broadcast(
-        'spell',
-        { kind: String(data.kind), distance: Number(data?.distance) || 0 },
-        { except: client }
-      )
+      const msg = {
+        from: client.sessionId,
+        kind: String(data.kind),
+        distance: Number(data?.distance) || 0, // le portail seul s'en sert
+      }
+      const target = typeof data?.target === 'string' ? data.target : ''
+      const cible = target ? this.clients.find((c) => c.sessionId === target) : undefined
+      if (cible && target !== client.sessionId) cible.send('spell', msg)
+      else this.broadcast('spell', msg, { except: client }) // secours : tout le monde
     })
 
-    // Un joueur a franchi la ligne !
+    // ————— Un joueur franchit la ligne —————
     this.onMessage('finished', (client, data: any) => {
       const p = this.state.players.get(client.sessionId)
       if (!p || p.finished || this.state.phase !== 'racing') return
 
-      // ————— Anti-triche : un « j'ai fini ! » doit être crédible —————
+      // Anti-triche : finir plus vite que la vitesse max l'autorise = impossible.
       const serverElapsed = (Date.now() - this.raceStartAt) / 1000
-      // Finir plus vite que la vitesse max le permet ? Physiquement impossible.
       if (serverElapsed < COURSE_LENGTH / MAX_SPEED) return
-      // Et il faut avoir réellement parcouru la course (positions à l'appui).
       if (p.distance < COURSE_LENGTH * 0.95) return
 
       p.finished = true
-      // Le chrono retenu : celui du client s'il colle à NOTRE horloge (l'écart
-      // normal, c'est juste la latence) — sinon le nôtre, qui ne ment pas.
+      p.rank = [...this.state.players.values()].filter((x) => x.finished).length
       const claimed = Number(data.time) || 0
       p.time = Math.abs(claimed - serverElapsed) < 1.5 ? claimed : serverElapsed
 
-      // Le premier arrivé est le vainqueur
-      if (!this.state.winner) this.state.winner = client.sessionId
-
-      // Quand les deux ont fini → résultats
-      const all = [...this.state.players.values()]
-      if (all.every((pl) => pl.finished)) this.state.phase = 'results'
+      // Le premier arrivé arme le minuteur de grâce pour les autres.
+      if (p.rank === 1 && !this.graceTimer) {
+        this.graceTimer = this.clock.setTimeout(() => this.clore(), GRACE_MS)
+      }
+      // Tout le monde a fini → résultats tout de suite.
+      if ([...this.state.players.values()].filter((x) => x.connected).every((x) => x.finished)) {
+        this.clore()
+      }
     })
   }
 
@@ -210,32 +257,69 @@ export class RaceRoom extends Room<{ state: RaceState }> {
     const p = new PlayerState()
     p.name = cleanName(options?.name)
     p.fighter = cleanFighter(options?.fighter)
-    // La grille de départ : le premier arrivé à gauche, l'autre à droite
-    const taken = [...this.state.players.values()].map((pl) => pl.startLane)
-    p.startLane = taken.includes(0) ? 2 : 0
-    p.lane = p.startLane // sinon les patchs d'état le renverraient au centre
+    // Grille de départ : on répartit sur les 3 lignes (10 joueurs → chevauchement)
+    p.startLane = this.state.players.size % 3
+    p.lane = p.startLane
     this.state.players.set(client.sessionId, p)
     this.history.set(client.sessionId, [])
-    console.log(
-      `⚔️  ${p.name || 'anonyme'} (${p.fighter}) rejoint la course (${this.state.players.size}/2)`
-    )
 
-    // Deux guerriers présents : on verrouille la salle et c'est parti !
-    if (this.state.players.size === 2) {
-      this.lock()
-      this.state.phase = 'countdown'
-      this.state.startAt = Date.now() + COUNTDOWN_MS // GO programmé, à la ms près
-      this.clock.setTimeout(() => {
-        this.state.phase = 'racing'
-        this.raceStartAt = this.state.startAt // la référence anti-triche = le GO programmé
-      }, COUNTDOWN_MS)
+    // Le premier arrivé est l'hôte.
+    if (!this.state.hostId) this.state.hostId = client.sessionId
+
+    console.log(
+      `⚔️  ${p.name || 'anonyme'} rejoint ${this.state.code} (${this.state.players.size}/${MAX_CLIENTS})`
+    )
+    this.refreshMetadata()
+  }
+
+  /** Lance la partie : verrou, décompte de 10 s commun, puis GO. */
+  private lancer() {
+    this.lock()
+    this.state.phase = 'countdown'
+    this.state.startAt = Date.now() + COUNTDOWN_MS
+    this.refreshMetadata()
+    this.clock.setTimeout(() => {
+      this.state.phase = 'racing'
+      this.raceStartAt = this.state.startAt
+      this.refreshMetadata()
+    }, COUNTDOWN_MS)
+  }
+
+  /** Clôt la course : ceux qui n'ont pas fini restent sans rang (DNF). */
+  private clore() {
+    if (this.state.phase !== 'racing') return
+    if (this.graceTimer) {
+      this.graceTimer.clear()
+      this.graceTimer = null
     }
+    this.state.phase = 'results'
+    this.refreshMetadata()
+  }
+
+  /** Rouvre le salon pour rejouer ensemble : on repart d'un lobby propre. */
+  private retourLobby() {
+    this.state.phase = 'lobby'
+    this.state.startAt = 0
+    this.state.seed = Math.floor(Math.random() * 2 ** 31)
+    this.raceStartAt = 0
+    for (const p of this.state.players.values()) {
+      p.finished = false
+      p.rank = 0
+      p.ready = false
+      p.distance = 0
+      p.time = 0
+      p.lane = p.startLane
+      p.y = 0
+      p.sliding = false
+    }
+    for (const h of this.history.values()) h.length = 0
+    this.unlock()
+    this.refreshMetadata()
   }
 
   /**
-   * Coupure ANORMALE (écran verrouillé, wifi qui saute, tunnel…) : on garde
-   * sa place 30 secondes. S'il revient → onReconnect. Sinon → onLeave.
-   * Règle d'or de la doc Colyseus : on ne supprime RIEN ici.
+   * Coupure ANORMALE (écran verrouillé, wifi qui saute…) : on garde la place
+   * 30 s. Revient → onReconnect. Sinon → onLeave. On ne supprime RIEN ici.
    */
   onDrop(client: Client) {
     const p = this.state.players.get(client.sessionId)
@@ -253,16 +337,46 @@ export class RaceRoom extends Room<{ state: RaceState }> {
     console.log(`📡 ${client.sessionId} est revenu !`)
   }
 
+  onLeave(client: Client) {
+    console.log(`👋 ${client.sessionId} quitte ${this.state.code}`)
+    this.state.players.delete(client.sessionId)
+    this.history.delete(client.sessionId)
+
+    // L'hôte est parti : on confie le salon à quelqu'un d'autre.
+    if (client.sessionId === this.state.hostId) {
+      this.state.hostId = [...this.state.players.keys()][0] ?? ''
+    }
+
+    // En course, si tous les restants ont fini, on clôt.
+    if (this.state.phase === 'racing') {
+      const restants = [...this.state.players.values()].filter((x) => x.connected)
+      if (restants.length > 0 && restants.every((x) => x.finished)) this.clore()
+    }
+    this.refreshMetadata()
+  }
+
   /**
-   * ————— LAG COMPENSATION : l'API des futurs sorts 📜 —————
-   * Où était ce joueur à l'heure serveur `t` (ms) ? Interpolé entre les deux
-   * échantillons qui encadrent t, sur 2 s d'historique.
-   *
-   * Pourquoi : quand un kunai « touche ce que le lanceur voyait », il faut
-   * juger le coup À L'INSTANT DE LA VISÉE (l'horodatage `at` du lanceur, qui
-   * partage notre horloge grâce à la synchro NTP) — pas à l'instant où son
-   * message nous parvient, 30 à 100 ms plus tard. C'est la technique des
-   * shooters (Valve) appliquée à notre course.
+   * Les métadonnées, lues par la liste publique côté client (getAvailableRooms).
+   * C'est ici que se décide ce qu'on voit dans « salons ouverts ».
+   */
+  private refreshMetadata() {
+    const host = this.state.hostId
+      ? this.state.players.get(this.state.hostId)?.name || 'anonyme'
+      : ''
+    this.setMetadata({
+      code: this.state.code,
+      public: this.state.isPublic,
+      phase: this.state.phase,
+      count: this.state.players.size,
+      max: MAX_CLIENTS,
+      host,
+    }).then(() => updateLobby(this)) // pousse la mise à jour vers la salle « lobby »
+  }
+
+  /**
+   * ————— LAG COMPENSATION —————
+   * Où était ce joueur à l'heure serveur `t` (ms) ? Interpolé sur 2 s d'historique.
+   * Réservé aux futurs sorts jugés côté serveur.
    */
   positionAt(sessionId: string, t: number): { distance: number; lane: number; y: number } | null {
     const h = this.history.get(sessionId)
@@ -277,24 +391,11 @@ export class RaceRoom extends Room<{ state: RaceState }> {
         const k = (t - a.t) / Math.max(1, b.t - a.t)
         return {
           distance: a.distance + (b.distance - a.distance) * k,
-          lane: k < 0.5 ? a.lane : b.lane, // la ligne ne s'interpole pas : on prend la plus proche
+          lane: k < 0.5 ? a.lane : b.lane,
           y: a.y + (b.y - a.y) * k,
         }
       }
     }
     return last
-  }
-
-  onLeave(client: Client) {
-    console.log(`👋 ${client.sessionId} quitte la course`)
-    this.state.players.delete(client.sessionId)
-    this.history.delete(client.sessionId)
-
-    // Abandon en pleine course → victoire par forfait pour celui qui reste
-    if (this.state.phase === 'countdown' || this.state.phase === 'racing') {
-      const remaining = [...this.state.players.keys()]
-      this.state.winner = remaining[0] ?? ''
-      this.state.phase = 'results'
-    }
   }
 }

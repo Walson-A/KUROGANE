@@ -8,8 +8,18 @@ import {
   type Fighter,
 } from './roster'
 import { cleanName, loadSettings, saveSettings, type Quality, type Settings } from './settings'
+import type { LobbyView, SalonInfo } from './net'
 
-type ScreenName = 'title' | 'roster' | 'options' | 'help' | 'status' | 'botpick'
+type ScreenName =
+  | 'title'
+  | 'roster'
+  | 'options'
+  | 'help'
+  | 'status'
+  | 'botpick'
+  | 'salon'
+  | 'lobby'
+  | 'results'
 
 export interface MenuCallbacks {
   onSolo(): void
@@ -20,6 +30,17 @@ export interface MenuCallbacks {
   onQuality(q: Quality): void
   /** Le joueur annule la recherche d'adversaire */
   onCancel(): void
+  // ————— Les salons en ligne —————
+  onCreateSalon(): void
+  onQuick(): void
+  onJoinByCode(code: string): void
+  onJoinRoom(roomId: string): void
+  onListSalons(): Promise<SalonInfo[]>
+  onReady(ready: boolean): void
+  onStart(): void
+  onChat(text: string): void
+  onReplay(): void
+  onLeaveSalon(): void
 }
 
 /**
@@ -57,6 +78,8 @@ export class Menu {
   private current: ScreenName = 'title'
   private preview: Preview | null = null
   private spin = 0
+  /** La dernière vue du salon reçue — pour savoir qui je suis, si je suis prêt… */
+  private view: LobbyView | null = null
 
   private el = {
     banner: document.getElementById('banner')!,
@@ -72,6 +95,20 @@ export class Menu {
     infoPassive: document.getElementById('infoPassive')!,
     optName: document.getElementById('optName') as HTMLInputElement,
     optQuality: document.getElementById('optQuality')!,
+    // ————— Salon —————
+    joinCode: document.getElementById('joinCode') as HTMLInputElement,
+    salonList: document.getElementById('salonList')!,
+    // ————— Lobby —————
+    lobbyCode: document.getElementById('lobbyCode')!,
+    lobbyHint: document.getElementById('lobbyHint')!,
+    lobbyList: document.getElementById('lobbyList')!,
+    chatLog: document.getElementById('chatLog')!,
+    chatInput: document.getElementById('chatInput') as HTMLInputElement,
+    ready: document.getElementById('btnReady')!,
+    start: document.getElementById('btnStart')!,
+    // ————— Résultats —————
+    resultsBody: document.getElementById('resultsBody')!,
+    replay: document.getElementById('btnReplay')!,
   }
 
   constructor(cb: MenuCallbacks) {
@@ -85,6 +122,9 @@ export class Menu {
       help: document.getElementById('scr-help')!,
       status: document.getElementById('scr-status')!,
       botpick: document.getElementById('scr-botpick')!,
+      salon: document.getElementById('scr-salon')!,
+      lobby: document.getElementById('scr-lobby')!,
+      results: document.getElementById('scr-results')!,
     }
 
     // — Écran-titre —
@@ -102,11 +142,150 @@ export class Menu {
 
     this.buildRoster()
     this.buildOptions()
+    this.buildSalon()
     this.applyFighter(this.settings.fighter)
   }
 
   get fighter(): Fighter {
     return fighterById(this.settings.fighter)
+  }
+
+  // ————— Les salons en ligne —————
+
+  private buildSalon() {
+    const cb = this.cb
+    document.getElementById('btnCreate')!.addEventListener('click', () => cb.onCreateSalon())
+    document.getElementById('btnQuick')!.addEventListener('click', () => cb.onQuick())
+    document.getElementById('btnRefresh')!.addEventListener('click', () => this.refreshSalons())
+
+    const join = () => {
+      const code = this.el.joinCode.value.toUpperCase().replace(/[^A-Z]/g, '')
+      if (code) cb.onJoinByCode(code)
+    }
+    document.getElementById('btnJoinCode')!.addEventListener('click', join)
+    this.el.joinCode.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') join()
+    })
+    // Toujours en majuscules pendant la frappe
+    this.el.joinCode.addEventListener('input', () => {
+      this.el.joinCode.value = this.el.joinCode.value.toUpperCase().replace(/[^A-Z]/g, '')
+    })
+
+    // — Lobby —
+    document.getElementById('btnLeaveLobby')!.addEventListener('click', () => cb.onLeaveSalon())
+    this.el.ready.addEventListener('click', () => {
+      const me = this.view?.players.find((p) => p.id === this.view?.me)
+      cb.onReady(!me?.ready)
+    })
+    this.el.start.addEventListener('click', () => cb.onStart())
+
+    const send = () => {
+      const text = this.el.chatInput.value.trim()
+      if (!text) return
+      cb.onChat(text)
+      this.el.chatInput.value = ''
+    }
+    document.getElementById('btnChatSend')!.addEventListener('click', send)
+    this.el.chatInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') send()
+    })
+
+    // — Résultats —
+    this.el.replay.addEventListener('click', () => cb.onReplay())
+    document.getElementById('btnQuitResults')!.addEventListener('click', () => cb.onLeaveSalon())
+  }
+
+  /** Ouvre l'accueil « jouer en ligne » et charge la liste des salons. */
+  showSalon() {
+    this.el.joinCode.value = ''
+    this.el.chatLog.innerHTML = '' // nouveau salon = chat vierge
+    this.show('salon')
+    this.refreshSalons()
+  }
+
+  private async refreshSalons() {
+    this.el.salonList.innerHTML = '<div class="salonempty">…</div>'
+    const salons = await this.cb.onListSalons()
+    if (!salons.length) {
+      this.el.salonList.innerHTML = '<div class="salonempty">Aucun salon ouvert. Crée le tien !</div>'
+      return
+    }
+    this.el.salonList.innerHTML = ''
+    for (const s of salons) {
+      const b = document.createElement('button')
+      b.className = 'salonrow'
+      const host = s.host ? escapeHtml(s.host) : 'un guerrier'
+      b.innerHTML =
+        `<span class="salonhost">${host}</span>` +
+        `<span class="saloncount">${s.count}/${s.max}</span>`
+      b.addEventListener('click', () => this.cb.onJoinRoom(s.roomId))
+      this.el.salonList.appendChild(b)
+    }
+  }
+
+  /** (Re)dessine le lobby à partir de la vue serveur. */
+  showLobby(view: LobbyView) {
+    this.view = view
+    this.el.lobbyCode.textContent = view.code === 'PUBLIC' ? '' : view.code
+    this.show('lobby')
+
+    const me = view.players.find((p) => p.id === view.me)
+    const total = view.players.length
+    const prets = view.players.filter((p) => p.ready).length
+
+    // La liste des joueurs : hôte, prêt, moi
+    this.el.lobbyList.innerHTML = view.players
+      .map((p) => {
+        const tags: string[] = []
+        if (p.id === view.hostId) tags.push('<span class="tag host">hôte</span>')
+        if (p.ready) tags.push('<span class="tag ok">prêt</span>')
+        if (!p.connected) tags.push('<span class="tag off">absent</span>')
+        const moi = p.id === view.me ? ' moi' : ''
+        const nom = escapeHtml(p.name || 'Guerrier') + (p.id === view.me ? ' (toi)' : '')
+        return `<div class="lobbyrow${moi}"><span class="lnom">${nom}</span>${tags.join('')}</div>`
+      })
+      .join('')
+
+    // Le bouton « prêt » reflète mon état
+    this.el.ready.textContent = me?.ready ? '✓ PRÊT (annuler)' : 'JE SUIS PRÊT'
+    this.el.ready.classList.toggle('on', !!me?.ready)
+
+    // Le bouton « lancer » : à l'hôte seul, actif dès la moitié prête (≥ 2 joueurs)
+    const peutLancer = total >= 2 && prets >= Math.ceil(total / 2)
+    this.el.start.classList.toggle('hidden', !view.isHost)
+    ;(this.el.start as HTMLButtonElement).disabled = !peutLancer
+
+    // Le mot d'ambiance selon la situation
+    if (total < 2) {
+      this.el.lobbyHint.textContent =
+        view.code === 'PUBLIC'
+          ? 'En attente d\'autres guerriers…'
+          : `Partage le code ${view.code} pour inviter tes amis.`
+    } else if (view.isHost) {
+      this.el.lobbyHint.textContent = peutLancer
+        ? `${prets}/${total} prêts — tu peux lancer !`
+        : `${prets}/${total} prêts — il en faut ${Math.ceil(total / 2)}.`
+    } else {
+      this.el.lobbyHint.textContent = `${prets}/${total} prêts — l'hôte lance la partie.`
+    }
+  }
+
+  /** Ajoute une ligne au chat (et fait défiler en bas). */
+  addChatLine(name: string, text: string, mine: boolean) {
+    const line = document.createElement('div')
+    line.className = 'chatline' + (mine ? ' mine' : '')
+    line.innerHTML = `<b>${escapeHtml(name || 'Anonyme')}</b> ${escapeHtml(text)}`
+    this.el.chatLog.appendChild(line)
+    // On borne l'historique et on colle en bas
+    while (this.el.chatLog.childElementCount > 60) this.el.chatLog.firstElementChild!.remove()
+    this.el.chatLog.scrollTop = this.el.chatLog.scrollHeight
+  }
+
+  /** Le classement de fin de course. `canReplay` : l'hôte peut relancer. */
+  showResults(html: string, canReplay: boolean) {
+    this.el.resultsBody.innerHTML = html
+    this.el.replay.classList.toggle('hidden', !canReplay)
+    this.show('results')
   }
 
   // ————— Les écrans —————

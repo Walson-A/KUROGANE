@@ -24,9 +24,11 @@ avec Claude Code comme développeur.
   à la vitesse de croisière (≈ 0,3 s de gagnées, toujours moins qu'un
   trébuchement). Le GO est **programmé à la même milliseconde** sur les deux
   téléphones, peu importe le ping
-- **⚔️ Duel en ligne** : matchmaking automatique, **grille de départ** (chacun
-  sa ligne), les deux joueurs affrontent exactement la même piste, le serveur
-  déclare le vainqueur
+- **⚔️ Salons jusqu'à 10 joueurs** : crée un salon et partage son code, rejoins
+  par code ou depuis la liste publique, ou lance une **partie rapide**. Départ
+  façon Among Us : chacun se déclare **prêt**, l'hôte lance dès la moitié prête,
+  décompte de 10 s commun ([voir les salons](#-les-salons--jouer-jusquà-10))
+- 💬 **Chat de salon** en attendant le départ
 - 🏋️ Mode **entraînement solo** contre **1 à 4 rivaux** (voir
   [le roster](#-les-rivaux-dentraînement)), avec record personnel sauvegardé
 
@@ -90,16 +92,49 @@ kurogane/
 l'aperçu 3D lisent tous la même fiche. Pour ajouter un guerrier, il suffit
 d'ajouter une entrée dans `ROSTER` — le reste du jeu suit tout seul.
 
+## 🎌 Les salons — jouer jusqu'à 10
+
+Un **salon** = une salle Colyseus (jusqu'à 10 guerriers). Trois façons d'entrer,
+toutes dans [src/net.ts](src/net.ts) et [server/src/RaceRoom.ts](server/src/RaceRoom.ts) :
+
+| Entrée | Comment |
+|---|---|
+| 🏮 **Créer** | On génère un **code à 4 lettres** (sans voyelles, pas de gros mots) et on le partage. Salon privé, invisible dans la liste. |
+| 🚪 **Rejoindre par code** | On tape le code d'un ami. |
+| 📋 **Liste publique** | Les salons publics ouverts, listés en temps réel. |
+| ⚡ **Partie rapide** | Remplit un salon public partagé (`joinOrCreate` sur le code `PUBLIC`) — l'auto-remplissage jusqu'à 10. |
+
+Le routage repose sur `filterBy(['code'])` : `joinOrCreate('race', { code })`
+tombe sur le salon qui porte ce code, ou en crée un. La **liste publique**
+passe par la salle `LobbyRoom` de Colyseus, tenue à jour en temps réel
+(`enableRealtimeListing` + `updateLobby`).
+
+### Le départ, façon Among Us
+
+Chacun se déclare **prêt**. L'hôte (le premier arrivé, réattribué s'il part)
+peut **lancer dès que la moitié est prête** — pas besoin d'attendre les
+traînards. Le lancement déclenche un **décompte de 10 s commun** (l'heure du GO
+est programmée à la milliseconde, comme en 1v1), puis la course. À l'arrivée,
+un **classement** de 1 à 10, et l'hôte peut **rejouer** sans quitter le salon.
+
+Un **chat** occupe l'attente. Tout ce qui vient d'un autre joueur (pseudo, message)
+est **échappé** avant affichage — on ne fait jamais confiance au client.
+
 ## 🧠 L'idée clé du multi : la graine partagée
 
-Le serveur tire un nombre au hasard (la **graine**) et l'envoie aux deux
+Le serveur tire un nombre au hasard (la **graine**) et l'envoie à tous les
 joueurs. La piste entière est générée à partir de cette graine
 ([mulberry32](src/track.ts)) : **même graine = mêmes obstacles aux mêmes
 endroits**. On n'envoie jamais les obstacles par le réseau — juste un nombre.
 
-Le serveur est **autoritaire** : c'est lui qui apparie les joueurs, donne le
-GO et déclare le vainqueur. Les clients ne font que lui raconter où ils en
-sont (20 fois par seconde).
+Le serveur est **autoritaire** : c'est lui qui héberge le salon, donne le GO,
+relaie les sorts et tient le classement. Les clients ne font que lui raconter
+où ils en sont (20 fois par seconde). Les avatars des 9 autres sont un **pool
+recyclé** côté jeu : on n'en crée jamais en pleine course.
+
+Un **sort offensif** vise le rival le plus proche **devant** (calculé côté jeu) ;
+le serveur ne l'applique qu'à cette cible. Le 🔮 portail, lui, file tout droit
+et échange les places du premier croisé dans sa ligne.
 
 ### Voir le rival là où il EST, pas là où il ÉTAIT
 
@@ -382,6 +417,7 @@ mêmes esquives et mêmes fautes, on peut donc retravailler une course ratée.
 
 - [x] Course solo 1 920 m : obstacles, trébuchement, chrono, record
 - [x] Duel en ligne : matchmaking, piste partagée, adversaire visible, victoire
+- [x] 🎌 Salons jusqu'à 10 : code privé, liste publique, partie rapide, prêt/hôte, décompte 10 s, chat, classement
 - [x] 🔥 Sprint final au martèlement, calibré pour départager les ex æquo
 - [x] 🥷 Le roster : Yasuke, Hana, Oni-Maru, Tamae — passifs, aperçu 3D, synchro en duel
 - [x] 🎌 Le menu : écran-titre, choix du guerrier, options (pseudo, qualité), aide

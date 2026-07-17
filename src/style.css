@@ -752,3 +752,191 @@ body {
   opacity: 0.75;
   min-height: 1.2em;
 }
+
+/* ═══════════ Les salons en ligne ═══════════ */
+
+/* Un input qui partage sa ligne avec un bouton (code, chat) prend la place restante */
+.row input {
+  flex: 1;
+  min-width: 0;
+}
+.row.spread {
+  justify-content: space-between;
+  align-items: center;
+}
+
+/* Le code du salon, mis en avant : c'est ce qu'on partage */
+.code {
+  font-family: ui-monospace, "Cascadia Code", monospace;
+  letter-spacing: 0.25em;
+  color: #d6ac5a;
+}
+
+/* ——— La liste des salons publics ——— */
+.salonlist {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 30vh;
+  overflow-y: auto;
+}
+.salonempty {
+  font-size: 0.85rem;
+  opacity: 0.55;
+  padding: 10px 2px;
+  text-align: center;
+}
+#overlay button.salonrow {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: rgba(21, 26, 44, 0.6);
+  border: 1px solid #3d4560;
+  box-shadow: none;
+  color: #f0e8d8;
+  padding: 12px 16px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+.saloncount {
+  font-family: ui-monospace, monospace;
+  font-size: 0.85rem;
+  color: #9aa4c0;
+}
+
+/* ——— Le lobby ——— */
+.lobbyhint {
+  font-size: 0.85rem;
+  color: #9aa4c0;
+  min-height: 1.2em;
+  text-align: center;
+}
+.lobbylist {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  max-height: 26vh;
+  overflow-y: auto;
+  width: 100%;
+}
+.lobbyrow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 12px;
+  border-radius: 8px;
+  background: rgba(21, 26, 44, 0.55);
+  border: 1px solid #2b3350;
+}
+.lobbyrow.moi {
+  border-color: #d6ac5a;
+}
+.lnom {
+  flex: 1;
+  text-align: left;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.tag {
+  font-size: 0.62rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 2px 8px;
+  border-radius: 100px;
+  font-weight: 700;
+}
+.tag.host {
+  background: rgba(214, 172, 90, 0.2);
+  color: #d6ac5a;
+}
+.tag.ok {
+  background: rgba(116, 219, 166, 0.2);
+  color: #74dba6;
+}
+.tag.off {
+  background: rgba(154, 164, 192, 0.18);
+  color: #9aa4c0;
+}
+
+/* ——— Le chat ——— */
+.lobbychat {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.chatlog {
+  height: 16vh;
+  min-height: 90px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 8px 10px;
+  border-radius: 9px;
+  background: rgba(13, 16, 28, 0.5);
+  border: 1px solid #2b3350;
+  font-size: 0.85rem;
+  text-align: left;
+}
+.chatline {
+  line-height: 1.35;
+  word-break: break-word;
+}
+.chatline b {
+  color: #9aa4c0;
+  font-weight: 700;
+  margin-right: 4px;
+}
+.chatline.mine b {
+  color: #d6ac5a;
+}
+
+/* Le bouton « prêt » vire au vert quand on l'est */
+#overlay button#btnReady.on {
+  background: #2f6050;
+  box-shadow: 0 6px 22px rgba(47, 96, 80, 0.4);
+}
+#overlay button#btnStart:disabled {
+  opacity: 0.4;
+  box-shadow: none;
+}
+
+/* ——— Le classement de fin de course ——— */
+.reslist {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  width: 100%;
+  margin: 16px 0 4px;
+  max-height: 46vh;
+  overflow-y: auto;
+}
+.resrow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 14px;
+  border-radius: 8px;
+  background: rgba(21, 26, 44, 0.55);
+  border: 1px solid #2b3350;
+}
+.resrow.moi {
+  border-color: #d6ac5a;
+  background: rgba(214, 172, 90, 0.1);
+}
+.resname {
+  flex: 1;
+  text-align: left;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.restime {
+  font-family: ui-monospace, monospace;
+  font-size: 0.85rem;
+  color: #9aa4c0;
+}

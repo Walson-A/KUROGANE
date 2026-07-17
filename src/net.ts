@@ -1,7 +1,9 @@
 import { Client, Room } from '@colyseus/sdk'
 
-/** Ce qu'on sait de l'adversaire à un instant donné */
+/** Ce qu'on sait d'un joueur du salon (nous compris) à un instant donné */
 export interface RemotePlayer {
+  /** L'identifiant Colyseus — la clé qui distingue les 10 coureurs */
+  id: string
   lane: number
   y: number
   distance: number
@@ -14,34 +16,75 @@ export interface RemotePlayer {
   fighter: string
   /** false = il a coupé (écran verrouillé…) mais peut revenir sous 30 s */
   connected: boolean
+  /** S'est-il déclaré prêt dans le lobby ? */
+  ready: boolean
+  /** Sa place à l'arrivée (1 = premier), 0 = pas encore fini */
+  rank: number
   /** Heure serveur (ms) à laquelle il a envoyé cette position — 0 si inconnue */
   at: number
-  /** Sa ligne sur la grille de départ (0 = gauche, 2 = droite) */
+  /** Sa ligne sur la grille de départ (0, 1, 2) */
   startLane: number
 }
 
 /**
  * Une action du rival, relayée IMMÉDIATEMENT par le serveur (hors du flux
  * d'état à 30 Hz) : c'est ce qui rend ses esquives nettes à l'écran.
+ * `from` = qui l'a faite (parmi les 10).
  */
 export type OppAction =
-  | { t: 'lane'; lane: number }
-  | { t: 'jump'; v: number }
-  | { t: 'slide'; d: number }
-  | { t: 'stumble'; keep: number }
+  | { from: string; t: 'lane'; lane: number }
+  | { from: string; t: 'jump'; v: number }
+  | { from: string; t: 'slide'; d: number }
+  | { from: string; t: 'stumble'; keep: number }
+
+/** Un salon vu depuis la liste publique (getAvailableRooms) */
+export interface SalonInfo {
+  roomId: string
+  code: string
+  host: string
+  count: number
+  max: number
+}
+
+/**
+ * Une vue complète du salon : qui est là, qui est prêt, qui est l'hôte, où on
+ * en est. C'est ce que le lobby affiche.
+ */
+export interface LobbyView {
+  code: string
+  isPublic: boolean
+  hostId: string
+  phase: string // lobby | countdown | racing | results
+  startAt: number
+  /** MON identifiant */
+  me: string
+  isHost: boolean
+  /** TOUS les joueurs (moi compris), dans l'ordre d'arrivée */
+  players: RemotePlayer[]
+}
 
 /** Les événements réseau que le jeu doit gérer */
 export interface NetCallbacks {
-  onWaiting(): void // connecté, on attend un adversaire
-  onCountdown(seed: number): void // adversaire trouvé ! 3, 2, 1…
-  onGo(): void // GO officiel du serveur
-  onOpponent(op: RemotePlayer | null): void // nouvelles infos sur l'adversaire
-  /** L'adversaire nous a lancé un sort ! `distance` = sa place (portail seul) */
-  onSpell(kind: string, distance: number): void
-  onAction(a: OppAction): void // le rival vient de sauter/esquiver/trébucher
-  onLink(up: boolean): void // NOTRE connexion : coupée (false) / rétablie (true)
-  onResults(iWon: boolean, oppTime: number): void // fin de course
-  onError(message: string): void // serveur injoignable, déconnexion…
+  /** Le salon a changé (arrivée, départ, prêt, hôte…) — hors course */
+  onLobby(view: LobbyView): void
+  /** La partie est lancée : décompte de 10 s, avec la graine de la piste */
+  onCountdown(seed: number): void
+  /** GO officiel du serveur */
+  onGo(): void
+  /** Positions de tous les AUTRES coureurs (pendant décompte + course) */
+  onPlayers(others: RemotePlayer[]): void
+  /** Un joueur nous a lancé un sort ! `distance` = sa place (portail seul) */
+  onSpell(from: string, kind: string, distance: number): void
+  /** Un rival vient de sauter / esquiver / trébucher */
+  onAction(a: OppAction): void
+  /** Message de chat (du lobby) */
+  onChat(from: string, name: string, text: string): void
+  /** La course est finie : le classement est dans la vue */
+  onResults(view: LobbyView): void
+  /** NOTRE connexion : coupée (false) / rétablie (true) */
+  onLink(up: boolean): void
+  /** Serveur injoignable, déconnexion définitive… */
+  onError(message: string): void
 }
 
 /**
@@ -50,20 +93,22 @@ export interface NetCallbacks {
  */
 const PROD_SERVER_URL = ''
 
-/**
- * L'adresse du serveur de jeu :
- * - en local / sur le wifi : même machine que le site, port 2567
- * - en production (site en https) : l'adresse Railway ci-dessus
- * - la variable VITE_SERVER_URL, si définie, gagne toujours
- */
 const WS_URL: string =
   import.meta.env.VITE_SERVER_URL ??
   (location.protocol === 'https:' ? PROD_SERVER_URL : `ws://${location.hostname}:2567`)
 
+/** Génère un code de salon lisible : 4 lettres, sans voyelles (pas de gros mots). */
+function genCode(): string {
+  const L = 'BCDFGHJKLMNPQRSTVWXZ'
+  let c = ''
+  for (let i = 0; i < 4; i++) c += L[Math.floor(Math.random() * L.length)]
+  return c
+}
+
 /**
  * La connexion au serveur Colyseus.
- * Le serveur est LE CHEF : c'est lui qui apparie les joueurs, donne la graine
- * de la piste, lance le départ et déclare le vainqueur.
+ * Le serveur est LE CHEF : il héberge le salon, donne la graine de la piste,
+ * lance le départ et tient le classement.
  */
 export class Net {
   private room: Room | null = null
@@ -73,30 +118,30 @@ export class Net {
   private pingTimer: ReturnType<typeof setInterval> | null = null
   private leaving = false // on part volontairement (≠ coupure subie)
   myFinished = false
-  /** Nos lignes sur la grille de départ, décidées par le serveur */
-  myStartLane = 1
-  oppStartLane = 1
-  /** L'heure serveur (ms) du GO programmé — 0 tant que le duel n'est pas lancé */
-  startAt = 0
 
-  /** La synchro d'horloge est-elle prête ? (quelques pongs suffisent) */
+  /** MON identifiant dans le salon */
+  get id() {
+    return this.room?.sessionId ?? ''
+  }
+  /** Le code du salon courant */
+  code = ''
+  /** L'heure serveur (ms) du GO programmé — 0 tant que la partie n'est pas lancée */
+  startAt = 0
+  /** Ma ligne de départ, décidée par le serveur */
+  myStartLane = 1
+
+  /** La synchro d'horloge est-elle prête ? */
   get clockReady() {
     return this.offsetReady
   }
-  /**
-   * Le ping (aller-retour, en secondes), mesuré en continu.
-   * Sert à compenser le temps de trajet des positions de l'adversaire.
-   */
+  /** Le ping (aller-retour, en secondes), mesuré en continu. */
   rtt = 0
 
   // ————— Synchro d'horloge (NTP simplifié) —————
-  // L'heure du serveur correspond au MILIEU de l'aller-retour d'un ping.
-  // En comparant, on estime le décalage entre son horloge et la nôtre :
-  // les deux joueurs partagent alors une référence de temps commune.
-  private offset = 0 // heure serveur − notre performance.now(), en ms
+  private offset = 0
   private offsetReady = false
 
-  /** L'heure du serveur, estimée (ms) — la référence commune aux 2 joueurs */
+  /** L'heure du serveur, estimée (ms) — la référence commune à tous */
   serverNow(): number {
     return performance.now() + this.offset
   }
@@ -115,12 +160,72 @@ export class Net {
     return this.room !== null
   }
 
+  // ————— Entrer dans un salon —————
+
+  /** Crée un salon PRIVÉ et renvoie son code à partager. */
+  async createSalon(identity: { name: string; fighter: string }): Promise<string> {
+    const code = genCode()
+    await this.enter((client) =>
+      client.create('race', { ...identity, code, isPublic: false })
+    )
+    return code
+  }
+
+  /** Rejoint (ou crée) le salon qui porte ce code. */
+  async joinByCode(identity: { name: string; fighter: string }, code: string) {
+    const c = code.toUpperCase().replace(/[^A-Z]/g, '').slice(0, 6)
+    await this.enter((client) => client.joinOrCreate('race', { ...identity, code: c }))
+  }
+
+  /** Partie rapide : remplit un salon PUBLIC (code 'PUBLIC'), départ à l'hôte/minuteur. */
+  async joinQuick(identity: { name: string; fighter: string }) {
+    await this.enter((client) =>
+      client.joinOrCreate('race', { ...identity, code: 'PUBLIC', isPublic: true })
+    )
+  }
+
+  /** Rejoint un salon précis de la liste publique (par son roomId). */
+  async joinRoom(identity: { name: string; fighter: string }, roomId: string) {
+    await this.enter((client) => client.joinById(roomId, identity))
+  }
+
   /**
-   * Rejoint une course (ou en crée une et attend un adversaire).
-   * On donne notre identité au serveur dès l'arrivée : il la range dans l'état
-   * de la salle, et l'autre joueur la reçoit automatiquement.
+   * La liste des salons publics en attente (pour l'écran « rejoindre »).
+   * On se connecte le temps d'un instant à la salle « lobby » de Colyseus, qui
+   * tient la liste des salons à jour en temps réel, on lit sa 1re photo, puis on
+   * repart. En cas d'échec, liste vide — le code et la partie rapide marchent.
    */
-  async join(identity: { name: string; fighter: string }) {
+  async listSalons(): Promise<SalonInfo[]> {
+    let lobby: Room | null = null
+    try {
+      const client = new Client(WS_URL)
+      lobby = await client.joinOrCreate('lobby')
+      const rooms: any[] = await new Promise((resolve) => {
+        const t = setTimeout(() => resolve([]), 1500)
+        // 'rooms' = la photo complète envoyée à l'arrivée
+        lobby!.onMessage('rooms', (list: any[]) => {
+          clearTimeout(t)
+          resolve(Array.isArray(list) ? list : [])
+        })
+      })
+      return rooms
+        .filter((r) => r.metadata?.public && r.metadata?.phase === 'lobby')
+        .map((r) => ({
+          roomId: r.roomId,
+          code: r.metadata?.code ?? '????',
+          host: r.metadata?.host ?? '',
+          count: r.metadata?.count ?? r.clients ?? 0,
+          max: r.metadata?.max ?? 10,
+        }))
+    } catch {
+      return []
+    } finally {
+      lobby?.leave()
+    }
+  }
+
+  /** Le tronc commun d'une connexion : on branche tous les écouteurs. */
+  private async enter(open: (client: Client) => Promise<Room>) {
     this.lastPhase = ''
     this.resultsSent = false
     this.myFinished = false
@@ -128,45 +233,40 @@ export class Net {
     this.rtt = 0
     this.offset = 0
     this.offsetReady = false
+    this.startAt = 0
 
     try {
       const client = new Client(WS_URL)
-      this.room = await client.joinOrCreate('race', identity)
+      this.room = await open(client)
     } catch {
       this.cb.onError('Serveur injoignable. Il tourne ? (cf DEPLOY.md)')
       return
     }
 
-    this.cb.onWaiting()
-
     this.room.onStateChange((state: any) => this.readState(state))
-    // Un sort nous arrive dessus : le serveur l'a relayé depuis l'adversaire
-    this.room.onMessage('spell', (msg: any) =>
-      this.cb.onSpell(String(msg?.kind ?? ''), Number(msg?.distance) || 0)
-    )
     this.room.onError(() => this.cb.onError('Erreur de connexion.'))
     this.room.onLeave(() => {
       this.stopPing()
       this.room = null
-      // Coupure DÉFINITIVE (reconnexion épuisée) en pleine course : ni un
-      // départ volontaire, ni une fin normale → on prévient le jeu.
       if (!this.leaving && !this.resultsSent) this.cb.onError('Connexion perdue.')
     })
 
+    // Un sort nous arrive dessus (relayé depuis son lanceur)
+    this.room.onMessage('spell', (m: any) =>
+      this.cb.onSpell(String(m?.from ?? ''), String(m?.kind ?? ''), Number(m?.distance) || 0)
+    )
     // Les actions du rival, relayées immédiatement (hors flux 30 Hz)
     this.room.onMessage('action', (a: OppAction) => this.cb.onAction(a))
+    // Le chat du lobby
+    this.room.onMessage('chat', (m: any) =>
+      this.cb.onChat(String(m?.from ?? ''), String(m?.name ?? ''), String(m?.text ?? ''))
+    )
 
-    // ————— Reconnexion automatique —————
-    // Écran verrouillé, wifi qui saute : le SDK retente tout seul (et met nos
-    // messages en tampon), le serveur nous garde la place 30 s (RaceRoom.onDrop).
+    // Reconnexion automatique (écran verrouillé, wifi qui saute)
     this.room.onDrop(() => this.cb.onLink(false))
     this.room.onReconnect(() => this.cb.onLink(true))
 
-    // ————— La mesure du ping + la synchro d'horloge —————
-    // Toutes les 2 s on envoie notre heure ; le serveur renvoie la sienne en
-    // face. Le temps écoulé = l'aller-retour (rtt). Et l'heure serveur datant
-    // du MILIEU du trajet, on en déduit le décalage entre nos horloges.
-    // Moyennes glissantes ; les pings anormalement lents mentent → écartés.
+    // Ping + synchro d'horloge
     this.room.onMessage('pong', (p: { sentAt: number; server: number }) => {
       const now = performance.now()
       const sample = (now - p.sentAt) / 1000
@@ -187,70 +287,109 @@ export class Net {
     this.pingTimer = null
   }
 
-  /** Lit l'état envoyé par le serveur et prévient le jeu de ce qui change */
+  /** Lit l'état du salon et prévient le jeu de ce qui change. */
   private readState(state: any) {
     if (!this.room) return
-
-    // On lit les joueurs D'ABORD : le callback du décompte (qui lance la
-    // course) a besoin des lignes de la grille de départ.
-    let opp: RemotePlayer | null = null
-    state.players.forEach((p: any, id: string) => {
-      if (id === this.room!.sessionId) {
-        this.myStartLane = p.startLane ?? 1
-      } else {
-        opp = {
-          lane: p.lane,
-          y: p.y,
-          distance: p.distance,
-          sliding: p.sliding,
-          finished: p.finished,
-          time: p.time,
-          name: p.name ?? '',
-          fighter: p.fighter ?? '',
-          connected: p.connected ?? true,
-          at: p.at ?? 0,
-          startLane: p.startLane ?? 1,
-        }
-      }
-    })
-    if (opp) this.oppStartLane = (opp as RemotePlayer).startLane
+    const myId = this.room.sessionId
+    this.code = state.code ?? ''
     this.startAt = state.startAt ?? 0
 
-    // Changement de phase : attente → décompte → course → résultats
+    const all: RemotePlayer[] = []
+    const others: RemotePlayer[] = []
+    state.players.forEach((p: any, id: string) => {
+      const rp: RemotePlayer = {
+        id,
+        lane: p.lane,
+        y: p.y,
+        distance: p.distance,
+        sliding: p.sliding,
+        finished: p.finished,
+        time: p.time,
+        name: p.name ?? '',
+        fighter: p.fighter ?? '',
+        connected: p.connected ?? true,
+        ready: p.ready ?? false,
+        rank: p.rank ?? 0,
+        at: p.at ?? 0,
+        startLane: p.startLane ?? 1,
+      }
+      all.push(rp)
+      if (id === myId) this.myStartLane = rp.startLane
+      else others.push(rp)
+    })
+
+    const view: LobbyView = {
+      code: state.code ?? '',
+      isPublic: state.isPublic ?? false,
+      hostId: state.hostId ?? '',
+      phase: state.phase ?? 'lobby',
+      startAt: state.startAt ?? 0,
+      me: myId,
+      isHost: state.hostId === myId,
+      players: all,
+    }
+
+    // Changement de phase
     if (state.phase !== this.lastPhase) {
       this.lastPhase = state.phase
       if (state.phase === 'countdown') this.cb.onCountdown(state.seed)
       if (state.phase === 'racing') this.cb.onGo()
     }
 
-    this.cb.onOpponent(opp)
-
-    // Résultats : dès qu'un vainqueur est connu ET que j'ai fini
-    // (ou que la phase est terminée : abandon de l'adversaire par ex.)
-    const over = state.phase === 'results' || (state.winner && this.myFinished)
-    if (over && state.winner && !this.resultsSent) {
+    // Le lobby (liste des joueurs, prêts, hôte, code) : uniquement en phase
+    // lobby. En 'results', c'est onResults qui tient l'écran ; pendant la course,
+    // le lobby n'a rien à afficher.
+    if (state.phase === 'lobby') this.cb.onLobby(view)
+    // Les positions des autres : pendant le décompte (grille) et la course
+    if (state.phase === 'countdown' || state.phase === 'racing') {
+      this.cb.onPlayers(others)
+    }
+    // Le classement final
+    if (state.phase === 'results' && !this.resultsSent) {
       this.resultsSent = true
-      this.cb.onResults(state.winner === this.room.sessionId, opp ? (opp as RemotePlayer).time : 0)
+      this.cb.onResults(view)
     }
   }
 
-  /** Envoie ma position au serveur (appelé 20 fois par seconde), horodatée */
+  // ————— Envoyer —————
+
+  /** Se déclarer prêt (ou pas) dans le lobby */
+  sendReady(ready: boolean) {
+    this.room?.send('ready', ready)
+  }
+
+  /** L'hôte lance la partie */
+  sendStart() {
+    this.room?.send('start')
+  }
+
+  /** Envoyer un message de chat */
+  sendChat(text: string) {
+    this.room?.send('chat', { text })
+  }
+
+  /** Après la course, l'hôte rouvre le salon pour rejouer */
+  sendToLobby() {
+    this.resultsSent = false
+    this.room?.send('tolobby')
+  }
+
+  /** Envoie ma position au serveur (~20 fois/s), horodatée */
   sendProgress(p: { lane: number; y: number; distance: number; sliding: boolean }) {
     this.room?.send('progress', { ...p, at: this.offsetReady ? this.serverNow() : 0 })
   }
 
   /** Envoie une action (saut, esquive, trébuchement) — relayée immédiatement */
-  sendAction(a: OppAction) {
+  sendAction(a: { t: 'lane' | 'jump' | 'slide' | 'stumble'; [k: string]: any }) {
     this.room?.send('action', a)
   }
 
   /**
-   * Envoie un sort offensif dans les pattes de l'adversaire.
-   * `distance` ne sert qu'au 🔮 portail : c'est NOTRE place, celle qu'il va
-   * prendre. Les autres sorts n'en ont pas besoin.
+   * Envoie un sort offensif. `target` = à qui (le plus proche devant, choisi
+   * côté jeu). `distance` ne sert qu'au 🔮 portail : c'est NOTRE place.
    */
-  sendSpell(kind: string, distance = 0) {
-    this.room?.send('spell', { kind, distance })
+  sendSpell(kind: string, target = '', distance = 0) {
+    this.room?.send('spell', { kind, target, distance })
   }
 
   /** Prévient le serveur : j'ai franchi la ligne ! */
@@ -259,7 +398,7 @@ export class Net {
     this.room?.send('finished', { time })
   }
 
-  /** Quitte la course en cours (volontairement) */
+  /** Quitte le salon (volontairement) */
   leave() {
     this.leaving = true
     this.stopPing()

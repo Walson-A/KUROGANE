@@ -160,7 +160,78 @@
         <button id="btnGo" class="primary">⛩️ EN PISTE</button>
       </section>
 
-      <!-- Attente d'un adversaire / verdict de fin de course -->
+      <!-- Jouer en ligne : créer / rejoindre / partie rapide / liste publique -->
+      <section id="scr-salon" class="screen hidden">
+        <header class="head">
+          <button class="back" data-back aria-label="Retour">‹</button>
+          <h2>Jouer en ligne</h2>
+        </header>
+        <div class="stack">
+          <button id="btnCreate" class="primary">🏮 CRÉER UN SALON</button>
+          <button id="btnQuick" class="secondary">⚡ PARTIE RAPIDE</button>
+        </div>
+        <div class="field">
+          <label for="joinCode">Rejoindre par code</label>
+          <div class="row">
+            <input
+              id="joinCode"
+              type="text"
+              maxlength="6"
+              placeholder="CODE"
+              autocomplete="off"
+              autocapitalize="characters"
+              spellcheck="false"
+            />
+            <button id="btnJoinCode" class="ghost">OK</button>
+          </div>
+        </div>
+        <div class="field">
+          <div class="row spread">
+            <label>Salons ouverts</label>
+            <button id="btnRefresh" class="ghost" aria-label="Rafraîchir">↻</button>
+          </div>
+          <div id="salonList" class="salonlist"></div>
+        </div>
+      </section>
+
+      <!-- Le lobby d'un salon : joueurs, prêt, chat, lancer (hôte) -->
+      <section id="scr-lobby" class="screen hidden">
+        <header class="head">
+          <button class="back" id="btnLeaveLobby" aria-label="Quitter le salon">‹</button>
+          <h2>Salon <span id="lobbyCode" class="code"></span></h2>
+        </header>
+        <div id="lobbyHint" class="lobbyhint"></div>
+        <div id="lobbyList" class="lobbylist"></div>
+        <div class="lobbychat">
+          <div id="chatLog" class="chatlog"></div>
+          <div class="row">
+            <input
+              id="chatInput"
+              type="text"
+              maxlength="120"
+              placeholder="Message…"
+              autocomplete="off"
+            />
+            <button id="btnChatSend" class="ghost" aria-label="Envoyer">➤</button>
+          </div>
+        </div>
+        <div class="row">
+          <button id="btnReady" class="primary grow">JE SUIS PRÊT</button>
+          <button id="btnStart" class="primary grow hidden">⛩️ LANCER</button>
+        </div>
+      </section>
+
+      <!-- Le classement de fin de course en ligne -->
+      <section id="scr-results" class="screen hidden">
+        <div class="jp">黒鉄</div>
+        <div id="resultsBody"></div>
+        <div class="row">
+          <button id="btnReplay" class="primary hidden">🔄 REJOUER</button>
+          <button id="btnQuitResults" class="secondary">QUITTER</button>
+        </div>
+      </section>
+
+      <!-- Attente / connexion / verdict —————— -->
       <section id="scr-status" class="screen hidden">
         <div class="jp">黒鉄</div>
         <p id="msg"></p>

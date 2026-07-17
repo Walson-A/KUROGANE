@@ -4,7 +4,7 @@ import { Player, LANES } from './player'
 import { Opponent } from './opponent'
 import { Track, SPRINT_ZONE } from './track'
 import { Input } from './input'
-import { Net, type RemotePlayer } from './net'
+import { Net, type RemotePlayer, type LobbyView } from './net'
 import { Bot, PROFILS, BOTS_MAX, construireRangees } from './bot'
 import {
   PARCHEMINS,
@@ -71,8 +71,80 @@ moon.position.set(-6, 12, -4)
 scene.add(ambient, moon)
 
 const player = new Player(scene)
-const opponent = new Opponent(scene)
 const track = new Track(scene)
+
+// ————— Les adversaires en ligne (jusqu'à 9 avatars) —————
+// Un pool d'avatars fantômes qu'on ASSIGNE aux joueurs présents dans le salon.
+// On ne recrée jamais de mesh en pleine course : on recycle.
+const MAX_OPP = 9
+const oppPool = Array.from({ length: MAX_OPP }, () => new Opponent(scene))
+
+/** Un adversaire réel : son avatar + ce qu'on garde pour le classement. */
+interface Rival {
+  opp: Opponent
+  id: string
+  name: string
+  rank: number
+  finished: boolean
+}
+/** Les rivaux du salon, par identifiant réseau. */
+const rivals = new Map<string, Rival>()
+
+/** Rend tous les avatars au pool et vide la table (fin de course, retour menu). */
+function clearRivals() {
+  for (const r of rivals.values()) {
+    r.opp.active = false
+    r.opp.reset()
+  }
+  rivals.clear()
+}
+
+/**
+ * Met les avatars en phase avec la liste du serveur : on crée ceux qui
+ * arrivent, on libère ceux qui partent, on nourrit l'extrapolation des autres.
+ */
+function syncRivals(others: RemotePlayer[]) {
+  const present = new Set(others.map((p) => p.id))
+  for (const [id, r] of rivals) {
+    if (!present.has(id)) {
+      r.opp.active = false
+      r.opp.reset()
+      rivals.delete(id)
+    }
+  }
+  for (const p of others) {
+    let r = rivals.get(p.id)
+    if (!r) {
+      const pris = new Set([...rivals.values()].map((x) => x.opp))
+      const libre = oppPool.find((o) => !pris.has(o))
+      if (!libre) continue // plus de 9 rivaux : les suivants ne sont pas dessinés
+      libre.active = true
+      libre.reset(p.startLane)
+      r = { opp: libre, id: p.id, name: '', rank: 0, finished: false }
+      rivals.set(p.id, r)
+    }
+    r.opp.setFighter(p.fighter)
+    r.name = p.name || 'Rival'
+    r.opp.setName(r.name)
+    r.rank = p.rank
+    r.opp.latency = net.rtt / 2
+    r.opp.onNetUpdate(
+      { lane: p.lane, y: p.y, distance: p.distance, sliding: p.sliding },
+      net.ageOf(p.at)
+    )
+    if (p.finished && !r.finished) {
+      r.finished = true
+      if (state === 'course') toast(`⛩️ ${r.name} a franchi le torii !`)
+    }
+  }
+}
+
+/** Le rival le plus proche DEVANT nous : la cible naturelle d'un sort offensif. */
+function rivalDevant(): Rival | undefined {
+  return [...rivals.values()]
+    .filter((r) => !r.finished && r.opp.distanceNow > distance)
+    .sort((a, b) => a.opp.distanceNow - b.opp.distanceNow)[0]
+}
 
 // Les 4 rivaux existent dès le départ ; seuls les `nbBots` premiers courent.
 const bots = PROFILS.map((p) => new Bot(scene, p))
@@ -136,9 +208,6 @@ let speed = 0
 let countdown = 0 // secondes avant le GO !
 let stumble = 0 // invincibilité après un trébuchement
 let netTimer = 0 // pour n'envoyer notre position que 10 fois/s
-let oppFinishedSeen = false
-let oppConnected = true // le rival est-il encore connecté ? (cf. reconnexion)
-let oppName = '' // le pseudo du rival, appris par le réseau
 let sprintTaps: number[] = [] // instants des derniers taps → cadence
 let sprintCharge = 0 // la jauge de sprint, 0 → 1
 let sprintSeen = false // la bannière ne s'annonce qu'une fois
@@ -234,11 +303,6 @@ scene.add(lueurJoueur, lueurRival)
 let lueurFin = 0 // les deux lueurs brillent jusqu'à cet instant
 let lueurCible: THREE.Object3D | null = null // le corps de l'échangé
 
-/** Comment appeler le rival à l'écran quand il n'a pas mis de pseudo */
-function rivalLabel() {
-  return oppName || 'Rival'
-}
-
 /** Redessine les 2 slots. Le 1er est mis en avant : c'est le prochain lancé. */
 function drawSlots(pop = -1) {
   slotEls.forEach((el, i) => {
@@ -301,14 +365,16 @@ function drawRank() {
     })),
   ]
 
-  if (online && opponent.active) {
-    coureurs.push({
-      nom: rivalLabel(),
-      couleur: opponent.currentFighter.band,
-      d: opponent.distanceNow,
-      arrivee: oppFinishedSeen ? 0 : -1,
-      moi: false,
-    })
+  if (online) {
+    for (const r of rivals.values()) {
+      coureurs.push({
+        nom: r.name,
+        couleur: r.opp.currentFighter.band,
+        d: r.opp.distanceNow,
+        arrivee: r.finished ? r.rank : -1, // le rang sert juste à trier les arrivés
+        moi: false,
+      })
+    }
   }
 
   // Arrivés d'abord (départagés au chrono), puis les autres à la distance
@@ -341,11 +407,17 @@ function drawRank() {
  * On encaisse un sort. Si la 🪞 parade est levée, il repart chez son auteur au
  * lieu de nous toucher — d'où le retour : `true` = renvoyé.
  */
-function subirSort(kind: string, deBot: Bot | null = null): boolean {
+function subirSort(
+  kind: string,
+  deBot: Bot | null = null,
+  srcMesh: THREE.Object3D | null = null,
+  fromId = ''
+): boolean {
   if (time < miroirFin) {
     miroirFin = 0 // la parade est à usage unique
     toast('🪞 Parade Miroir — renvoyé !')
-    if (online) net.sendSpell(kind)
+    // En ligne, le renvoi repart chez SON lanceur (fromId), pas au hasard
+    if (online) net.sendSpell(kind, fromId)
     else if (deBot) deBot.subir(kind as ParcheminKind, time)
     return true
   }
@@ -354,10 +426,10 @@ function subirSort(kind: string, deBot: Bot | null = null): boolean {
     kusarigamaFin = time + KUSARIGAMA_DUREE
     toast('⛓️ Kusarigama ! Tu es entravé…')
   } else if (kind === 'kunai') {
-    // La lame arrive du lanceur : le bot qui l'a jeté, le rival en ligne, ou
+    // La lame arrive du lanceur : le bot qui l'a jetée, le rival en ligne, ou
     // la brume si on ne sait pas d'où. Avant le test d'armure : on doit voir
     // le kunai même quand il éclate dessus.
-    const lanceur = deBot?.mesh.position ?? (online && opponent.active ? opponent.mesh.position : null)
+    const lanceur = deBot?.mesh.position ?? srcMesh?.position ?? null
     lancerKunaiVisuel(lanceur ?? new THREE.Vector3(player.mesh.position.x, 1.2, -22), player.mesh.position)
 
     // Le seul sort qui fait trébucher sec. L'armure peut encore l'avaler.
@@ -440,7 +512,20 @@ function lancerParchemin() {
   // ————— Offensif : ça part chez quelqu'un —————
   else if (p.cible === 'adversaire') {
     if (online) {
-      net.sendSpell(kind)
+      // Il vise le rival le plus proche DEVANT — comme en solo, mais parmi les
+      // 9 autres. Le serveur ne l'applique qu'à celui-là.
+      const cible = rivalDevant()
+      if (!cible) {
+        toast(`${p.icone} …mais tu mènes déjà !`)
+        // On a quand même retiré le rouleau du slot : on le rend, sinon on
+        // aurait payé un sort perdu.
+        slots.unshift(kind)
+        drawSlots()
+        return
+      }
+      if (kind === 'kunai') lancerKunaiVisuel(player.mesh.position, cible.opp.mesh.position)
+      net.sendSpell(kind, cible.id)
+      toast(`${p.icone} sur ${cible.name} !`)
       return
     }
     const cible = cibleDevant()
@@ -488,7 +573,7 @@ function inSprintZone() {
 function backToMenu(banner?: string) {
   state = 'menu'
   online = false
-  opponent.active = false
+  clearRivals()
   for (const b of bots) {
     b.actif = false
     b.cacher()
@@ -507,9 +592,12 @@ function backToMenu(banner?: string) {
 
 /** Lance une course. En ligne, la graine vient du serveur : même piste pour les deux ! */
 function startRace(seed: number) {
-  // En duel : la grille de départ du serveur (gauche/droite). En solo : au centre.
+  // En duel : la grille de départ du serveur. En solo : au centre.
   player.reset(online ? net.myStartLane : 1)
-  opponent.reset(net.oppStartLane)
+  // Les avatars des rivaux sont (re)placés par syncRivals dès la 1re position
+  // reçue ; ici on repart d'une table propre en solo, et on garde les rivaux
+  // déjà connus du lobby en ligne.
+  if (!online) clearRivals()
   track.reset(COURSE_LENGTH, seed)
   time = 0
   distance = 0
@@ -517,8 +605,6 @@ function startRace(seed: number) {
   stumble = 0
   netTimer = 0
   raceGo = false
-  oppFinishedSeen = false
-  oppConnected = true
   sprintTaps = []
   sprintCharge = 0
   sprintSeen = false
@@ -565,14 +651,14 @@ function startRace(seed: number) {
   menu.hide()
   updateMeLabel()
   countEl.classList.add('show')
-  // Le départ canon : la jauge est là dès le décompte, prête à être martelée
-  sprintEl.classList.remove('hidden')
+  // Le départ canon : la jauge apparaît dans les 3 dernières secondes (cf. boucle)
+  sprintEl.classList.add('hidden')
   sprintLabelEl.textContent = '🚀 DÉPART CANON'
   sprintFillEl.style.width = '0%'
   progressEl.style.width = '0%'
-  opponent.active = online
-  oppmarkEl.classList.toggle('hidden', !online)
-  // La bulle d'écart : visible dans les deux modes !
+  // Le marqueur unique n'a plus de sens à 10 : c'est le classement en direct
+  // qui montre où en est chacun. La bulle d'écart vise le plus proche devant.
+  oppmarkEl.classList.add('hidden')
   gapEl.classList.remove('hidden')
 }
 
@@ -610,10 +696,14 @@ function crossFinishLine() {
   const t = time.toFixed(2)
 
   if (online) {
-    // On prévient le serveur, et on attend le verdict s'il manque l'adversaire
+    // On prévient le serveur et on attend le classement (les autres courent encore)
     net.sendFinished(time)
     state = 'fini'
-    menu.showStatus(`⛩️ Ligne franchie en <b>${t} s</b> !<br>${escapeHtml(rivalLabel())} court encore…`)
+    const restants = [...rivals.values()].filter((r) => !r.finished).length
+    menu.showStatus(
+      `⛩️ Ligne franchie en <b>${t} s</b> !<br>` +
+        (restants > 0 ? `${restants} guerrier${restants > 1 ? 's' : ''} encore en course…` : 'Classement…')
+    )
     return
   }
 
@@ -633,77 +723,87 @@ function crossFinishLine() {
   backToMenu(`⛩️ Torii sacré franchi en <b>${t} s</b> !<br>${classement()}<br>${bestLine}`)
 }
 
+/** Le classement final : trié, arrivés d'abord (au rang), puis les abandons. */
+function showResults(view: LobbyView) {
+  const ranked = [...view.players].sort((a, b) => {
+    if (a.rank && b.rank) return a.rank - b.rank
+    if (a.rank) return -1
+    if (b.rank) return 1
+    return b.distance - a.distance
+  })
+  const me = view.players.find((p) => p.id === view.me)
+  const total = view.players.length
+  const rang = me?.rank || 0
+  const titre =
+    rang === 1
+      ? '🏆 <b>VICTOIRE !</b> La lame légendaire est à toi.'
+      : rang > 0
+        ? `Tu finis <b>${rang}ᵉ</b> sur ${total}.`
+        : '☁️ Tu n\'as pas fini la course…'
+
+  const lignes = ranked
+    .map((p, i) => {
+      const medaille = ['🥇', '🥈', '🥉'][i] ?? `${i + 1}ᵉ`
+      const chrono = p.rank ? `${p.time.toFixed(2)} s` : 'abandon'
+      const moi = p.id === view.me ? ' moi' : ''
+      // ⚠️ escapeHtml : les pseudos viennent des autres joueurs
+      return `<div class="resrow${moi}"><span>${medaille}</span>` +
+        `<span class="resname">${escapeHtml(p.name || 'Guerrier')}</span>` +
+        `<span class="restime">${chrono}</span></div>`
+    })
+    .join('')
+
+  menu.showResults(`${titre}<div class="reslist">${lignes}</div>`, view.isHost)
+}
+
 // ————— Le réseau —————
 const net = new Net({
-  onWaiting() {
+  onLobby(view) {
+    // Le salon a bougé (arrivée, départ, prêt…) : on (re)dessine le lobby, tant
+    // qu'on n'est pas déjà en course. Sert aussi au retour au salon d'après-course.
+    if (state === 'course' || state === 'depart') return
+    if (state === 'fini' && view.phase === 'lobby') clearRivals() // rematch : on repart propre
     state = 'attente'
-    menu.showStatus(
-      '🔎 Recherche d\'un adversaire…<br>Ouvre le jeu sur un autre appareil pour le duel !',
-      true // …avec un bouton pour annuler
-    )
+    menu.showLobby(view)
   },
   onCountdown(seed) {
-    toast('⚔️ Adversaire trouvé !')
+    online = true
+    toast('⚔️ La course commence !')
     startRace(seed)
   },
   onGo() {
     raceGo = true
+    for (const r of rivals.values()) r.opp.go()
   },
-  onOpponent(op: RemotePlayer | null) {
-    if (!op) return
-    // Son identité : le corps n'est refait que si le guerrier change vraiment,
-    // et l'étiquette n'est redessinée que si le nom ou la couleur bougent.
-    opponent.setFighter(op.fighter)
-    oppName = op.name
-    opponent.setName(rivalLabel())
-    // On nourrit l'extrapolation, avec l'âge RÉEL du message quand la synchro
-    // d'horloge est prête. Le marqueur et l'écart, eux, sont mis à jour à
-    // chaque image dans la boucle de jeu, sur la position ESTIMÉE.
-    opponent.onNetUpdate(
-      { lane: op.lane, y: op.y, distance: op.distance, sliding: op.sliding },
-      net.ageOf(op.at)
-    )
-    // Sa connexion : coupée (écran verrouillé ?) ou revenue
-    if (op.connected !== oppConnected) {
-      oppConnected = op.connected
-      if (state === 'course' || state === 'depart') {
-        toast(
-          op.connected
-            ? `📡 ${rivalLabel()} est de retour !`
-            : `📡 ${rivalLabel()} a coupé… il a 30 s pour revenir`
-        )
-      }
-    }
-    if (op.finished && !oppFinishedSeen) {
-      oppFinishedSeen = true
-      if (state === 'course') toast('⚔️ Le rival a franchi le torii !')
-    }
+  onPlayers(others) {
+    // Positions de tous les autres : on met les avatars en phase avec le salon
+    syncRivals(others)
   },
-  onSpell(kind, d) {
+  onSpell(from, kind, d) {
     if (state !== 'course') return
-    // 🔮 Le portail est à part : ce n'est pas une affliction, c'est un échange.
-    // La 🪞 parade ne le renvoie pas — on ne renvoie pas un trou dans l'espace.
-    if (kind === 'onmyoji') echangerAvec(d, 'ton rival')
-    else subirSort(kind)
+    const r = rivals.get(from)
+    // 🔮 Le portail est à part : un échange, pas une affliction. On prend SA
+    // place (d) ; de son côté il prend la nôtre. La 🪞 parade ne le renvoie pas.
+    if (kind === 'onmyoji') echangerAvec(d, r ? r.name : 'un rival', r ? r.opp.mesh : null)
+    else subirSort(kind, null, r ? r.opp.mesh : null, from)
   },
   onAction(a) {
-    // Une action du rival, reçue à l'instant même où il l'a faite
-    opponent.applyAction(a)
+    // Une action d'un rival, reçue à l'instant où il l'a faite — routée vers SON avatar
+    rivals.get(a.from)?.opp.applyAction(a)
+  },
+  onChat(from, name, text) {
+    menu.addChatLine(name, text, from === net.id)
   },
   onLink(up) {
     // NOTRE connexion qui vacille — le SDK retente tout seul derrière
     toast(up ? '📡 Reconnecté !' : '📡 Connexion instable… reconnexion en cours')
   },
-  onResults(iWon, oppTime) {
-    const mine = `Ton temps : <b>${time.toFixed(2)} s</b>`
-    // ⚠️ escapeHtml : le pseudo vient de l'autre joueur, jamais de confiance
-    const theirs = oppTime > 0 ? ` · ${escapeHtml(rivalLabel())} : <b>${oppTime.toFixed(2)} s</b>` : ''
-    net.leave()
-    backToMenu(
-      iWon
-        ? `🏆 <b>VICTOIRE !</b> La lame légendaire est à toi.<br>${mine}${theirs}`
-        : `☁️ Vaincu… la voie du guerrier est longue.<br>${mine}${theirs}`
-    )
+  onResults(view) {
+    state = 'fini'
+    sprintEl.classList.add('hidden')
+    gapEl.classList.add('hidden')
+    rankEl.classList.add('hidden')
+    showResults(view)
   },
   onError(message) {
     net.leave()
@@ -712,15 +812,53 @@ const net = new Net({
 })
 
 // ————— Les menus —————
+const identity = () => ({ name: menu.settings.name, fighter: menu.settings.fighter })
+
 const menu = new Menu({
   onSolo() {
     online = false
     menu.showBotPick()
   },
   onOnline() {
-    online = true
-    oppName = ''
-    net.join({ name: menu.settings.name, fighter: menu.settings.fighter })
+    // Plus de recherche 1v1 : on ouvre l'accueil des salons (créer / rejoindre).
+    menu.showSalon()
+  },
+  onCreateSalon() {
+    menu.showStatus('🏮 Création du salon…')
+    net.createSalon(identity())
+  },
+  onQuick() {
+    menu.showStatus('⚡ Recherche d\'un salon public…')
+    net.joinQuick(identity())
+  },
+  onJoinByCode(code) {
+    if (!code) return
+    menu.showStatus('🚪 On rejoint le salon…')
+    net.joinByCode(identity(), code)
+  },
+  onJoinRoom(roomId) {
+    menu.showStatus('🚪 On rejoint le salon…')
+    net.joinRoom(identity(), roomId)
+  },
+  onListSalons() {
+    return net.listSalons()
+  },
+  onReady(ready) {
+    net.sendReady(ready)
+  },
+  onStart() {
+    net.sendStart()
+  },
+  onChat(text) {
+    net.sendChat(text)
+  },
+  onReplay() {
+    net.sendToLobby()
+  },
+  onLeaveSalon() {
+    net.leave()
+    clearRivals()
+    backToMenu()
   },
   onFighter(f) {
     // Le guerrier qui court derrière le menu change tout de suite : on voit son
@@ -795,14 +933,21 @@ function tick(now?: number) {
     } else {
       countdown -= dt // solo, ou horloge pas encore synchronisée
     }
-    countEl.textContent = countdown > 0 ? `${Math.min(3, Math.ceil(countdown))}` : 'GO !'
+    // Le décompte peut durer 10 s (salon) ou 3 s (solo) : on affiche le vrai chiffre.
+    countEl.textContent = countdown > 0 ? `${Math.min(10, Math.ceil(countdown))}` : 'GO !'
 
-    // ————— Le DÉPART CANON : marteler pendant le décompte —————
+    // ————— Le DÉPART CANON : marteler dans les 3 dernières secondes —————
+    // Pas plus tôt : sur un décompte de 10 s, marteler dès le début serait
+    // épuisant et sans intérêt. La jauge n'apparaît que dans la ligne droite.
+    const canon = countdown <= 3.2
+    sprintEl.classList.toggle('hidden', !canon)
     const pnow = performance.now() / 1000
     sprintTaps = sprintTaps.filter((t) => pnow - t < SPRINT_WINDOW)
-    const startRate = sprintTaps.length / SPRINT_WINDOW
-    sprintCharge += (Math.min(1, startRate / SPRINT_FULL_RATE) - sprintCharge) * Math.min(1, dt * 8)
-    sprintFillEl.style.width = `${sprintCharge * 100}%`
+    if (canon) {
+      const startRate = sprintTaps.length / SPRINT_WINDOW
+      sprintCharge += (Math.min(1, startRate / SPRINT_FULL_RATE) - sprintCharge) * Math.min(1, dt * 8)
+      sprintFillEl.style.width = `${sprintCharge * 100}%`
+    }
 
     // Le GO : à l'heure programmée en duel (petit temps d'affichage du
     // « GO ! » identique pour les deux), au bout du décompte en solo.
@@ -819,7 +964,7 @@ function tick(now?: number) {
       // toujours moins qu'un trébuchement : ça départage, ça ne décide pas.
       speed = 12 + 10 * sprintCharge
       if (sprintCharge > 0.75) toast('🚀 Départ canon !')
-      if (online) opponent.go()
+      if (online) for (const r of rivals.values()) r.opp.go()
       sprintTaps = []
       sprintCharge = 0
       sprintEl.classList.add('hidden')
@@ -830,7 +975,7 @@ function tick(now?: number) {
       backToMenu('⚠️ Connexion perdue au départ.')
     }
     player.update(dt)
-    opponent.update(dt, distance)
+    for (const r of rivals.values()) r.opp.update(dt, distance)
     // Les rivaux sont déjà sur la ligne de départ pendant le décompte
     for (const b of botsEnCourse()) b.placer(dt, distance)
   } else if (state === 'course') {
@@ -859,7 +1004,7 @@ function tick(now?: number) {
 
     distance += speed * dt
     player.update(dt)
-    opponent.update(dt, distance)
+    for (const r of rivals.values()) r.opp.update(dt, distance)
     track.update(dt, speed, distance)
 
     // Chaque rival court sa propre course, sans jamais toucher à la nôtre
@@ -900,36 +1045,43 @@ function tick(now?: number) {
 
       // Un mur l'avale : c'est la piste qui borne sa portée, pas un chiffre
       const mur = track.premierMur(portail.lane, avant, portail.d)
-      // A-t-il traversé quelqu'un dans sa ligne ? On teste le FRANCHISSEMENT :
+      // Qui croise-t-il dans sa ligne cette image ? Bots (solo) ET rivaux (en
+      // ligne) confondus — le PLUS PROCHE l'emporte. On teste le franchissement :
       // à ~83 m/s il parcourt ~1,4 m par image, un test de proximité le raterait.
-      const touche = botsEnCourse().find(
-        (b) => b.ligne === portail!.lane && b.distance > avant && b.distance <= portail!.d
-      )
+      const botTouche = botsEnCourse()
+        .filter((b) => b.ligne === portail!.lane && b.distance > avant && b.distance <= portail!.d)
+        .sort((a, b) => a.distance - b.distance)[0]
+      const rivalTouche = [...rivals.values()]
+        .filter(
+          (r) =>
+            r.opp.currentLane === portail!.lane &&
+            r.opp.distanceNow > avant &&
+            r.opp.distanceNow <= portail!.d
+        )
+        .sort((a, b) => a.opp.distanceNow - b.opp.distanceNow)[0]
 
-      if (mur !== null && (!touche || mur < touche.distance)) {
+      const dMur = mur ?? Infinity
+      const dBot = botTouche ? botTouche.distance : Infinity
+      const dRival = rivalTouche ? rivalTouche.opp.distanceNow : Infinity
+
+      if (dMur <= dBot && dMur <= dRival && dMur !== Infinity) {
         portail = null
         portailMesh.visible = false
         toast('🔮 Le portail se brise sur un mur…')
-      } else if (touche) {
-        const sien = touche.distance
-        touche.distance = distance
+      } else if (botTouche && dBot <= dRival) {
+        const sien = botTouche.distance
+        botTouche.distance = distance
         portail = null
         portailMesh.visible = false
-        echangerAvec(sien, touche.profil.nom, touche.mesh)
-      } else if (
-        online &&
-        opponent.active &&
-        opponent.currentLane === portail.lane &&
-        opponent.distanceNow > avant &&
-        opponent.distanceNow <= portail.d
-      ) {
+        echangerAvec(sien, botTouche.profil.nom, botTouche.mesh)
+      } else if (rivalTouche) {
         // En ligne : on lui envoie NOTRE place, il prendra la sienne. Chacun
         // calcule l'échange de son côté — à 100 ms de ping, l'écart est de ~3 m.
-        net.sendSpell('onmyoji', distance)
-        const sien = opponent.distanceNow
+        net.sendSpell('onmyoji', rivalTouche.id, distance)
+        const sien = rivalTouche.opp.distanceNow
         portail = null
         portailMesh.visible = false
-        echangerAvec(sien, 'ton rival', opponent.mesh)
+        echangerAvec(sien, rivalTouche.name, rivalTouche.opp.mesh)
       } else if (portail.d > COURSE_LENGTH) {
         // Aucun plafond de distance : sa portée est INFINIE. Seuls un rival ou
         // un mur l'arrêtent. Faute de quoi il finit par franchir le torii, et
@@ -1048,16 +1200,23 @@ function tick(now?: number) {
         })
       }
 
-      // L'extrapolation a besoin de la latence mesurée (la moitié du ping)
-      opponent.latency = net.rtt / 2
-
-      // Marqueur + écart, sur la position ESTIMÉE du rival — la seule honnête
-      const oppD = opponent.distanceNow
-      oppmarkEl.style.left = `${Math.min(100, (oppD / COURSE_LENGTH) * 100)}%`
-      const lead = oppD - distance
-      // textContent, pas innerHTML : le pseudo vient de l'autre joueur
-      gapEl.textContent = `${rivalLabel()} ${lead >= 0 ? '+' : '−'}${Math.abs(lead).toFixed(0)} m`
-      gapEl.classList.toggle('ahead', lead >= 0)
+      // L'écart vise le rival le plus proche (devant OU derrière) : c'est celui
+      // qui compte, parmi les 9. Le classement en direct montre les autres.
+      let proche: Rival | null = null
+      let minEcart = Infinity
+      for (const r of rivals.values()) {
+        const diff = Math.abs(r.opp.distanceNow - distance)
+        if (diff < minEcart) {
+          minEcart = diff
+          proche = r
+        }
+      }
+      if (proche) {
+        const lead = proche.opp.distanceNow - distance
+        // textContent, pas innerHTML : le pseudo vient d'un autre joueur
+        gapEl.textContent = `${proche.name} ${lead >= 0 ? '+' : '−'}${Math.abs(lead).toFixed(0)} m`
+        gapEl.classList.toggle('ahead', lead >= 0)
+      }
     } else {
       // Solo : écart par rapport au robot le plus proche
       let closestBot: Bot | null = null
@@ -1082,7 +1241,7 @@ function tick(now?: number) {
     // Au menu / en attente / après l'arrivée : le décor défile doucement
     track.update(dt, state === 'fini' ? 3 : 5)
     player.update(dt)
-    if (state === 'fini' && online) opponent.update(dt, distance)
+    if (state === 'fini' && online) for (const r of rivals.values()) r.opp.update(dt, distance)
   }
 
   // La caméra suit en douceur la ligne du joueur
@@ -1095,7 +1254,9 @@ function tick(now?: number) {
   // player.mesh.visible clignote quand on se relève d'un trébuchement :
   // l'étiquette clignote avec lui, c'est le même personnage.
   player.tag.follow(player.mesh, camera, racing && player.mesh.visible)
-  opponent.tag.follow(opponent.mesh, camera, racing && opponent.active && opponent.mesh.visible)
+  for (const r of rivals.values()) {
+    r.opp.tag.follow(r.opp.mesh, camera, racing && r.opp.active && r.opp.mesh.visible)
+  }
 
   renderer.render(scene, camera)
   menu.update(dt) // l'aperçu 3D du guerrier, quand le menu de sélection est ouvert
