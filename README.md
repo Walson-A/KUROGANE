@@ -159,8 +159,8 @@ en ligne) : **[docs/NETCODE.md](docs/NETCODE.md)**.
 
 ## 🥷 Le roster : un choix, pas un piège
 
-Quatre guerriers, choisis depuis l'écran-titre. **Yasuke est la référence** :
-tout est à 1 chez lui. Les trois autres ont **un bonus ET un malus** — sinon un
+Cinq guerriers, choisis depuis l'écran-titre. **Yasuke est la référence** :
+tout est à 1 chez lui. Les autres ont **un bonus ET un malus** — sinon un
 seul perso serait le bon choix, et le menu ne serait qu'un piège à débutants.
 Yasuke, lui, n'a aucun point faible : c'est ça, son intérêt.
 
@@ -170,6 +170,26 @@ Yasuke, lui, n'a aucun point faible : c'est ça, son intérêt.
 | 花 **Hana** — agile, fragile | **1,18** | **1,3** | 1 | *0,28* |
 | 鬼丸 **Oni-Maru** — lourd, tenace | *0,88* | *0,8* | 1 | **52 %** |
 | 玉恵 **Tamae** — rusée, glissante | *0,9* | **1,15** | **1,6** | 35 % |
+| 佐助 **Sasuke** — vif, fragile | 1 | **1,4** | 1 | *0,25* |
+
+**佐助 Sasuke** (de Naruto) est le plus vif du roster : l'**esquive la plus
+rapide** du jeu, l'œil du Sharingan qui lit les obstacles avant qu'ils
+arrivent — mais le **grip le plus faible**, chaque choc le sonne.
+
+### 改 Le perso « + » : l'ornement décide du style
+
+Le 6ᵉ slot est un guerrier qu'on **forge soi-même** (deux couleurs + un
+ornement de tête, façon Among Us). Nouveauté : l'**ornement n'est plus qu'un
+look, il choisit le style de jeu** —
+
+| Ornement | Style emprunté |
+|---|---|
+| 👁️ aucun | les réflexes de **Sasuke** (esquive éclair, fragile) |
+| 🐂 cornes | la peau d'oni d'**Oni-Maru** (encaisse, mais lourd) |
+| 🦊 oreilles | la ruse de **Tamae** (glissade longue, saut court) |
+
+« Choisis ton ornement, choisis ton jeu. » Les couleurs, elles, restent
+purement cosmétiques.
 
 Tout est dans [`src/roster.ts`](src/roster.ts). Deux règles d'équité s'appliquent :
 

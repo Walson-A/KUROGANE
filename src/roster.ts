@@ -1,6 +1,6 @@
 import * as THREE from 'three'
 
-export type FighterId = 'yasuke' | 'hana' | 'onimaru' | 'tamae' | 'kurokumo' | 'perso'
+export type FighterId = 'yasuke' | 'hana' | 'onimaru' | 'tamae' | 'sasuke' | 'kurokumo' | 'perso'
 
 /** L'ornement de tête d'un guerrier — le « chapeau » de la personnalisation. */
 export type Head = 'rien' | 'cornes' | 'oreilles'
@@ -126,6 +126,24 @@ export const ROSTER: Fighter[] = [
     grip: 0.35,
   },
   {
+    id: 'sasuke',
+    name: 'Sasuke',
+    jp: '佐助',
+    role: 'Vif · fragile',
+    blurb:
+      "Le ninja au Sharingan. Il lit les obstacles avant qu'ils arrivent et change de ligne en un éclair — mais un choc encaissé le sonne.",
+    passive: 'Œil du Sharingan — change de ligne en un éclair. Mais chaque choc lui coûte cher.',
+    pickable: true,
+    body: 0x1c2333, // bleu nuit
+    band: 0xc0392b, // rouge Sharingan
+    width: 0.66,
+    head: 'rien',
+    jump: 1,
+    laneSpeed: 1.4, // l'esquive la plus vive du jeu — sa signature
+    slide: 1,
+    grip: 0.25, // …payée par le grip le plus faible : un choc le sonne
+  },
+  {
     id: 'kurokumo',
     name: 'Kurokumo',
     jp: '黒雲',
@@ -146,12 +164,21 @@ export const ROSTER: Fighter[] = [
 
 // ————— Le guerrier PERSO (façon Among Us) —————
 //
-// Un skin que le joueur forge lui-même : deux couleurs et un ornement de tête.
-// Volontairement PUREMENT cosmétique — ses réglages de jeu sont ceux de Yasuke,
-// la référence. Autrement, « fabrique ton perso » deviendrait « fabrique le
-// perso le plus fort », et le vestiaire ne serait plus qu'un piège à munchkin.
+// Un skin que le joueur forge : deux couleurs ET un ornement de tête. Mais
+// l'ornement n'est PAS que décoratif : il décide du STYLE de jeu du perso.
+//   · sans ornement → les réflexes de Sasuke (esquive éclair, fragile)
+//   · cornes 🐂 → la peau d'oni d'Oni-Maru (encaisse, mais lourd)
+//   · oreilles 🦊 → la ruse de Tamae (glissade longue, saut court)
+// « Choisis ton ornement, choisis ton jeu. »
 
 export const PERSO_ID: FighterId = 'perso'
+
+/** L'ornement de tête → le guerrier dont le perso emprunte les réglages. */
+export const CUSTOM_STYLE: Record<Head, FighterId> = {
+  rien: 'sasuke',
+  cornes: 'onimaru',
+  oreilles: 'tamae',
+}
 
 /** Ce que le joueur choisit dans le vestiaire — le reste du perso est figé. */
 export interface CustomSkin {
@@ -177,24 +204,41 @@ export const SKIN_PALETTE: number[] = [
 /** Le skin de départ : un vert jade et un bandeau or, distinct du roster. */
 export const DEFAULT_CUSTOM: CustomSkin = { body: 0x3a7a5c, band: 0xe6c66a, head: 'rien' }
 
+/** Le passif du perso selon son ornement — la même phrase qui s'affiche au menu. */
+function passifPerso(head: Head): string {
+  if (head === 'cornes')
+    return '🐂 Cornes d\'oni — garde bien plus de vitesse quand il trébuche. Mais lourd, esquive lente.'
+  if (head === 'oreilles')
+    return '🦊 Oreilles de renard — glissade très longue, esquive vive. Mais saut court.'
+  return '👁️ Œil du Sharingan — change de ligne en un éclair. Mais chaque choc lui coûte cher.'
+}
+
 /**
- * Assemble le guerrier perso à partir du skin sauvegardé. Il HÉRITE de tous les
- * réglages de Yasuke (saut, esquive, glissade, largeur, grip) : seules les deux
- * couleurs et l'ornement changent. C'est ce qui garantit qu'il est équitable.
+ * Assemble le guerrier perso à partir du skin sauvegardé. Ses COULEURS viennent
+ * du skin ; ses RÉGLAGES DE JEU, eux, viennent du guerrier que l'ornement
+ * désigne (cf. CUSTOM_STYLE) — Sasuke par défaut, l'oni avec des cornes, le
+ * renard avec des oreilles. La largeur reste neutre : seul le style change,
+ * pas la hitbox (identique pour tous, cf. player.ts).
  */
 export function customFighter(skin: CustomSkin): Fighter {
+  const style = fighterById(CUSTOM_STYLE[skin.head]) // l'ornement décide du style
   return {
-    ...ROSTER[0], // Yasuke = la référence neutre : on ne reprend QUE ses stats
     id: PERSO_ID,
     name: 'Mon guerrier',
     jp: '改', // « kai » : refondre, remodeler
-    role: 'Skin perso · équilibré',
-    blurb: 'Un guerrier à tes couleurs, forgé par toi. Le look ne change RIEN à la course.',
-    passive: 'Pur cosmétique — mêmes réglages que Yasuke : aucun bonus, aucun point faible.',
+    role: `Skin perso · ${style.role.split(' · ')[0].toLowerCase()}`,
+    blurb: 'Un guerrier à tes couleurs. Son ornement décide de son style de jeu !',
+    passive: passifPerso(skin.head),
     pickable: true,
     body: skin.body,
     band: skin.band,
+    width: 0.8, // silhouette neutre : les couleurs et l'ornement font le look
     head: skin.head,
+    // Les réglages de jeu empruntés au style choisi par l'ornement
+    jump: style.jump,
+    laneSpeed: style.laneSpeed,
+    slide: style.slide,
+    grip: style.grip,
   }
 }
 

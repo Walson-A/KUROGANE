@@ -77,8 +77,10 @@ const HISTORY_MS = 2000
 /** Une fois le 1ᵉʳ arrivé, on laisse ce délai aux autres avant de clore. */
 const GRACE_MS = 25_000
 
-/** Les guerriers que le serveur accepte. Tout le reste → Yasuke. */
-const FIGHTERS = ['yasuke', 'hana', 'onimaru', 'tamae']
+/** Les guerriers que le serveur accepte. Tout le reste → Yasuke.
+ * ('perso' n'y est pas : son look custom ne transite pas — l'adversaire le
+ * verrait en Yasuke de toute façon.) */
+const FIGHTERS = ['yasuke', 'hana', 'onimaru', 'tamae', 'sasuke']
 const MAX_NAME = 12
 const MAX_CHAT = 120
 
