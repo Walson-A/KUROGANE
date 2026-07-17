@@ -12,6 +12,10 @@ dist
 dist-ssr
 *.local
 
+# Claude Code : reglages personnels a la machine (autorisations, chemins locaux).
+# launch.json, lui, est partage : il dit comment lancer le jeu.
+.claude/settings.local.json
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
