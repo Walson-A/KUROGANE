@@ -68,6 +68,21 @@
           <button class="back" data-back aria-label="Retour">‹</button>
           <h2>Choisis ton guerrier</h2>
         </header>
+
+        <!-- Ton nom : ici, avec ton guerrier — c'est ton identité en piste -->
+        <div class="field">
+          <label for="optName">Ton nom de guerrier</label>
+          <input
+            id="optName"
+            type="text"
+            maxlength="12"
+            placeholder="Guerrier anonyme"
+            autocomplete="off"
+            autocapitalize="words"
+            spellcheck="false"
+          />
+        </div>
+
         <div class="preview"><canvas id="preview"></canvas></div>
         <div class="fighters" id="fighters"></div>
         <div class="info">
@@ -111,20 +126,6 @@
           <button class="back" data-back aria-label="Retour">‹</button>
           <h2>Options</h2>
         </header>
-
-        <div class="field">
-          <label for="optName">Ton nom de guerrier</label>
-          <input
-            id="optName"
-            type="text"
-            maxlength="12"
-            placeholder="Guerrier anonyme"
-            autocomplete="off"
-            autocapitalize="words"
-            spellcheck="false"
-          />
-          <small>Vu par ton adversaire pendant le duel. 12 lettres max.</small>
-        </div>
 
         <div class="field">
           <label>Qualité graphique</label>
