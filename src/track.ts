@@ -7,6 +7,13 @@ type Kind = 'saut' | 'glissade' | 'mur'
 const LOOKAHEAD = 85 // les obstacles apparaissent 85 m devant (cachés par la brume)
 const DESPAWN_Z = 8 // et disparaissent derrière la caméra
 
+/**
+ * Les derniers mètres de la course : le SPRINT FINAL.
+ * Aucun obstacle n'y est placé — sur mobile, on ne peut pas swiper pour
+ * esquiver ET marteler l'écran pour accélérer en même temps.
+ */
+export const SPRINT_ZONE = 120
+
 interface Obstacle {
   mesh: THREE.Mesh
   kind: Kind
@@ -176,7 +183,7 @@ export class Track {
 /**
  * Décide de TOUS les obstacles de la course à l'avance, à partir de la graine.
  * 1 ou 2 obstacles par rangée, jamais 3 : il y a toujours un passage !
- * Les 60 derniers mètres sont dégagés : sprint final.
+ * La zone de sprint final est dégagée.
  */
 function buildPlan(length: number, seed: number): PlannedObstacle[] {
   const rng = mulberry32(seed)
@@ -184,7 +191,7 @@ function buildPlan(length: number, seed: number): PlannedObstacle[] {
   const plan: PlannedObstacle[] = []
 
   let d = 45 // premiers mètres tranquilles pour se chauffer
-  while (d < length - 60) {
+  while (d < length - SPRINT_ZONE) {
     const lanes = [0, 1, 2].sort(() => rng() - 0.5)
     const count = rng() < 0.6 ? 1 : 2
     for (let i = 0; i < count; i++) {

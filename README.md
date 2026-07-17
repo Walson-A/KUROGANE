@@ -16,6 +16,8 @@ avec Claude Code comme développeur.
 - **Esquive** : barrières (saute !), barres hautes (glisse !), murs (change de ligne !)
 - Toucher un obstacle ne tue pas : tu **trébuches** et perds ta vitesse — le
   perdant est celui qui arrive 2ᵉ
+- **🔥 Sprint final** : sur les 120 derniers mètres, martèle l'écran pour
+  accélérer et voler la victoire sur le fil ([voir le calibrage](#-le-sprint-final--départager-sans-refaire-la-course))
 - **⚔️ Duel en ligne** : matchmaking automatique, les deux joueurs affrontent
   exactement la même piste, le serveur déclare le vainqueur
 - 🏋️ Mode **entraînement solo** avec record personnel sauvegardé
@@ -28,6 +30,7 @@ avec Claude Code comme développeur.
 | Sauter | Swipe ⬆️ | ↑, Z ou Espace |
 | Glisser | Swipe ⬇️ | ↓ ou S |
 | Lancer le sort | Double-tap | E |
+| 🔥 Sprint final | Martèle l'écran | Espace ou clic |
 
 ## 🚀 Lancer le jeu
 
@@ -62,7 +65,7 @@ kurogane/
 │   ├── opponent.ts     Kurokumo, le rival : position reçue du réseau, interpolée
 │   ├── track.ts        La piste : obstacles PLANIFIÉS par graine, torii, arrivée
 │   ├── net.ts          La connexion au serveur : rejoindre, envoyer, recevoir
-│   ├── input.ts        Clavier + swipes + double-tap
+│   ├── input.ts        Clavier + swipes + double-tap + martèlement du sprint
 │   └── style.css       L'habillage de l'interface
 └── server/
     └── src/
@@ -81,10 +84,43 @@ Le serveur est **autoritaire** : c'est lui qui apparie les joueurs, donne le
 GO et déclare le vainqueur. Les clients ne font que lui raconter où ils en
 sont (10 fois par seconde).
 
+## 🔥 Le sprint final : départager sans refaire la course
+
+Sur les **120 derniers mètres**, marteler l'écran fait accélérer. La zone est
+volontairement **vidée d'obstacles** : sur mobile, on ne peut pas swiper pour
+esquiver ET marteler en même temps.
+
+Le réglage devait tenir deux promesses contradictoires — récompenser le skill,
+sans que le spam ne remplace le pilotage. On l'a donc calibré par simulation
+plutôt qu'au feeling, en prenant **le trébuchement comme étalon** :
+
+| Repère | Coût / gain |
+|---|---|
+| Un trébuchement | **0,53 s** (≈ 15 m) |
+| Sprint parfait (8 taps/s) | **0,37 s** (≈ 10 m) |
+| Sprint moyen (5 taps/s) | 0,25 s (≈ 7 m) |
+| Ne pas marteler | 0 s — c'est un bonus, jamais une punition |
+
+Le sprint parfait vaut **moins qu'un trébuchement** : il départage deux joueurs
+au coude-à-coude, mais ne rattrape jamais une vraie faute. La course reste
+décidée par l'esquive.
+
+**L'équité PC / mobile** est assurée par un plafond strict : la cadence est
+mesurée sur une fenêtre glissante et **plafonnée à 8 taps/s**. Au-delà, plus
+aucun gain — un autoclicker à 20 taps/s ne gagne rien de plus qu'un pouce.
+Côté clavier, la répétition automatique est ignorée (`e.repeat`) : maintenir
+la barre d'espace ne donne rien.
+
+Les trois constantes sont en tête de [`src/main.ts`](src/main.ts) :
+`SPRINT_BOOST`, `SPRINT_FULL_RATE`, `SPRINT_WINDOW` — et la longueur de la
+zone est `SPRINT_ZONE` dans [`src/track.ts`](src/track.ts), partagée avec le
+générateur d'obstacles pour que les deux ne puissent pas se désynchroniser.
+
 ## 🗺️ Roadmap
 
 - [x] Course solo 600 m : obstacles, trébuchement, chrono, record
 - [x] Duel en ligne : matchmaking, piste partagée, adversaire visible, victoire
+- [x] 🔥 Sprint final au martèlement, calibré pour départager les ex æquo
 - [ ] 📜 Les parchemins de techniques (dash, bouclier, kunai explosif…)
 - [ ] 🌍 Mise en ligne publique (Vercel + Railway)
 - [ ] 🎨 Vrais modèles 3D low-poly, sons, décors variés

@@ -2,12 +2,27 @@ import * as THREE from 'three'
 import './style.css'
 import { Player } from './player'
 import { Opponent } from './opponent'
-import { Track } from './track'
+import { Track, SPRINT_ZONE } from './track'
 import { Input } from './input'
 import { Net, type RemotePlayer } from './net'
 
 /** La longueur de la course, en mètres. Départ → torii sacré. */
 const COURSE_LENGTH = 600
+
+/**
+ * ————— Le sprint final —————
+ * Sur les SPRINT_ZONE derniers mètres, marteler l'écran fait accélérer.
+ * Réglages calibrés par simulation, pour tenir deux promesses contradictoires :
+ *
+ *  · Départager deux joueurs au coude-à-coude : à fond, on gagne 0,37 s (≈ 10 m).
+ *  · Ne PAS refaire la course : un trébuchement coûte 0,53 s (≈ 15 m). Le sprint
+ *    parfait vaut moins que ça, donc il ne rattrape jamais une vraie faute.
+ *
+ * Ne pas marteler ne pénalise pas : on garde la vitesse normale, c'est un bonus.
+ */
+const SPRINT_BOOST = 0.15 // +15 % de vitesse à jauge pleine
+const SPRINT_FULL_RATE = 8 // taps/s pour remplir la jauge — au-delà, plus rien
+const SPRINT_WINDOW = 0.6 // durée sur laquelle on mesure la cadence (s)
 
 // ————— La scène 3D —————
 const canvas = document.querySelector<HTMLCanvasElement>('#game')!
@@ -44,10 +59,13 @@ const countEl = document.getElementById('count')!
 const flashEl = document.getElementById('flash')!
 const progressEl = document.getElementById('progressfill')!
 const oppmarkEl = document.getElementById('oppmark')!
+const sprintEl = document.getElementById('sprint')!
+const sprintFillEl = document.getElementById('sprintfill')!
 
 const MENU_TEXT = `600 m jusqu'au torii sacré. Les obstacles te ralentissent !<br />
   Swipe ⬅️ ➡️ ⬆️ ⬇️ pour esquiver, double-tap : sort.<br />
-  Clavier : flèches ou ZQSD.`
+  🔥 Sur les 120 derniers mètres : <b>martèle l'écran</b> pour accélérer !<br />
+  Clavier : flèches ou ZQSD, espace pour le sprint.`
 
 let toastTimer = 0
 function toast(text: string) {
@@ -73,6 +91,14 @@ let countdown = 0 // secondes avant le GO !
 let stumble = 0 // invincibilité après un trébuchement
 let netTimer = 0 // pour n'envoyer notre position que 10 fois/s
 let oppFinishedSeen = false
+let sprintTaps: number[] = [] // instants des derniers taps → cadence
+let sprintCharge = 0 // la jauge de sprint, 0 → 1
+let sprintSeen = false // la bannière ne s'annonce qu'une fois
+
+/** Dans les derniers mètres, les taps accélèrent au lieu de lancer un sort. */
+function inSprintZone() {
+  return state === 'course' && distance >= COURSE_LENGTH - SPRINT_ZONE
+}
 
 function showMenu(html: string) {
   state = 'menu'
@@ -83,6 +109,7 @@ function showMenu(html: string) {
   msg.innerHTML = html
   btns.classList.remove('hidden')
   overlay.classList.remove('hidden')
+  sprintEl.classList.add('hidden')
 }
 
 /** Lance une course. En ligne, la graine vient du serveur : même piste pour les deux ! */
@@ -97,10 +124,14 @@ function startRace(seed: number) {
   netTimer = 0
   raceGo = false
   oppFinishedSeen = false
+  sprintTaps = []
+  sprintCharge = 0
+  sprintSeen = false
   countdown = 3
   state = 'depart'
   overlay.classList.add('hidden')
   countEl.classList.add('show')
+  sprintEl.classList.add('hidden')
   progressEl.style.width = '0%'
   opponent.active = online
   oppmarkEl.classList.toggle('hidden', !online)
@@ -108,6 +139,7 @@ function startRace(seed: number) {
 
 function crossFinishLine() {
   player.mesh.visible = true // au cas où on franchit la ligne en plein clignotement
+  sprintEl.classList.add('hidden')
   const t = time.toFixed(2)
 
   if (online) {
@@ -190,6 +222,9 @@ new Input(document.body, {
   jump: () => state === 'course' && player.jump(),
   slide: () => state === 'course' && player.slide(),
   spell: () => state === 'course' && toast('📜 Pas de parchemin équipé… (bientôt !)'),
+  // On horodate chaque coup : la boucle de jeu en déduit la cadence
+  sprint: () => sprintTaps.push(time),
+  isSprint: inSprintZone,
 })
 
 // ————— La boucle de jeu (60 fois par seconde) —————
@@ -219,8 +254,20 @@ function tick(now?: number) {
   } else if (state === 'course') {
     time += dt
 
-    // La vitesse de croisière augmente au fil de la course (sprint final !)
-    const cruise = 22 + 8 * (distance / COURSE_LENGTH)
+    // ————— Sprint final : plus on martèle vite, plus on accélère —————
+    const sprinting = inSprintZone()
+    sprintTaps = sprintTaps.filter((t) => time - t < SPRINT_WINDOW)
+
+    // La cadence est PLAFONNÉE à SPRINT_FULL_RATE : au-delà, plus aucun gain.
+    // C'est ce qui met le pouce d'un mobile et un autoclicker à égalité.
+    const rate = sprintTaps.length / SPRINT_WINDOW
+    const target = sprinting ? Math.min(1, rate / SPRINT_FULL_RATE) : 0
+    sprintCharge += (target - sprintCharge) * Math.min(1, dt * 8)
+
+    // La vitesse de croisière augmente au fil de la course…
+    let cruise = 22 + 8 * (distance / COURSE_LENGTH)
+    // …et le martèlement la pousse encore un peu dans les derniers mètres
+    if (sprinting) cruise *= 1 + SPRINT_BOOST * sprintCharge
     speed += (cruise - speed) * Math.min(1, dt * 1.2)
 
     distance += speed * dt
@@ -242,6 +289,16 @@ function tick(now?: number) {
     // Interface : chrono + progression
     scoreEl.textContent = `${time.toFixed(1)} s`
     progressEl.style.width = `${Math.min(100, (distance / COURSE_LENGTH) * 100)}%`
+
+    // Interface du sprint : on annonce, puis la jauge suit le martèlement
+    if (sprinting) {
+      if (!sprintSeen) {
+        sprintSeen = true
+        sprintEl.classList.remove('hidden')
+        toast('🔥 MARTÈLE L\'ÉCRAN !')
+      }
+      sprintFillEl.style.width = `${sprintCharge * 100}%`
+    }
 
     // En ligne : on envoie notre position 10 fois par seconde
     if (online) {

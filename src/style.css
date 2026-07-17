@@ -129,6 +129,55 @@ body {
   opacity: 1;
 }
 
+/* ——— Sprint final : la jauge de martèlement ——— */
+#sprint {
+  position: fixed;
+  left: 50%;
+  bottom: 8%;
+  transform: translateX(-50%);
+  width: min(72%, 380px);
+  text-align: center;
+  pointer-events: none;
+}
+#sprint.hidden {
+  display: none;
+}
+#sprintlabel {
+  font-size: 1rem;
+  font-weight: 800;
+  letter-spacing: 0.2em;
+  margin: 0 -0.2em 8px 0; /* compense la dernière lettre */
+  color: #d6ac5a;
+  text-shadow: 0 2px 14px rgba(214, 172, 90, 0.6);
+  animation: sprintpulse 0.45s ease-in-out infinite alternate;
+}
+/* Le texte bat comme un cœur : ça donne le rythme à suivre */
+@keyframes sprintpulse {
+  from {
+    transform: scale(1);
+    opacity: 0.8;
+  }
+  to {
+    transform: scale(1.07);
+    opacity: 1;
+  }
+}
+#sprintbar {
+  height: 12px;
+  border-radius: 100px;
+  background: rgba(61, 69, 96, 0.55);
+  border: 1px solid #3d4560;
+  overflow: hidden;
+}
+/* Pas de transition : la jauge est redessinée à chaque image */
+#sprintfill {
+  height: 100%;
+  width: 0%;
+  border-radius: 100px;
+  background: linear-gradient(90deg, #d6ac5a, #e24b3a);
+  box-shadow: 0 0 14px rgba(226, 75, 58, 0.55);
+}
+
 /* ——— Menu / Game over ——— */
 #overlay {
   position: fixed;
