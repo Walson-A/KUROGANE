@@ -1,5 +1,6 @@
 import * as THREE from 'three'
 import { LANES } from './player'
+import { buildFighter, clearFighter, fighterById, type Fighter } from './roster'
 
 /** Ce que le réseau nous apprend sur l'adversaire à chaque message */
 export interface NetInfo {
@@ -10,9 +11,14 @@ export interface NetInfo {
 }
 
 /**
- * L'adversaire (Kurokumo, « nuage noir » : armure sombre + bandeau OR).
- * Affiché en FANTÔME semi-transparent : au départ et à chaque dépassement,
- * les deux coureurs se superposent — il faut voir à travers.
+ * L'adversaire : le guerrier que L'AUTRE joueur a choisi (son identité arrive
+ * par le réseau). Tant qu'on ne la connaît pas, il porte les couleurs de
+ * Kurokumo — le rival de toujours.
+ *
+ * Il est affiché en FANTÔME semi-transparent : au départ et à chaque
+ * dépassement, les deux coureurs se superposent — il faut voir à travers.
+ * C'est aussi ce qui permet de le reconnaître si les deux joueurs ont choisi
+ * le même guerrier.
  *
  * ————— Le problème du retard réseau —————
  * Ses positions n'arrivent que ~20 fois/s, après un temps de trajet. Afficher
@@ -37,33 +43,29 @@ export class Opponent {
   private netSpeed = 0 // sa vitesse, déduite des deux derniers messages
   private estDistance = 0 // où on l'affiche : notre meilleure estimation
 
+  private fighter: Fighter = fighterById('kurokumo')
+
   constructor(scene: THREE.Scene) {
-    // Armure sombre, presque noire — en version fantôme (transparente)
-    const body = new THREE.Mesh(
-      new THREE.BoxGeometry(0.8, 1.5, 0.8),
-      new THREE.MeshStandardMaterial({
-        color: 0x2e2333,
-        roughness: 0.55,
-        transparent: true,
-        opacity: 0.55,
-      })
-    )
-    body.position.y = 0.75
-
-    // Le bandeau doré du champion
-    const band = new THREE.Mesh(
-      new THREE.BoxGeometry(0.84, 0.14, 0.84),
-      new THREE.MeshStandardMaterial({
-        color: 0xd6ac5a,
-        transparent: true,
-        opacity: 0.75,
-      })
-    )
-    band.position.y = 1.26
-
-    this.mesh.add(body, band)
     this.mesh.visible = false
     scene.add(this.mesh)
+    this.build()
+  }
+
+  /**
+   * Habille le rival avec le guerrier qu'il a choisi.
+   * Appelé quand le réseau nous l'apprend — donc on ne refait le corps que si
+   * ça change vraiment, pas 30 fois par seconde.
+   */
+  setFighter(id: string) {
+    const f = fighterById(id)
+    if (f.id === this.fighter.id) return
+    this.fighter = f
+    this.build()
+  }
+
+  private build() {
+    clearFighter(this.mesh)
+    this.mesh.add(...buildFighter(this.fighter, true)) // true = fantôme
   }
 
   reset() {

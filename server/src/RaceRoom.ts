@@ -12,6 +12,10 @@ export class PlayerState extends Schema {
   @type('boolean') sliding = false
   @type('boolean') finished = false
   @type('number') time = 0
+  /** Le pseudo choisi dans les options — nettoyé à l'arrivée, cf. onJoin() */
+  @type('string') name = ''
+  /** Le guerrier choisi (cf. src/roster.ts côté jeu) */
+  @type('string') fighter = 'yasuke'
 }
 
 /** L'état complet d'une course */
@@ -27,6 +31,27 @@ export class RaceState extends Schema {
 
 /** Durée du décompte 3, 2, 1, GO (ms) — un poil plus long que côté client */
 const COUNTDOWN_MS = 3500
+
+/** Les guerriers que le serveur accepte. Tout le reste → Yasuke. */
+const FIGHTERS = ['yasuke', 'hana', 'onimaru', 'tamae']
+const MAX_NAME = 12
+
+/**
+ * Le pseudo et le guerrier viennent du joueur : on ne leur fait PAS confiance.
+ * Un client bidouillé peut envoyer n'importe quoi — un pavé de 10 000 lettres,
+ * un objet, rien du tout. Le serveur tranche, et n'accepte qu'une petite chaîne.
+ *
+ * (L'échappement HTML, lui, se fait à l'affichage côté jeu : c'est là que se
+ * joue le risque d'injection, pas ici.)
+ */
+function cleanName(v: unknown): string {
+  if (typeof v !== 'string') return ''
+  return v.replace(/\s+/g, ' ').trim().slice(0, MAX_NAME)
+}
+
+function cleanFighter(v: unknown): string {
+  return typeof v === 'string' && FIGHTERS.includes(v) ? v : 'yasuke'
+}
 
 /**
  * Une salle de course : 2 joueurs, une piste, un vainqueur.
@@ -75,9 +100,14 @@ export class RaceRoom extends Room<{ state: RaceState }> {
     })
   }
 
-  onJoin(client: Client) {
-    this.state.players.set(client.sessionId, new PlayerState())
-    console.log(`⚔️  ${client.sessionId} rejoint la course (${this.state.players.size}/2)`)
+  onJoin(client: Client, options: any) {
+    const p = new PlayerState()
+    p.name = cleanName(options?.name)
+    p.fighter = cleanFighter(options?.fighter)
+    this.state.players.set(client.sessionId, p)
+    console.log(
+      `⚔️  ${p.name || 'anonyme'} (${p.fighter}) rejoint la course (${this.state.players.size}/2)`
+    )
 
     // Deux guerriers présents : on verrouille la salle et c'est parti !
     if (this.state.players.size === 2) {

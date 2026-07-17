@@ -29,20 +29,123 @@
       <div id="sprintbar"><div id="sprintfill"></div></div>
     </div>
 
-    <!-- Écran de menu / game over -->
+    <!-- ————— Les menus ————— -->
+    <!-- Un seul écran est visible à la fois ; c'est menu.ts qui aiguille. -->
     <div id="overlay">
-      <div class="jp">黒鉄</div>
-      <h1>KUROGANE</h1>
-      <p id="msg">
-        600 m jusqu'au torii sacré. Les obstacles te ralentissent !<br />
-        Swipe ⬅️ ➡️ ⬆️ ⬇️ pour esquiver, double-tap : sort.<br />
-        🔥 Sur les 120 derniers mètres : <b>martèle l'écran</b> pour accélérer !<br />
-        Clavier : flèches ou ZQSD, espace pour le sprint.
-      </p>
-      <div id="btns">
-        <button id="btnOnline">⚔️ COURSE EN LIGNE</button>
-        <button id="btnSolo" class="secondary">ENTRAÎNEMENT SOLO</button>
-      </div>
+      <!-- L'écran-titre -->
+      <section id="scr-title" class="screen">
+        <div class="jp">黒鉄</div>
+        <h1>KUROGANE</h1>
+        <div class="tagline">« Acier noir » — le Tournoi des Voies</div>
+        <p id="banner" class="banner hidden"></p>
+        <div class="stack">
+          <button id="btnOnline">⚔️ COURSE EN LIGNE</button>
+          <button id="btnSolo" class="secondary">🏋️ ENTRAÎNEMENT SOLO</button>
+        </div>
+        <div class="row">
+          <button id="btnRoster" class="ghost grow">
+            <span class="jp-mini" id="pickJp">弥助</span>
+            <span class="lines">
+              <small>Ton guerrier</small>
+              <b id="pickName">Yasuke</b>
+            </span>
+          </button>
+          <button id="btnOptions" class="ghost" aria-label="Options">⚙️</button>
+          <button id="btnHelp" class="ghost" aria-label="Comment jouer">❓</button>
+        </div>
+      </section>
+
+      <!-- Le choix du guerrier — les vignettes sont fabriquées par menu.ts -->
+      <section id="scr-roster" class="screen hidden">
+        <header class="head">
+          <button class="back" data-back aria-label="Retour">‹</button>
+          <h2>Choisis ton guerrier</h2>
+        </header>
+        <div class="preview"><canvas id="preview"></canvas></div>
+        <div class="fighters" id="fighters"></div>
+        <div class="info">
+          <div class="idline">
+            <span class="jp-name" id="infoJp"></span>
+            <span class="lines">
+              <b id="infoName"></b>
+              <small id="infoRole"></small>
+            </span>
+          </div>
+          <p id="infoBlurb"></p>
+          <p class="passive"><b>Passif —</b> <span id="infoPassive"></span></p>
+        </div>
+        <button class="primary" data-back>VALIDER</button>
+      </section>
+
+      <!-- Les options -->
+      <section id="scr-options" class="screen hidden">
+        <header class="head">
+          <button class="back" data-back aria-label="Retour">‹</button>
+          <h2>Options</h2>
+        </header>
+
+        <div class="field">
+          <label for="optName">Ton nom de guerrier</label>
+          <input
+            id="optName"
+            type="text"
+            maxlength="12"
+            placeholder="Guerrier anonyme"
+            autocomplete="off"
+            autocapitalize="words"
+            spellcheck="false"
+          />
+          <small>Vu par ton adversaire pendant le duel. 12 lettres max.</small>
+        </div>
+
+        <div class="field">
+          <label>Qualité graphique</label>
+          <div class="seg" id="optQuality">
+            <button data-q="auto">Auto</button>
+            <button data-q="haut">Belle</button>
+            <button data-q="bas">Fluide</button>
+          </div>
+          <small>« Fluide » dessine moins de pixels : à essayer si ça saccade.</small>
+        </div>
+
+        <button class="primary" data-back>OK</button>
+      </section>
+
+      <!-- Comment jouer -->
+      <section id="scr-help" class="screen hidden">
+        <header class="head">
+          <button class="back" data-back aria-label="Retour">‹</button>
+          <h2>Comment jouer</h2>
+        </header>
+        <p class="lead">
+          600 m jusqu'au torii sacré. Toucher un obstacle ne tue pas : tu
+          <b>trébuches</b> et tu perds ta vitesse. Le perdant, c'est celui qui arrive 2ᵉ.
+        </p>
+        <table class="keys">
+          <thead>
+            <tr><th>Action</th><th>Mobile</th><th>Clavier</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>Changer de ligne</td><td>Swipe ⬅️ ➡️</td><td>← → · Q D</td></tr>
+            <tr><td>Sauter</td><td>Swipe ⬆️</td><td>↑ · Z</td></tr>
+            <tr><td>Glisser</td><td>Swipe ⬇️</td><td>↓ · S</td></tr>
+            <tr><td>Lancer le sort</td><td>Double-tap</td><td>E</td></tr>
+            <tr><td>🔥 Sprint final</td><td>Martèle l'écran</td><td>Espace · clic</td></tr>
+          </tbody>
+        </table>
+        <p class="lead">
+          🔥 Sur les <b>120 derniers mètres</b>, plus tu martèles vite, plus tu
+          accélères — de quoi voler la victoire sur le fil.
+        </p>
+        <button class="primary" data-back>OK</button>
+      </section>
+
+      <!-- Attente d'un adversaire / verdict de fin de course -->
+      <section id="scr-status" class="screen hidden">
+        <div class="jp">黒鉄</div>
+        <p id="msg"></p>
+        <button id="btnCancel" class="secondary hidden">ANNULER</button>
+      </section>
     </div>
 
     <script type="module" src="/src/main.ts"></script>

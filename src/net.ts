@@ -8,6 +8,10 @@ export interface RemotePlayer {
   sliding: boolean
   finished: boolean
   time: number
+  /** Son pseudo. ⚠️ Saisi par un autre joueur : à échapper avant tout affichage ! */
+  name: string
+  /** Le guerrier qu'il a choisi (cf. roster.ts) */
+  fighter: string
 }
 
 /** Les événements réseau que le jeu doit gérer */
@@ -62,15 +66,19 @@ export class Net {
     return this.room !== null
   }
 
-  /** Rejoint une course (ou en crée une et attend un adversaire) */
-  async join() {
+  /**
+   * Rejoint une course (ou en crée une et attend un adversaire).
+   * On donne notre identité au serveur dès l'arrivée : il la range dans l'état
+   * de la salle, et l'autre joueur la reçoit automatiquement.
+   */
+  async join(identity: { name: string; fighter: string }) {
     this.lastPhase = ''
     this.resultsSent = false
     this.myFinished = false
 
     try {
       const client = new Client(WS_URL)
-      this.room = await client.joinOrCreate('race')
+      this.room = await client.joinOrCreate('race', identity)
     } catch {
       this.cb.onError('Serveur injoignable. Il tourne ? (cf DEPLOY.md)')
       return
@@ -124,6 +132,8 @@ export class Net {
           sliding: p.sliding,
           finished: p.finished,
           time: p.time,
+          name: p.name ?? '',
+          fighter: p.fighter ?? '',
         }
       }
     })

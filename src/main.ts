@@ -5,6 +5,8 @@ import { Opponent } from './opponent'
 import { Track, SPRINT_ZONE } from './track'
 import { Input } from './input'
 import { Net, type RemotePlayer } from './net'
+import { Menu, escapeHtml } from './menu'
+import type { Quality } from './settings'
 
 /** La longueur de la course, en mètres. Départ → torii sacré. */
 const COURSE_LENGTH = 600
@@ -19,6 +21,9 @@ const COURSE_LENGTH = 600
  *    parfait vaut moins que ça, donc il ne rattrape jamais une vraie faute.
  *
  * Ne pas marteler ne pénalise pas : on garde la vitesse normale, c'est un bonus.
+ *
+ * ⚠️ Aucun passif de guerrier ne touche à ces valeurs : dans les 120 derniers
+ * mètres, tout le monde est à armes égales.
  */
 const SPRINT_BOOST = 0.15 // +15 % de vitesse à jauge pleine
 const SPRINT_FULL_RATE = 8 // taps/s pour remplir la jauge — au-delà, plus rien
@@ -27,7 +32,6 @@ const SPRINT_WINDOW = 0.6 // durée sur laquelle on mesure la cadence (s)
 // ————— La scène 3D —————
 const canvas = document.querySelector<HTMLCanvasElement>('#game')!
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true })
-renderer.setPixelRatio(Math.min(devicePixelRatio, 2))
 
 const scene = new THREE.Scene()
 scene.background = new THREE.Color(0x151a2c) // nuit indigo
@@ -47,12 +51,24 @@ const player = new Player(scene)
 const opponent = new Opponent(scene)
 const track = new Track(scene)
 
+/**
+ * La qualité graphique ne joue QUE sur le nombre de pixels dessinés — c'est de
+ * loin le plus gros coût sur mobile, et diviser par 2 le pixelRatio, c'est 4
+ * fois moins de pixels.
+ *
+ * On ne touche SURTOUT pas à la brume : c'est elle qui décide à quelle distance
+ * on découvre les obstacles. La rapprocher pour gagner des images/s donnerait
+ * moins de temps pour réagir — ce serait un réglage de difficulté déguisé en
+ * réglage graphique, et un désavantage en duel.
+ */
+function applyQuality(q: Quality) {
+  const mobile = matchMedia('(pointer: coarse)').matches
+  const cap = q === 'bas' ? 1 : q === 'haut' ? 2 : mobile ? 1.5 : 2
+  renderer.setPixelRatio(Math.min(devicePixelRatio, cap))
+  resize() // setSize doit être rappelé après un changement de pixelRatio
+}
+
 // ————— L'interface —————
-const overlay = document.getElementById('overlay')!
-const msg = document.getElementById('msg')!
-const btns = document.getElementById('btns')!
-const btnSolo = document.getElementById('btnSolo')!
-const btnOnline = document.getElementById('btnOnline')!
 const scoreEl = document.getElementById('score')!
 const toastEl = document.getElementById('toast')!
 const countEl = document.getElementById('count')!
@@ -62,11 +78,6 @@ const oppmarkEl = document.getElementById('oppmark')!
 const gapEl = document.getElementById('gap')!
 const sprintEl = document.getElementById('sprint')!
 const sprintFillEl = document.getElementById('sprintfill')!
-
-const MENU_TEXT = `600 m jusqu'au torii sacré. Les obstacles te ralentissent !<br />
-  Swipe ⬅️ ➡️ ⬆️ ⬇️ pour esquiver, double-tap : sort.<br />
-  🔥 Sur les 120 derniers mètres : <b>martèle l'écran</b> pour accélérer !<br />
-  Clavier : flèches ou ZQSD, espace pour le sprint.`
 
 let toastTimer = 0
 function toast(text: string) {
@@ -92,26 +103,31 @@ let countdown = 0 // secondes avant le GO !
 let stumble = 0 // invincibilité après un trébuchement
 let netTimer = 0 // pour n'envoyer notre position que 10 fois/s
 let oppFinishedSeen = false
+let oppName = '' // le pseudo du rival, appris par le réseau
 let sprintTaps: number[] = [] // instants des derniers taps → cadence
 let sprintCharge = 0 // la jauge de sprint, 0 → 1
 let sprintSeen = false // la bannière ne s'annonce qu'une fois
+
+/** Comment appeler le rival à l'écran quand il n'a pas mis de pseudo */
+function rivalLabel() {
+  return oppName || 'Rival'
+}
 
 /** Dans les derniers mètres, les taps accélèrent au lieu de lancer un sort. */
 function inSprintZone() {
   return state === 'course' && distance >= COURSE_LENGTH - SPRINT_ZONE
 }
 
-function showMenu(html: string) {
+/** Retour à l'écran-titre. `banner` : le mot de la fin de la course précédente. */
+function backToMenu(banner?: string) {
   state = 'menu'
   online = false
   opponent.active = false
   oppmarkEl.classList.add('hidden')
   gapEl.classList.add('hidden')
   countEl.classList.remove('show')
-  msg.innerHTML = html
-  btns.classList.remove('hidden')
-  overlay.classList.remove('hidden')
   sprintEl.classList.add('hidden')
+  menu.showTitle(banner)
 }
 
 /** Lance une course. En ligne, la graine vient du serveur : même piste pour les deux ! */
@@ -131,7 +147,7 @@ function startRace(seed: number) {
   sprintSeen = false
   countdown = 3
   state = 'depart'
-  overlay.classList.add('hidden')
+  menu.hide()
   countEl.classList.add('show')
   sprintEl.classList.add('hidden')
   progressEl.style.width = '0%'
@@ -150,9 +166,7 @@ function crossFinishLine() {
     // On prévient le serveur, et on attend le verdict s'il manque l'adversaire
     net.sendFinished(time)
     state = 'fini'
-    msg.innerHTML = `⛩️ Ligne franchie en <b>${t} s</b> !<br>L'adversaire court encore…`
-    btns.classList.add('hidden')
-    overlay.classList.remove('hidden')
+    menu.showStatus(`⛩️ Ligne franchie en <b>${t} s</b> !<br>${escapeHtml(rivalLabel())} court encore…`)
     return
   }
 
@@ -166,16 +180,17 @@ function crossFinishLine() {
   } else {
     bestLine = `Record à battre : ${best.toFixed(2)} s`
   }
-  showMenu(`⛩️ Torii sacré franchi en <b>${t} s</b> !<br>${bestLine}`)
+  backToMenu(`⛩️ Torii sacré franchi en <b>${t} s</b> !<br>${bestLine}`)
 }
 
 // ————— Le réseau —————
 const net = new Net({
   onWaiting() {
     state = 'attente'
-    msg.innerHTML = '🔎 Recherche d\'un adversaire…<br>Ouvre le jeu sur un autre appareil pour le duel !'
-    btns.classList.add('hidden')
-    overlay.classList.remove('hidden')
+    menu.showStatus(
+      '🔎 Recherche d\'un adversaire…<br>Ouvre le jeu sur un autre appareil pour le duel !',
+      true // …avec un bouton pour annuler
+    )
   },
   onCountdown(seed) {
     toast('⚔️ Adversaire trouvé !')
@@ -186,19 +201,23 @@ const net = new Net({
   },
   onOpponent(op: RemotePlayer | null) {
     if (!op) return
+    // Son identité : le corps n'est refait que si le guerrier change vraiment
+    opponent.setFighter(op.fighter)
+    oppName = op.name
     // On nourrit l'extrapolation — le marqueur et l'écart, eux, sont mis à
     // jour à chaque image dans la boucle de jeu, sur la position ESTIMÉE.
     opponent.onNetUpdate({ lane: op.lane, y: op.y, distance: op.distance, sliding: op.sliding })
     if (op.finished && !oppFinishedSeen) {
       oppFinishedSeen = true
-      if (state === 'course') toast('⚔️ L\'adversaire a franchi le torii !')
+      if (state === 'course') toast('⚔️ Le rival a franchi le torii !')
     }
   },
   onResults(iWon, oppTime) {
     const mine = `Ton temps : <b>${time.toFixed(2)} s</b>`
-    const theirs = oppTime > 0 ? ` · Adversaire : <b>${oppTime.toFixed(2)} s</b>` : ''
+    // ⚠️ escapeHtml : le pseudo vient de l'autre joueur, jamais de confiance
+    const theirs = oppTime > 0 ? ` · ${escapeHtml(rivalLabel())} : <b>${oppTime.toFixed(2)} s</b>` : ''
     net.leave()
-    showMenu(
+    backToMenu(
       iWon
         ? `🏆 <b>VICTOIRE !</b> La lame légendaire est à toi.<br>${mine}${theirs}`
         : `☁️ Vaincu… la voie du guerrier est longue.<br>${mine}${theirs}`
@@ -206,19 +225,37 @@ const net = new Net({
   },
   onError(message) {
     net.leave()
-    showMenu(`⚠️ ${message}<br>${MENU_TEXT}`)
+    backToMenu(`⚠️ ${escapeHtml(message)}`)
   },
 })
 
-btnSolo.addEventListener('click', () => {
-  online = false
-  startRace(Math.floor(Math.random() * 2 ** 31))
+// ————— Les menus —————
+const menu = new Menu({
+  onSolo() {
+    online = false
+    startRace(Math.floor(Math.random() * 2 ** 31))
+  },
+  onOnline() {
+    online = true
+    oppName = ''
+    net.join({ name: menu.settings.name, fighter: menu.settings.fighter })
+  },
+  onFighter(f) {
+    // Le guerrier qui court derrière le menu change tout de suite : on voit son
+    // choix avant même de lancer la course.
+    player.setFighter(f)
+  },
+  onQuality(q) {
+    applyQuality(q)
+  },
+  onCancel() {
+    net.leave()
+    backToMenu()
+  },
 })
 
-btnOnline.addEventListener('click', () => {
-  online = true
-  net.join()
-})
+applyQuality(menu.settings.quality)
+menu.showTitle()
 
 // ————— Les contrôles —————
 new Input(document.body, {
@@ -252,7 +289,7 @@ function tick(now?: number) {
     } else if (online && countdown < -4) {
       // Le GO du serveur n'arrive pas : connexion perdue
       net.leave()
-      showMenu(`⚠️ Connexion perdue au départ.<br>${MENU_TEXT}`)
+      backToMenu('⚠️ Connexion perdue au départ.')
     }
     player.update(dt)
     opponent.update(dt, distance)
@@ -283,7 +320,9 @@ function tick(now?: number) {
     // Trébuchement : toucher un obstacle RALENTIT (on ne meurt pas, c'est une course)
     stumble = Math.max(0, stumble - dt)
     if (stumble <= 0 && track.hits(player.hitbox())) {
-      speed = Math.max(6, speed * 0.35) // grosse perte de vitesse
+      // `player.grip` = la part de vitesse gardée. C'est LE passif d'Oni-Maru
+      // (il garde 52 %) et le point faible de Hana (28 %).
+      speed = Math.max(6, speed * player.grip)
       stumble = 1.2 // brève invincibilité le temps de se relever
       flash()
       toast('💥 Trébuché !')
@@ -325,7 +364,8 @@ function tick(now?: number) {
       const oppD = opponent.distanceNow
       oppmarkEl.style.left = `${Math.min(100, (oppD / COURSE_LENGTH) * 100)}%`
       const lead = oppD - distance
-      gapEl.textContent = `Rival ${lead >= 0 ? '+' : '−'}${Math.abs(lead).toFixed(0)} m`
+      // textContent, pas innerHTML : le pseudo vient de l'autre joueur
+      gapEl.textContent = `${rivalLabel()} ${lead >= 0 ? '+' : '−'}${Math.abs(lead).toFixed(0)} m`
       gapEl.classList.toggle('ahead', lead >= 0)
     }
 
@@ -342,6 +382,7 @@ function tick(now?: number) {
   camera.position.x += (player.mesh.position.x * 0.55 - camera.position.x) * Math.min(1, dt * 5)
 
   renderer.render(scene, camera)
+  menu.update(dt) // l'aperçu 3D du guerrier, quand le menu de sélection est ouvert
 }
 
 // ————— Adaptation à la taille de l'écran —————
