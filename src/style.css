@@ -228,20 +228,50 @@ body {
   transition: opacity 0.05s;
 }
 
-/* ——— 💨 Bombe fumigène : la nuit tombe d'un coup ———
-   Elle n'entre pas jusqu'aux bords : on garde ses lignes, on perd la distance.
-   Aveugler complètement serait injouable, pas difficile. */
+/* ——— 💨 Bombe fumigène : l'encre du bloup (façon Mario Kart) ———
+   De grosses taches d'encre presque opaques COUVRENT l'écran, avec juste
+   quelques trous pour deviner la piste — et un voile général par-dessus tout,
+   pour qu'on voie « un tout petit peu » même dans les trous. Aveugler à 100 %
+   serait injouable ; on cache beaucoup, pas tout. */
 #fumee {
   position: fixed;
-  inset: 0;
-  background: radial-gradient(ellipse at 50% 70%, rgba(20, 22, 32, 0.35) 20%, rgba(14, 16, 24, 0.97) 75%);
-  opacity: 0;
-  transition: opacity 0.45s;
+  inset: -20%; /* déborde : quand la tache « gicle » (scale), pas de bord vide */
   pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.4s ease;
+  background:
+    /* les taches d'encre : discs quasi opaques, bord flou, disposés au hasard */
+    radial-gradient(circle at 24% 30%, #090a11 0 20%, transparent 30%),
+    radial-gradient(circle at 72% 22%, #090a11 0 24%, transparent 33%),
+    radial-gradient(circle at 84% 64%, #090a11 0 22%, transparent 31%),
+    radial-gradient(circle at 33% 74%, #090a11 0 25%, transparent 34%),
+    radial-gradient(circle at 56% 50%, #090a11 0 26%, transparent 36%),
+    radial-gradient(circle at 13% 58%, #090a11 0 17%, transparent 26%),
+    radial-gradient(circle at 62% 84%, #090a11 0 18%, transparent 27%),
+    radial-gradient(circle at 92% 40%, #090a11 0 15%, transparent 24%),
+    /* le voile de fond : même les trous restent sombres → on ne voit qu'un peu */
+    linear-gradient(rgba(7, 8, 13, 0.6), rgba(7, 8, 13, 0.6));
+  background-repeat: no-repeat;
 }
+/* Le « ploop » : l'encre gicle sur l'écran d'un coup, avec un petit rebond */
 #fumee.show {
   opacity: 1;
-  transition: opacity 0.15s;
+  transition: none;
+  animation: ploop 0.36s cubic-bezier(0.2, 1.5, 0.4, 1);
+}
+@keyframes ploop {
+  0% {
+    opacity: 0;
+    transform: scale(0.25) rotate(-6deg);
+  }
+  55% {
+    opacity: 1;
+    transform: scale(1.08) rotate(1deg);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1) rotate(0deg);
+  }
 }
 
 /* ——— ☠️ Senbon empoisonné : tout tangue ———
@@ -525,8 +555,9 @@ body {
 
 .fighters {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 7px;
+  /* 4 guerriers + la vignette « + » = 5 colonnes */
+  grid-template-columns: repeat(5, 1fr);
+  gap: 6px;
   width: 100%;
 }
 #overlay button.fighter {
@@ -559,6 +590,63 @@ body {
 }
 .fighter .nm {
   opacity: 0.9;
+}
+
+/* La vignette « + » du vestiaire perso : liséré pointillé, un cran à part */
+#overlay button.fighter.plus {
+  border-style: dashed;
+  justify-content: center;
+}
+.fighter .plusicon {
+  font-size: 1.35rem;
+  line-height: 1;
+  color: var(--c, #e24b3a);
+}
+
+/* ——— Le vestiaire perso ——— */
+.forge {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 12px 14px;
+  text-align: left;
+  background: rgba(61, 69, 96, 0.22);
+  border: 1px solid #3d4560;
+  border-radius: 10px;
+}
+.forge.hidden {
+  display: none;
+}
+.forgefield {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.forgefield > label {
+  font-size: 0.72rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #9aa4c0;
+}
+.palette {
+  display: grid;
+  /* 6 par rangée → 3 rangées de 18 : des pastilles assez grosses pour le pouce */
+  grid-template-columns: repeat(6, 1fr);
+  gap: 8px;
+}
+#overlay button.swatch {
+  padding: 0;
+  aspect-ratio: 1;
+  border-radius: 50%;
+  border: 2px solid rgba(13, 16, 28, 0.6);
+  box-shadow: none;
+  cursor: pointer;
+}
+/* La pastille choisie : un anneau clair détaché de sa couleur */
+#overlay button.swatch.on {
+  border-color: #f0e8d8;
+  box-shadow: 0 0 0 2px #151a2c, 0 0 10px rgba(240, 232, 216, 0.5);
 }
 
 .info {

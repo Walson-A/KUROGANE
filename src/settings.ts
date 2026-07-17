@@ -1,4 +1,12 @@
-import { fighterById, type FighterId } from './roster'
+import {
+  fighterById,
+  DEFAULT_CUSTOM,
+  HEADS,
+  PERSO_ID,
+  type CustomSkin,
+  type FighterId,
+  type Head,
+} from './roster'
 
 /**
  * La qualité graphique.
@@ -10,6 +18,8 @@ export type Quality = 'auto' | 'haut' | 'bas'
 
 export interface Settings {
   fighter: FighterId
+  /** Le skin du guerrier perso — indépendant du choix courant, gardé sous le coude. */
+  custom: CustomSkin
   /** Le pseudo, vu par l'adversaire pendant le duel. Vide = anonyme. */
   name: string
   quality: Quality
@@ -26,6 +36,25 @@ export function cleanName(v: unknown): string {
     .slice(0, MAX_NAME)
 }
 
+/** Une couleur valide : un entier 0xrrggbb. Sinon on retombe sur le défaut. */
+function validColor(v: unknown, fallback: number): number {
+  return typeof v === 'number' && Number.isInteger(v) && v >= 0 && v <= 0xffffff ? v : fallback
+}
+
+/**
+ * Relit le skin perso en validant tout : une couleur bidouillée à la main ou
+ * une vieille sauvegarde ne doit pas pouvoir peindre un guerrier illisible ni
+ * casser le rendu.
+ */
+function loadCustom(raw: unknown): CustomSkin {
+  const r = (raw ?? {}) as Record<string, unknown>
+  return {
+    body: validColor(r.body, DEFAULT_CUSTOM.body),
+    band: validColor(r.band, DEFAULT_CUSTOM.band),
+    head: HEADS.includes(r.head as Head) ? (r.head as Head) : DEFAULT_CUSTOM.head,
+  }
+}
+
 /**
  * Relit les réglages du téléphone.
  * Tout est validé au passage : une vieille sauvegarde ou un localStorage
@@ -39,7 +68,10 @@ export function loadSettings(): Settings {
     // JSON abîmé, ou localStorage interdit (navigation privée) : on repart des défauts
   }
   return {
-    fighter: fighterById(raw.fighter as string).id,
+    // 'perso' n'est pas dans le roster (il se construit) : on le garde tel quel,
+    // sinon fighterById le renverrait vers Yasuke et on perdrait le choix.
+    fighter: raw.fighter === PERSO_ID ? PERSO_ID : fighterById(raw.fighter as string).id,
+    custom: loadCustom(raw.custom),
     name: cleanName(raw.name),
     quality: raw.quality === 'haut' || raw.quality === 'bas' ? raw.quality : 'auto',
   }

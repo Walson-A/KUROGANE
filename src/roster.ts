@@ -1,6 +1,9 @@
 import * as THREE from 'three'
 
-export type FighterId = 'yasuke' | 'hana' | 'onimaru' | 'tamae' | 'kurokumo'
+export type FighterId = 'yasuke' | 'hana' | 'onimaru' | 'tamae' | 'kurokumo' | 'perso'
+
+/** L'ornement de tête d'un guerrier — le « chapeau » de la personnalisation. */
+export type Head = 'rien' | 'cornes' | 'oreilles'
 
 /**
  * Un guerrier du Tournoi des Voies.
@@ -29,7 +32,7 @@ export interface Fighter {
    * Largeur des épaules. PUREMENT visuel : voir buildFighter().
    */
   width: number
-  head: 'rien' | 'cornes' | 'oreilles'
+  head: Head
 
   // ————— Les réglages de jeu —————
   /*
@@ -140,6 +143,60 @@ export const ROSTER: Fighter[] = [
     grip: 0.35,
   },
 ]
+
+// ————— Le guerrier PERSO (façon Among Us) —————
+//
+// Un skin que le joueur forge lui-même : deux couleurs et un ornement de tête.
+// Volontairement PUREMENT cosmétique — ses réglages de jeu sont ceux de Yasuke,
+// la référence. Autrement, « fabrique ton perso » deviendrait « fabrique le
+// perso le plus fort », et le vestiaire ne serait plus qu'un piège à munchkin.
+
+export const PERSO_ID: FighterId = 'perso'
+
+/** Ce que le joueur choisit dans le vestiaire — le reste du perso est figé. */
+export interface CustomSkin {
+  body: number
+  band: number
+  head: Head
+}
+
+export const HEADS: Head[] = ['rien', 'cornes', 'oreilles']
+
+/**
+ * La palette du vestiaire. Un jeu de couleurs FERMÉ, comme les teintes d'Among
+ * Us : plus lisible qu'une roue chromatique sur mobile, et toutes s'accordent à
+ * la nuit indigo du jeu. On y retrouve les couleurs du roster, plus quelques
+ * autres pour se démarquer.
+ */
+export const SKIN_PALETTE: number[] = [
+  0xc33a2c, 0xe24b3a, 0xe58a2c, 0xd6ac5a, 0xe6c66a, 0x8fce7a,
+  0x3a7a5c, 0x74dba6, 0x3c5a86, 0x4d8fd6, 0x6bb6d8, 0xb98cff,
+  0xd86aa8, 0xf09ac0, 0xe4dcc8, 0x9aa4c0, 0x2e2333, 0x23252d,
+]
+
+/** Le skin de départ : un vert jade et un bandeau or, distinct du roster. */
+export const DEFAULT_CUSTOM: CustomSkin = { body: 0x3a7a5c, band: 0xe6c66a, head: 'rien' }
+
+/**
+ * Assemble le guerrier perso à partir du skin sauvegardé. Il HÉRITE de tous les
+ * réglages de Yasuke (saut, esquive, glissade, largeur, grip) : seules les deux
+ * couleurs et l'ornement changent. C'est ce qui garantit qu'il est équitable.
+ */
+export function customFighter(skin: CustomSkin): Fighter {
+  return {
+    ...ROSTER[0], // Yasuke = la référence neutre : on ne reprend QUE ses stats
+    id: PERSO_ID,
+    name: 'Mon guerrier',
+    jp: '改', // « kai » : refondre, remodeler
+    role: 'Skin perso · équilibré',
+    blurb: 'Un guerrier à tes couleurs, forgé par toi. Le look ne change RIEN à la course.',
+    passive: 'Pur cosmétique — mêmes réglages que Yasuke : aucun bonus, aucun point faible.',
+    pickable: true,
+    body: skin.body,
+    band: skin.band,
+    head: skin.head,
+  }
+}
 
 const BY_ID = new Map(ROSTER.map((f) => [f.id, f]))
 

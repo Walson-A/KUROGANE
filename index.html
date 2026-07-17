@@ -81,6 +81,27 @@
           <p id="infoBlurb"></p>
           <p class="passive"><b>Passif —</b> <span id="infoPassive"></span></p>
         </div>
+
+        <!-- Le vestiaire perso : n'apparaît que pour la vignette « + » -->
+        <div id="forge" class="forge hidden">
+          <div class="forgefield">
+            <label>Couleur de l'armure</label>
+            <div class="palette" id="palBody"></div>
+          </div>
+          <div class="forgefield">
+            <label>Couleur du bandeau</label>
+            <div class="palette" id="palBand"></div>
+          </div>
+          <div class="forgefield">
+            <label>Ornement de tête</label>
+            <div class="seg" id="forgeHead">
+              <button data-h="rien">Aucun</button>
+              <button data-h="cornes">Cornes 🐂</button>
+              <button data-h="oreilles">Oreilles 🦊</button>
+            </div>
+          </div>
+        </div>
+
         <button class="primary" data-back>VALIDER</button>
       </section>
 

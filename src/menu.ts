@@ -1,11 +1,15 @@
 import * as THREE from 'three'
 import {
   ROSTER,
+  PERSO_ID,
+  SKIN_PALETTE,
   buildFighter,
   clearFighter,
   cssColor,
+  customFighter,
   fighterById,
   type Fighter,
+  type Head,
 } from './roster'
 import { cleanName, loadSettings, saveSettings, type Quality, type Settings } from './settings'
 import type { LobbyView, SalonInfo } from './net'
@@ -93,6 +97,11 @@ export class Menu {
     infoRole: document.getElementById('infoRole')!,
     infoBlurb: document.getElementById('infoBlurb')!,
     infoPassive: document.getElementById('infoPassive')!,
+    // ————— Le vestiaire perso —————
+    forge: document.getElementById('forge')!,
+    palBody: document.getElementById('palBody')!,
+    palBand: document.getElementById('palBand')!,
+    forgeHead: document.getElementById('forgeHead')!,
     optName: document.getElementById('optName') as HTMLInputElement,
     optQuality: document.getElementById('optQuality')!,
     // ————— Salon —————
@@ -147,7 +156,9 @@ export class Menu {
   }
 
   get fighter(): Fighter {
-    return fighterById(this.settings.fighter)
+    return this.settings.fighter === PERSO_ID
+      ? customFighter(this.settings.custom)
+      : fighterById(this.settings.fighter)
   }
 
   // ————— Les salons en ligne —————
@@ -255,18 +266,20 @@ export class Menu {
     this.el.start.classList.toggle('hidden', !view.isHost)
     ;(this.el.start as HTMLButtonElement).disabled = !peutLancer
 
-    // Le mot d'ambiance selon la situation
+    // Le mot d'ambiance : le MODE (duel à 2, chacun pour soi à 3+) puis le statut
     if (total < 2) {
       this.el.lobbyHint.textContent =
         view.code === 'PUBLIC'
           ? 'En attente d\'autres guerriers…'
           : `Partage le code ${view.code} pour inviter tes amis.`
-    } else if (view.isHost) {
-      this.el.lobbyHint.textContent = peutLancer
-        ? `${prets}/${total} prêts — tu peux lancer !`
-        : `${prets}/${total} prêts — il en faut ${Math.ceil(total / 2)}.`
     } else {
-      this.el.lobbyHint.textContent = `${prets}/${total} prêts — l'hôte lance la partie.`
+      const mode = total === 2 ? '⚔️ Duel' : `⚔️ Chacun pour soi · ${total} guerriers`
+      const statut = view.isHost
+        ? peutLancer
+          ? `${prets}/${total} prêts — tu peux lancer !`
+          : `${prets}/${total} prêts — il en faut ${Math.ceil(total / 2)}.`
+        : `${prets}/${total} prêts — l'hôte lance la partie.`
+      this.el.lobbyHint.textContent = `${mode} — ${statut}`
     }
   }
 
@@ -338,6 +351,17 @@ export class Menu {
       b.addEventListener('click', () => this.pick(f.id))
       this.el.fighters.appendChild(b)
     }
+
+    // La vignette « + » : le vestiaire perso, en bout de rangée façon Among Us
+    const plus = document.createElement('button')
+    plus.className = 'fighter plus'
+    plus.dataset.id = PERSO_ID
+    plus.style.setProperty('--c', cssColor(this.settings.custom.band))
+    plus.innerHTML = '<span class="plusicon">＋</span><span class="nm">Perso</span>'
+    plus.addEventListener('click', () => this.pick(PERSO_ID))
+    this.el.fighters.appendChild(plus)
+
+    this.buildForge()
   }
 
   private pick(id: string) {
@@ -345,9 +369,62 @@ export class Menu {
     saveSettings(this.settings)
   }
 
+  // ————— Le vestiaire perso —————
+
+  /** Câble les deux palettes et le choix d'ornement. */
+  private buildForge() {
+    for (const [pal, key] of [
+      [this.el.palBody, 'body'],
+      [this.el.palBand, 'band'],
+    ] as const) {
+      for (const c of SKIN_PALETTE) {
+        const sw = document.createElement('button')
+        sw.className = 'swatch'
+        sw.dataset.c = String(c)
+        sw.style.background = cssColor(c)
+        sw.setAttribute('aria-label', cssColor(c))
+        sw.addEventListener('click', () => {
+          this.settings.custom[key] = c
+          this.editCustom()
+        })
+        pal.appendChild(sw)
+      }
+    }
+    for (const b of this.el.forgeHead.querySelectorAll<HTMLElement>('button')) {
+      b.addEventListener('click', () => {
+        this.settings.custom.head = b.dataset.h as Head
+        this.editCustom()
+      })
+    }
+  }
+
+  /** Une retouche du skin : on sauve et on réapplique (aperçu + jeu en direct). */
+  private editCustom() {
+    saveSettings(this.settings)
+    this.applyFighter(PERSO_ID)
+  }
+
+  /** Reflète le skin courant dans les palettes et l'ornement sélectionnés. */
+  private markForge() {
+    const c = this.settings.custom
+    for (const sw of this.el.palBody.querySelectorAll<HTMLElement>('.swatch')) {
+      sw.classList.toggle('on', Number(sw.dataset.c) === c.body)
+    }
+    for (const sw of this.el.palBand.querySelectorAll<HTMLElement>('.swatch')) {
+      sw.classList.toggle('on', Number(sw.dataset.c) === c.band)
+    }
+    for (const b of this.el.forgeHead.querySelectorAll<HTMLElement>('button')) {
+      b.classList.toggle('on', b.dataset.h === c.head)
+    }
+    // La vignette « + » prend la couleur du bandeau perso, même non sélectionnée
+    const plus = this.el.fighters.querySelector<HTMLElement>('.fighter.plus')
+    if (plus) plus.style.setProperty('--c', cssColor(c.band))
+  }
+
   /** Met à jour le perso partout : vignettes, fiche, aperçu 3D, bouton du titre, jeu. */
   private applyFighter(id: string) {
-    const f = fighterById(id)
+    const custom = id === PERSO_ID
+    const f = custom ? customFighter(this.settings.custom) : fighterById(id)
     this.settings.fighter = f.id
 
     for (const b of this.el.fighters.querySelectorAll<HTMLElement>('.fighter')) {
@@ -361,6 +438,10 @@ export class Menu {
     this.el.infoPassive.textContent = f.passive
     this.el.pickJp.textContent = f.jp
     this.el.pickName.textContent = f.name
+
+    // L'éditeur n'apparaît que pour le guerrier perso
+    this.el.forge.classList.toggle('hidden', !custom)
+    this.markForge()
 
     this.showInPreview(f)
     this.cb.onFighter(f)
