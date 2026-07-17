@@ -6,6 +6,7 @@ import { Track, SPRINT_ZONE } from './track'
 import { Input } from './input'
 import { Net, type RemotePlayer } from './net'
 import { Menu, escapeHtml } from './menu'
+import { cssColor } from './roster'
 import type { Quality } from './settings'
 
 /** La longueur de la course, en mètres. Départ → torii sacré. */
@@ -70,6 +71,7 @@ function applyQuality(q: Quality) {
 
 // ————— L'interface —————
 const scoreEl = document.getElementById('score')!
+const meEl = document.getElementById('me')!
 const toastEl = document.getElementById('toast')!
 const countEl = document.getElementById('count')!
 const flashEl = document.getElementById('flash')!
@@ -114,6 +116,20 @@ function rivalLabel() {
   return oppName || 'Rival'
 }
 
+/**
+ * Qui TU es, en haut à gauche : ton guerrier et ton pseudo, dans la couleur de
+ * ton bandeau. Sans pseudo, on affiche le nom du guerrier plutôt qu'un vide.
+ *
+ * Relu à chaque départ : c'est le seul moment qui compte, et le pseudo comme le
+ * perso ont pu changer dans le menu entre deux courses.
+ */
+function updateMeLabel() {
+  const f = menu.fighter
+  // textContent, pas innerHTML : on ne fabrique jamais de HTML avec un pseudo
+  meEl.textContent = `${f.jp} ${menu.settings.name || f.name.split(' ')[0]}`
+  meEl.style.color = cssColor(f.band)
+}
+
 /** Dans les derniers mètres, les taps accélèrent au lieu de lancer un sort. */
 function inSprintZone() {
   return state === 'course' && distance >= COURSE_LENGTH - SPRINT_ZONE
@@ -150,6 +166,7 @@ function startRace(seed: number) {
   countdown = 3
   state = 'depart'
   menu.hide()
+  updateMeLabel()
   countEl.classList.add('show')
   sprintEl.classList.add('hidden')
   progressEl.style.width = '0%'
@@ -280,6 +297,7 @@ const menu = new Menu({
 })
 
 applyQuality(menu.settings.quality)
+updateMeLabel()
 menu.showTitle()
 
 // ————— Les contrôles —————
