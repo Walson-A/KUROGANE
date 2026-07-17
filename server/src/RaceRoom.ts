@@ -49,7 +49,7 @@ export class RaceState extends Schema {
 const COUNTDOWN_MS = 3500
 
 /** ⚠️ À garder en phase avec COURSE_LENGTH dans src/main.ts */
-const COURSE_LENGTH = 600
+const COURSE_LENGTH = 1920
 
 /**
  * Au-delà de TOUT ce que le jeu permet : croisière max 30 m/s × sprint 1,15
