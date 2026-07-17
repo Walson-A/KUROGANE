@@ -17,6 +17,7 @@ export class Player {
   private lane = 1 // 0 = gauche, 1 = centre, 2 = droite
   private vy = 0 // vitesse verticale
   private sliding = 0 // temps de glissade restant
+  private rabSaut = 0 // 🕊️ sauts en réserve pour le vol (Saut de la Grue)
 
   constructor(scene: THREE.Scene) {
     // Le corps : l'armure d'acier noir
@@ -41,6 +42,7 @@ export class Player {
     this.lane = 1
     this.vy = 0
     this.sliding = 0
+    this.rabSaut = 0
     this.mesh.position.set(0, 0, 0)
     this.mesh.scale.y = 1
   }
@@ -66,8 +68,19 @@ export class Player {
     this.lane = Math.min(2, this.lane + 1)
   }
 
-  jump() {
+  /**
+   * Saute. `grue` = le 🕊️ Saut de la Grue est actif : on garde alors UN saut
+   * en réserve, utilisable en plein vol. Le rab est armé au décollage et non
+   * au moment du second appui : activer le parchemin en l'air ne sauve pas un
+   * saut déjà mal parti.
+   */
+  jump(grue = false) {
     if (this.onGround) {
+      this.vy = JUMP_SPEED
+      this.sliding = 0
+      this.rabSaut = grue ? 1 : 0
+    } else if (this.rabSaut > 0) {
+      this.rabSaut--
       this.vy = JUMP_SPEED
       this.sliding = 0
     }

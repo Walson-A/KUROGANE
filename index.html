@@ -22,8 +22,13 @@
       <div id="progressfill"></div>
       <div id="oppmark" class="hidden"></div>
     </div>
+    <!-- Le classement en direct de l'entraînement (rempli en JS) -->
+    <div id="rank" class="hidden"></div>
+
     <div id="count"></div>
     <div id="flash"></div>
+    <!-- 💨 La bombe fumigène : on ne voit plus les obstacles arriver -->
+    <div id="fumee"></div>
     <div id="toast"></div>
 
     <!-- Sprint final : la jauge de martèlement des derniers mètres -->
@@ -45,6 +50,15 @@
       <div id="btns">
         <button id="btnOnline">⚔️ COURSE EN LIGNE</button>
         <button id="btnSolo" class="secondary">ENTRAÎNEMENT SOLO</button>
+      </div>
+
+      <!-- 2e écran : contre combien de rivaux ? (boutons créés en JS) -->
+      <div id="botpick" class="hidden">
+        <div id="botpicklabel">Combien de rivaux ?</div>
+        <div id="botrow"></div>
+        <div id="botnames"></div>
+        <button id="btnGo">⛩️ EN PISTE</button>
+        <button id="btnBack" class="secondary">← Retour</button>
       </div>
     </div>
 

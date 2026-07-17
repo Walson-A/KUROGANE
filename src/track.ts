@@ -26,14 +26,14 @@ interface Obstacle {
 }
 
 /** Un obstacle prévu sur la piste : à quelle distance, quelle ligne, quel type */
-interface PlannedObstacle {
+export interface PlannedObstacle {
   d: number
   lane: number
   kind: Kind
 }
 
 /** Un rouleau posé sur la piste. Le `kind` est déjà tiré, mais invisible. */
-interface PlannedParchemin {
+export interface PlannedParchemin {
   d: number
   lane: number
   kind: ParcheminKind
@@ -136,6 +136,43 @@ export class Track {
     // Les rouleaux sont places APRES les obstacles : ils doivent s'en ecarter
     this.parcheminPlan = buildParcheminPlan(length, seed, this.plan)
     this.parcheminIdx = 0
+  }
+
+  /**
+   * Le plan complet de la course. Les bots le LISENT pour esquiver : ils ne
+   * voient pas la piste, ils la connaissent — comme un pilote son circuit.
+   */
+  obstaclesPrevus(): readonly PlannedObstacle[] {
+    return this.plan
+  }
+
+  /**
+   * Le plan des rouleaux. Les bots le lisent aussi : ils ramassent en passant
+   * dans la bonne ligne. Chacun a son propre exemplaire du parchemin — prendre
+   * un rouleau ne le vole à personne, sinon le joueur devrait courir DERRIÈRE
+   * les bots pour espérer un sort.
+   */
+  parcheminsPrevus(): readonly PlannedParchemin[] {
+    return this.parcheminPlan
+  }
+
+  /**
+   * Le premier MUR qui barre la ligne `lane` entre `d1` et `d2`, ou null.
+   *
+   * C'est le garde-fou du portail 🔮 Onmyōji : il file tout droit et meurt au
+   * premier mur. Comme un mur bouche une ligne donnée environ 1 rangée sur 6 et
+   * que les rangées tombent tous les 13 m, sa portée s'auto-limite à quelques
+   * dizaines de mètres. La piste fait la règle — pas un plafond arbitraire.
+   */
+  premierMur(lane: number, d1: number, d2: number): number | null {
+    let plusProche: number | null = null
+    for (const o of this.plan) {
+      if (o.kind !== 'mur' || o.lane !== lane) continue
+      if (o.d > d1 && o.d <= d2 && (plusProche === null || o.d < plusProche)) {
+        plusProche = o.d
+      }
+    }
+    return plusProche
   }
 
   /**

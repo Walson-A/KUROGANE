@@ -31,8 +31,9 @@ const COUNTDOWN_MS = 3500
 /**
  * Les seuls sorts qu'un client a le droit de relayer.
  * Le serveur ne connaît pas les effets — juste la liste de ce qui est légal.
+ * Doit rester aligné sur OFFENSIFS dans src/parchemin.ts.
  */
-const SORTS_OFFENSIFS = ['kusarigama']
+const SORTS_OFFENSIFS = ['kunai', 'kusarigama', 'fumigene', 'senbon', 'onmyoji']
 
 /**
  * Une salle de course : 2 joueurs, une piste, un vainqueur.
@@ -65,7 +66,13 @@ export class RaceRoom extends Room<{ state: RaceState }> {
       // On ne relaie que des sorts connus : un client bricole est vite arrive
       if (!SORTS_OFFENSIFS.includes(String(data?.kind))) return
 
-      this.broadcast('spell', { kind: String(data.kind) }, { except: client })
+      // `distance` ne sert qu'au portail : c'est la place de l'envoyeur, que
+      // la victime va prendre. Le serveur ne l'interprete pas, il la transmet.
+      this.broadcast(
+        'spell',
+        { kind: String(data.kind), distance: Number(data?.distance) || 0 },
+        { except: client }
+      )
     })
 
     // Un joueur a franchi la ligne !

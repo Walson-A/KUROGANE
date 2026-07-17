@@ -1,20 +1,26 @@
 import * as THREE from 'three'
 import './style.css'
-import { Player } from './player'
+import { Player, LANES } from './player'
 import { Opponent } from './opponent'
 import { Track, SPRINT_ZONE } from './track'
 import { Input } from './input'
 import { Net, type RemotePlayer } from './net'
+import { Bot, PROFILS, BOTS_MAX, construireRangees } from './bot'
 import {
   PARCHEMINS,
   SLOTS_MAX,
   VENT_BOOST,
   VENT_DUREE,
+  GRUE_DUREE,
   KUSARIGAMA_FACTEUR,
   KUSARIGAMA_DUREE,
   ARMURE_SOLIDITE,
   ARMURE_COUT_MUR,
   ARMURE_COUT_PETIT,
+  MIROIR_DUREE,
+  FUMIGENE_DUREE,
+  SENBON_DUREE,
+  ONMYOJI_VITESSE,
   type ParcheminKind,
 } from './parchemin'
 
@@ -63,6 +69,9 @@ const player = new Player(scene)
 const opponent = new Opponent(scene)
 const track = new Track(scene)
 
+// Les 4 rivaux existent dès le départ ; seuls les `nbBots` premiers courent.
+const bots = PROFILS.map((p) => new Bot(scene, p))
+
 // ————— L'interface —————
 const overlay = document.getElementById('overlay')!
 const msg = document.getElementById('msg')!
@@ -73,11 +82,19 @@ const scoreEl = document.getElementById('score')!
 const toastEl = document.getElementById('toast')!
 const countEl = document.getElementById('count')!
 const flashEl = document.getElementById('flash')!
+const fumeeEl = document.getElementById('fumee')!
 const progressEl = document.getElementById('progressfill')!
 const oppmarkEl = document.getElementById('oppmark')!
 const sprintEl = document.getElementById('sprint')!
 const sprintFillEl = document.getElementById('sprintfill')!
 const slotEls = [document.getElementById('slot0')!, document.getElementById('slot1')!]
+const progressbarEl = document.getElementById('progressbar')!
+const botPickEl = document.getElementById('botpick')!
+const botRowEl = document.getElementById('botrow')!
+const botNamesEl = document.getElementById('botnames')!
+const btnGo = document.getElementById('btnGo')!
+const btnBack = document.getElementById('btnBack')!
+const rankEl = document.getElementById('rank')!
 
 const MENU_TEXT = `1 920 m jusqu'au torii sacré. Les obstacles te ralentissent !<br />
   Swipe ⬅️ ➡️ ⬆️ ⬇️ pour esquiver, double-tap : sort.<br />
@@ -111,6 +128,23 @@ let oppFinishedSeen = false
 let sprintTaps: number[] = [] // instants des derniers taps → cadence
 let sprintCharge = 0 // la jauge de sprint, 0 → 1
 let sprintSeen = false // la bannière ne s'annonce qu'une fois
+let rankTimer = 0 // le classement se redessine 10 fois/s, pas 60
+
+// ————— Les rivaux d'entraînement —————
+// Le choix est gardé sur le téléphone : on reprend l'entraînement où on l'a
+// laissé, sans re-cliquer à chaque course.
+const CLE_BOTS = 'kurogane-bots'
+let nbBots = Math.min(BOTS_MAX, Math.max(1, Number(localStorage.getItem(CLE_BOTS)) || 1))
+
+/** Un repère par rival sur la barre de progression, à sa couleur. */
+const botMarks = bots.map((b) => {
+  const el = document.createElement('div')
+  el.className = 'botmark hidden'
+  el.style.background = `#${b.profil.bandeau.toString(16).padStart(6, '0')}`
+  el.title = b.profil.nom
+  progressbarEl.appendChild(el)
+  return el
+})
 
 // ————— Les parchemins —————
 // Une FILE d'attente : on lance toujours le plus ancien ramassé. Impossible de
@@ -119,6 +153,21 @@ let slots: ParcheminKind[] = []
 let ventFin = 0 // 🌀 le dash court jusqu'à cet instant du chrono
 let kusarigamaFin = 0 // ⛓️ on est bridé jusqu'à cet instant
 let armure = 0 // 🛡️ solidité restante de l'armure (0 = pas d'armure)
+let grueFin = 0 // 🕊️ le double saut est armé jusqu'ici
+let miroirFin = 0 // 🪞 la parade est levée jusqu'ici
+let fumigeneFin = 0 // 💨 l'écran est noyé de fumée
+let senbonFin = 0 // ☠️ l'écran ondule
+
+/** 🔮 Le portail en vol : il file tout droit dans SA ligne jusqu'au 1er mur. */
+let portail: { d: number; lane: number } | null = null
+
+// La bille du portail. Un seul maillage recyclé : il n'y en a jamais deux.
+const portailMesh = new THREE.Mesh(
+  new THREE.SphereGeometry(0.42, 14, 14),
+  new THREE.MeshBasicMaterial({ color: 0xb98cff })
+)
+portailMesh.visible = false
+scene.add(portailMesh)
 
 /** Dans les derniers mètres, les taps accélèrent au lieu de lancer un sort. */
 function inSprintZone() {
@@ -139,13 +188,145 @@ function drawSlots(pop = -1) {
   })
 }
 
-/** Applique un sort reçu (ou lancé sur soi). */
-function subirSort(kind: string) {
+/** Le sélecteur 1-2-3-4 du menu : boutons + qui on va affronter. */
+function drawBotPick() {
+  for (const el of botRowEl.children) {
+    el.classList.toggle('actif', Number((el as HTMLElement).dataset.n) === nbBots)
+  }
+  // On annonce les noms : le joueur doit savoir qu'ajouter un rival, c'est
+  // ajouter un rival PLUS FORT — pas juste un de plus.
+  botNamesEl.textContent = PROFILS.slice(0, nbBots)
+    .map((p) => p.nom)
+    .join(' · ')
+}
+
+for (let n = 1; n <= BOTS_MAX; n++) {
+  const b = document.createElement('button')
+  b.className = 'botn'
+  b.dataset.n = String(n)
+  b.textContent = String(n)
+  b.addEventListener('click', () => {
+    nbBots = n
+    localStorage.setItem(CLE_BOTS, String(n))
+    drawBotPick()
+  })
+  botRowEl.appendChild(b)
+}
+drawBotPick()
+
+/**
+ * Le menu a 2 écrans : le choix du mode, puis — pour l'entraînement seulement —
+ * le choix des rivaux. On ne montre jamais les deux : le sélecteur n'a aucun
+ * sens tant qu'on n'a pas dit qu'on s'entraînait.
+ */
+function ecranBots(afficher: boolean) {
+  botPickEl.classList.toggle('hidden', !afficher)
+  btns.classList.toggle('hidden', afficher)
+}
+
+/** Les rivaux qui courent vraiment sur cette course. */
+function botsEnCourse() {
+  return bots.filter((b) => b.actif)
+}
+
+/**
+ * Le classement en direct. On le trie par distance : le meneur en haut. Les
+ * écarts sont donnés EN SECONDES et non en mètres — c'est la seule unité qui
+ * parle au joueur, celle de son chrono et de son record.
+ */
+function drawRank() {
+  const coureurs = [
+    { nom: 'Toi', couleur: 0xc33a2c, d: distance, arrivee: -1, moi: true },
+    ...botsEnCourse().map((b) => ({
+      nom: b.profil.nom,
+      couleur: b.profil.bandeau,
+      d: b.distance,
+      arrivee: b.tempsArrivee,
+      moi: false,
+    })),
+  ]
+
+  // Arrivés d'abord (départagés au chrono), puis les autres à la distance
+  coureurs.sort((a, b) => {
+    if (a.arrivee >= 0 && b.arrivee >= 0) return a.arrivee - b.arrivee
+    if (a.arrivee >= 0) return -1
+    if (b.arrivee >= 0) return 1
+    return b.d - a.d
+  })
+
+  rankEl.innerHTML = coureurs
+    .map((c, i) => {
+      // L'écart est compté à TA vitesse : « ce qu'il me faudrait pour y être »
+      const ecart = (c.d - distance) / Math.max(speed, 1)
+      let gap = ''
+      if (c.arrivee >= 0) gap = '⛩️'
+      else if (!c.moi) gap = `${ecart >= 0 ? '+' : ''}${ecart.toFixed(2)}`
+      const couleur = `#${c.couleur.toString(16).padStart(6, '0')}`
+      return `<div class="rankrow${c.moi ? ' moi' : ''}">
+        <span class="rankpos">${i + 1}</span>
+        <span class="rankdot" style="background:${couleur}"></span>
+        <span class="rankname">${c.nom}</span>
+        <span class="rankgap">${gap}</span>
+      </div>`
+    })
+    .join('')
+}
+
+/**
+ * On encaisse un sort. Si la 🪞 parade est levée, il repart chez son auteur au
+ * lieu de nous toucher — d'où le retour : `true` = renvoyé.
+ */
+function subirSort(kind: string, deBot: Bot | null = null): boolean {
+  if (time < miroirFin) {
+    miroirFin = 0 // la parade est à usage unique
+    toast('🪞 Parade Miroir — renvoyé !')
+    if (online) net.sendSpell(kind)
+    else if (deBot) deBot.subir(kind as ParcheminKind, time)
+    return true
+  }
+
   if (kind === 'kusarigama') {
     kusarigamaFin = time + KUSARIGAMA_DUREE
-    flash()
     toast('⛓️ Kusarigama ! Tu es entravé…')
+  } else if (kind === 'kunai') {
+    // Le seul sort qui fait trébucher sec. L'armure peut encore l'avaler.
+    if (armure > 0) {
+      armure = Math.max(0, armure - ARMURE_COUT_PETIT)
+      toast('🛡️ Le kunai éclate sur l\'armure !')
+      return false
+    }
+    speed = Math.max(6, speed * 0.35)
+    stumble = 1.2
+    toast('🎯 Kunai en pleine course !')
+  } else if (kind === 'fumigene') {
+    fumigeneFin = time + FUMIGENE_DUREE
+    toast('💨 Tu ne vois plus rien !')
+  } else if (kind === 'senbon') {
+    senbonFin = time + SENBON_DUREE
+    toast('☠️ Poison — tout tangue…')
+  } else if (kind === 'onmyoji') {
+    return false // l'échange est traité par l'appelant : il connaît les 2 places
   }
+  flash()
+  return false
+}
+
+/** 🔮 Échange nos places avec `d`. Le sort le plus violent du jeu. */
+function echangerAvec(d: number, qui: string) {
+  distance = d
+  toast(`🔮 Portail ! Tu échanges avec ${qui}`)
+  flash()
+}
+
+/**
+ * Trouve à qui envoyer un sort offensif en solo : le rival le plus proche
+ * DEVANT. Les autres ne te coûtent rien — les saboter serait du gâchis, et le
+ * joueur ne choisit pas sa cible en pleine course.
+ */
+function cibleDevant(): Bot | undefined {
+  return botsEnCourse()
+    .filter((b) => b.tempsArrivee < 0 && b.distance > distance)
+    .sort((a, b) => a.distance - b.distance)[0]
 }
 
 /** Lance le parchemin le plus ancien. Rien à faire s'il n'y en a pas. */
@@ -165,12 +346,39 @@ function lancerParchemin() {
   drawSlots()
   toast(p.cri)
 
+  // ————— Sur soi —————
   if (kind === 'vent') ventFin = time + VENT_DUREE
+  else if (kind === 'grue') grueFin = time + GRUE_DUREE
   else if (kind === 'armure') armure = ARMURE_SOLIDITE
+  else if (kind === 'miroir') miroirFin = time + MIROIR_DUREE
+  else if (kind === 'the') {
+    // 🍵 Le thé lave TOUT d'un coup — y compris ce qu'on vient d'encaisser
+    kusarigamaFin = 0
+    fumigeneFin = 0
+    senbonFin = 0
+  }
+  // ————— 🔮 Le portail : il part, il ne vise pas —————
+  else if (kind === 'onmyoji') {
+    portail = { d: distance, lane: player.currentLane }
+  }
+  // ————— Offensif : ça part chez quelqu'un —————
   else if (p.cible === 'adversaire') {
-    // Le serveur relaie à la victime, qui applique l'effet elle-même
-    if (online) net.sendSpell(kind)
-    else toast('⛓️ Kusarigama… mais tu cours seul !')
+    if (online) {
+      net.sendSpell(kind)
+      return
+    }
+    const cible = cibleDevant()
+    if (!cible) {
+      toast(`${p.icone} …mais tu mènes déjà !`)
+      return
+    }
+    // Sa parade peut nous le renvoyer dans les dents : on l'a bien cherché
+    if (cible.subir(kind, time)) {
+      toast(`🪞 ${cible.profil.nom} te l'a renvoyé !`)
+      subirSort(kind)
+    } else {
+      toast(`${p.icone} sur ${cible.profil.nom} !`)
+    }
   }
 }
 
@@ -178,10 +386,16 @@ function showMenu(html: string) {
   state = 'menu'
   online = false
   opponent.active = false
+  for (const b of bots) {
+    b.actif = false
+    b.cacher()
+  }
+  for (const m of botMarks) m.classList.add('hidden')
   oppmarkEl.classList.add('hidden')
+  rankEl.classList.add('hidden')
   countEl.classList.remove('show')
   msg.innerHTML = html
-  btns.classList.remove('hidden')
+  ecranBots(false) // on revient toujours sur le choix du mode
   overlay.classList.remove('hidden')
   sprintEl.classList.add('hidden')
 }
@@ -205,7 +419,33 @@ function startRace(seed: number) {
   ventFin = 0
   kusarigamaFin = 0
   armure = 0
+  grueFin = 0
+  miroirFin = 0
+  fumigeneFin = 0
+  senbonFin = 0
+  portail = null
+  portailMesh.visible = false
+  fumeeEl.classList.remove('show')
   drawSlots()
+
+  // Les rivaux : uniquement en entraînement (en ligne, l'adversaire est réel).
+  // Ils lisent le MÊME plan d'obstacles et de rouleaux que le joueur.
+  const rangees = construireRangees(track.obstaclesPrevus())
+  const rouleaux = track.parcheminsPrevus()
+  bots.forEach((b, i) => {
+    b.actif = !online && i < nbBots
+    // Graine dérivée : chaque rival tire ses fautes ailleurs dans la suite,
+    // sinon les 4 rateraient exactement les mêmes obstacles au même endroit.
+    b.reset(rangees, rouleaux, (seed ^ ((i + 1) * 0x9e3779b1)) | 0)
+    botMarks[i].classList.toggle('hidden', !b.actif)
+    botMarks[i].style.left = '0%'
+  })
+
+  // Le classement en direct : entraînement seulement (en ligne, il y a le repère)
+  rankEl.classList.toggle('hidden', online)
+  rankTimer = 0
+  if (!online) drawRank()
+
   countdown = 3
   state = 'depart'
   overlay.classList.add('hidden')
@@ -214,6 +454,33 @@ function startRace(seed: number) {
   progressEl.style.width = '0%'
   opponent.active = online
   oppmarkEl.classList.toggle('hidden', !online)
+}
+
+/**
+ * Le verdict de l'entraînement. On le calcule à l'instant où le joueur coupe
+ * la ligne : tout rival qui n'a pas encore fini est forcément derrière lui.
+ */
+function classement(): string {
+  const rivaux = botsEnCourse()
+  if (!rivaux.length) return ''
+
+  const finis = rivaux.filter((b) => b.tempsArrivee >= 0)
+  const rang = 1 + finis.length
+  const medaille = ['🥇', '🥈', '🥉'][rang - 1] ?? '🏁'
+  const place = `${medaille} ${rang === 1 ? '1er' : `${rang}ᵉ`} sur ${rivaux.length + 1}`
+
+  if (finis.length) {
+    // Celui qui vient de te battre : le dernier arrivé juste avant toi. C'est
+    // lui l'objectif de la prochaine course, pas le vainqueur inaccessible.
+    const devant = finis.reduce((a, b) => (a.tempsArrivee > b.tempsArrivee ? a : b))
+    const ecart = (time - devant.tempsArrivee).toFixed(2)
+    return `${place} — ${devant.profil.nom} t'a devancé de ${ecart} s`
+  }
+
+  // Tu mènes : l'écart sur le poursuivant, estimé à son rythme du moment
+  const second = rivaux.reduce((a, b) => (a.distance > b.distance ? a : b))
+  const reste = (COURSE_LENGTH - second.distance) / Math.max(second.speed, 1)
+  return `${place} — tu devances ${second.profil.nom} de ${reste.toFixed(2)} s`
 }
 
 function crossFinishLine() {
@@ -244,7 +511,7 @@ function crossFinishLine() {
   } else {
     bestLine = `Record à battre : ${best.toFixed(2)} s`
   }
-  showMenu(`⛩️ Torii sacré franchi en <b>${t} s</b> !<br>${bestLine}`)
+  showMenu(`⛩️ Torii sacré franchi en <b>${t} s</b> !<br>${classement()}<br>${bestLine}`)
 }
 
 // ————— Le réseau —————
@@ -271,8 +538,12 @@ const net = new Net({
       if (state === 'course') toast('⚔️ L\'adversaire a franchi le torii !')
     }
   },
-  onSpell(kind) {
-    if (state === 'course') subirSort(kind)
+  onSpell(kind, d) {
+    if (state !== 'course') return
+    // 🔮 Le portail est à part : ce n'est pas une affliction, c'est un échange.
+    // La 🪞 parade ne le renvoie pas — on ne renvoie pas un trou dans l'espace.
+    if (kind === 'onmyoji') echangerAvec(d, 'ton rival')
+    else subirSort(kind)
   },
   onResults(iWon, oppTime) {
     const mine = `Ton temps : <b>${time.toFixed(2)} s</b>`
@@ -290,7 +561,10 @@ const net = new Net({
   },
 })
 
-btnSolo.addEventListener('click', () => {
+// L'entraînement passe par l'écran des rivaux : on choisit, PUIS on court
+btnSolo.addEventListener('click', () => ecranBots(true))
+btnBack.addEventListener('click', () => ecranBots(false))
+btnGo.addEventListener('click', () => {
   online = false
   startRace(Math.floor(Math.random() * 2 ** 31))
 })
@@ -304,7 +578,8 @@ btnOnline.addEventListener('click', () => {
 new Input(document.body, {
   left: () => state === 'course' && player.moveLeft(),
   right: () => state === 'course' && player.moveRight(),
-  jump: () => state === 'course' && player.jump(),
+  // 🕊️ Le Saut de la Grue arme un second saut en plein vol
+  jump: () => state === 'course' && player.jump(time < grueFin),
   slide: () => state === 'course' && player.slide(),
   spell: () => state === 'course' && lancerParchemin(),
   // On horodate chaque coup : la boucle de jeu en déduit la cadence
@@ -336,6 +611,8 @@ function tick(now?: number) {
     }
     player.update(dt)
     opponent.update(dt, distance)
+    // Les rivaux sont déjà sur la ligne de départ pendant le décompte
+    for (const b of botsEnCourse()) b.placer(dt, distance)
   } else if (state === 'course') {
     time += dt
 
@@ -363,6 +640,90 @@ function tick(now?: number) {
     player.update(dt)
     opponent.update(dt, distance)
     track.update(dt, speed, distance)
+
+    // Chaque rival court sa propre course, sans jamais toucher à la nôtre
+    bots.forEach((b, i) => {
+      if (!b.actif) return
+      if (b.avance(dt, time, COURSE_LENGTH)) toast(`⛩️ ${b.profil.nom} a franchi le torii !`)
+      b.placer(dt, distance)
+      botMarks[i].style.left = `${Math.min(100, (b.distance / COURSE_LENGTH) * 100)}%`
+
+      // Ses parchemins. Un sort offensif part sur celui qui le précède — le
+      // joueur compris : c'est ce qui rend l'entraînement mordant.
+      const lance = b.jouerParchemin(time)
+      if (!lance) return
+      const devant = [...botsEnCourse(), null].find(
+        (x) => x !== b && (x ? x.distance : distance) > b.distance
+      )
+      if (lance === 'onmyoji') {
+        // Un bot ne vise pas mieux que nous : son portail part droit devant et
+        // meurt au premier mur, exactement comme le nôtre.
+        const mur = track.premierMur(b.ligne, b.distance, distance)
+        if (devant === null && b.ligne === player.currentLane && mur === null && distance > b.distance) {
+          const sien = b.distance
+          b.distance = distance
+          echangerAvec(sien, b.profil.nom)
+        }
+      } else if (devant === null) {
+        // C'est nous qu'il vise
+        if (subirSort(lance, b)) toast(`🪞 Renvoyé à ${b.profil.nom} !`)
+      } else if (devant) {
+        devant.subir(lance, time)
+      }
+    })
+
+    // ————— 🔮 Le portail en vol —————
+    if (portail) {
+      const avant = portail.d
+      portail.d += (speed + ONMYOJI_VITESSE) * dt
+
+      // Un mur l'avale : c'est la piste qui borne sa portée, pas un chiffre
+      const mur = track.premierMur(portail.lane, avant, portail.d)
+      // A-t-il traversé quelqu'un dans sa ligne ? On teste le FRANCHISSEMENT :
+      // à ~83 m/s il parcourt ~1,4 m par image, un test de proximité le raterait.
+      const touche = botsEnCourse().find(
+        (b) => b.ligne === portail!.lane && b.distance > avant && b.distance <= portail!.d
+      )
+
+      if (mur !== null && (!touche || mur < touche.distance)) {
+        portail = null
+        portailMesh.visible = false
+        toast('🔮 Le portail se brise sur un mur…')
+      } else if (touche) {
+        const sien = touche.distance
+        touche.distance = distance
+        portail = null
+        portailMesh.visible = false
+        echangerAvec(sien, touche.profil.nom)
+      } else if (
+        online &&
+        opponent.active &&
+        opponent.target.lane === portail.lane &&
+        opponent.target.distance > avant &&
+        opponent.target.distance <= portail.d
+      ) {
+        // En ligne : on lui envoie NOTRE place, il prendra la sienne. Chacun
+        // calcule l'échange de son côté — à 100 ms de ping, l'écart est de ~3 m.
+        net.sendSpell('onmyoji', distance)
+        const sien = opponent.target.distance
+        portail = null
+        portailMesh.visible = false
+        echangerAvec(sien, 'ton rival')
+      } else if (portail.d - distance > 400) {
+        portail = null // il file dans la brume : personne à échanger
+        portailMesh.visible = false
+      } else {
+        portailMesh.visible = true
+        portailMesh.position.set(LANES[portail.lane], 1.1, -(portail.d - distance))
+      }
+    }
+
+    // 10 fois par seconde suffisent : à 60, on réécrirait le DOM pour rien
+    rankTimer += dt
+    if (!online && rankTimer >= 0.1) {
+      rankTimer = 0
+      drawRank()
+    }
 
     // 📜 Ramassage d'un rouleau — on découvre son contenu maintenant
     const trouve = track.ramasse(player.hitbox())
@@ -401,6 +762,10 @@ function tick(now?: number) {
     }
     // Le perso clignote tant qu'il se relève
     player.mesh.visible = stumble <= 0 || Math.floor(stumble * 12) % 2 === 0
+
+    // 💨 la fumée aveugle, ☠️ le poison fait tanguer la scène
+    fumeeEl.classList.toggle('show', time < fumigeneFin)
+    canvas.classList.toggle('poison', time < senbonFin)
 
     // Interface : chrono + progression
     scoreEl.textContent = `${time.toFixed(1)} s`

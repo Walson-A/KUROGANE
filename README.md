@@ -20,7 +20,8 @@ avec Claude Code comme développeur.
   accélérer et voler la victoire sur le fil ([voir le calibrage](#-le-sprint-final--départager-sans-refaire-la-course))
 - **⚔️ Duel en ligne** : matchmaking automatique, les deux joueurs affrontent
   exactement la même piste, le serveur déclare le vainqueur
-- 🏋️ Mode **entraînement solo** avec record personnel sauvegardé
+- 🏋️ Mode **entraînement solo** contre **1 à 4 rivaux** (voir
+  [le roster](#-les-rivaux-dentraînement)), avec record personnel sauvegardé
 
 ### Contrôles
 
@@ -132,20 +133,61 @@ On en porte **deux au maximum**, et on est obligé de lancer **le plus ancien
 d'abord** : une file d'attente, pas un choix. Impossible de garder le bon sort
 au chaud jusqu'à l'arrivée ; les mains pleines, on ne ramasse plus rien.
 
-| Parchemin | Effet | Réglage | Vaut |
-|---|---|---|---|
-| 🌀 **Vent du Nord** | dash | +35 % pendant 1,5 s | 0,53 s gagnées |
-| 🛡️ **Armure de Fer** | jauge de solidité | 2 barrières **ou** 1 mur | 0,53 à 1,06 s économisées |
-| ⛓️ **Kusarigama** | ralentit le rival | ×0,7 pendant 2 s | 0,60 s perdues par la victime |
+### Sur soi
 
-L'**Armure de Fer** n'est pas un bouclier à usage unique mais une jauge : une
-barrière ou une barre haute ne l'entame qu'à moitié, un **mur** la met en
-pièces d'un coup. Elle peut donc sauver deux petits chocs, ou un seul gros.
+| Parchemin | Effet | Réglage |
+|---|---|---|
+| 🌀 **Vent du Nord** | dash | +35 % pendant 1,5 s → 0,53 s gagnées |
+| 🕊️ **Saut de la Grue** | double saut | un saut en plein vol, pendant 7 s |
+| 🛡️ **Armure de Fer** | jauge de solidité | 2 barrières **ou** 1 mur |
+| 🪞 **Parade Miroir** | renvoie le sort | le prochain sort reçu repart, 8 s |
+| 🍵 **Thé Purificateur** | lave les afflictions | chaîne, fumée et poison d'un coup |
 
-Le dash et le Kusarigama valent **volontairement la même chose** (≈ 0,53 s,
-soit un trébuchement) : sans ça, un seul serait joué et l'autre ferait de la
-figuration. L'armure peut monter jusqu'au double — mais elle ne paie que si on
-se rate vraiment, alors que les deux autres paient à tous les coups.
+### Sabotage
+
+| Parchemin | Effet | Réglage |
+|---|---|---|
+| 🎯 **Kunai Explosif** | fait trébucher sec | 0,53 s, sans esquive possible |
+| ⛓️ **Kusarigama** | ralentit | ×0,7 pendant 2 s → 0,60 s perdues |
+| 💨 **Bombe Fumigène** | aveugle | écran noyé 2,5 s |
+| ☠️ **Senbon Empoisonné** | fait tanguer | écran qui ondule 3 s |
+| 🔮 **Onmyōji** | échange les places | projectile, portée médiane ≈ 53 m |
+
+Le dash, le Kunai et le Kusarigama valent **volontairement la même chose**
+(≈ 0,53 s, soit un trébuchement) : sans ça, un seul serait joué et les autres
+feraient de la figuration.
+
+La **fumée** et le **poison** ne ralentissent pas — ils empêchent de *voir*.
+C'est leur intérêt face au Kusarigama, lui inévitable : un bon joueur peut s'en
+sortir. L'**Armure** peut monter au double d'un trébuchement, mais ne paie que
+si on se rate vraiment.
+
+### 🔮 Onmyōji : pourquoi un échange complet ne casse pas le jeu
+
+Échanger les places viole frontalement la règle « aucun parchemin ne refait la
+course » — un joueur largué pourrait voler la 1re place. Ce qui le rachète :
+**il ne vise pas**. Il file tout droit dans ta ligne et **meurt au premier mur**.
+
+Un mur bouche une ligne donnée environ une rangée sur six, et les rangées
+tombent tous les 13 m. Mesuré sur 1 860 tirs simulés :
+
+| Portée | Part des tirs |
+|---|---|
+| médiane | **53 m** |
+| franchit 100 m | 27,8 % |
+| franchit 200 m | 8,2 % |
+| franchit 400 m | **1,8 %** |
+
+C'est **la piste qui borne le sort**, pas un plafond arbitraire — et il faut
+encore aligner sa ligne sur celle du rival. L'échange se mérite.
+
+### Les bots jouent aussi
+
+Les rivaux d'entraînement ramassent et lancent des parchemins, avec les mêmes
+règles : 2 slots, file d'attente. Un bot n'a pas d'écran, donc la fumée et le
+poison se traduisent chez lui en **malus d'adresse** — il rate ses esquives.
+Même prix payé, par un autre chemin. Sans ça, 🪞 Miroir et 🍵 Thé n'auraient
+servi à rien en solo : deux ramassages blancs sur dix.
 
 Les réglages sont tous dans [`src/parchemin.ts`](src/parchemin.ts).
 
@@ -158,16 +200,56 @@ Côté réseau, le serveur ne fait que **relayer** le Kusarigama : il ne simule
 aucun effet, c'est la victime qui l'applique. Il vérifie juste que le sort
 existe, pour qu'un client bricolé ne puisse pas inventer de sortilège.
 
+## 🥷 Les rivaux d'entraînement
+
+Le menu a 2 écrans : on choisit **ENTRAÎNEMENT SOLO**, *puis* le nombre de
+rivaux — le sélecteur n'a aucun sens tant qu'on n'a pas dit qu'on s'entraînait.
+L'ordre EST la difficulté : un rival de plus est toujours un rival **plus
+fort**, jamais un de plus à doubler. Le choix est gardé sur le téléphone d'une
+course à l'autre.
+
+Pendant la course, un **classement en direct** en haut à gauche donne la
+position de chacun et l'écart **en secondes** — la seule unité qui parle au
+joueur, celle de son chrono et de son record.
+
+Ils ne trichent pas : chacun court avec **la même formule de vitesse que le
+joueur**, sur **la même piste**, et n'a aucun effet sur la sienne. Deux nombres
+suffisent à les régler — `facteur` (leur rythme) et `adresse` (leurs chances
+d'esquiver). Tout est dans [`src/bot.ts`](src/bot.ts).
+
+| Rival | Temps moyen | Ce qu'il t'apprend |
+|---|---|---|
+| 🌸 **Hana** | 85,2 s | la première victoire |
+| 👹 **Oni-Maru** | 80,1 s | tenir sa ligne du début à la fin |
+| 🍃 **Tamae** | 76,2 s | le duel serré — elle gagne 15 % du temps |
+| ☁️ **Kurokumo** | 71,2 s | le boss : imbattable sans les parchemins |
+
+Les temps **encadrent volontairement les 75,07 s** d'une course propre du
+joueur. C'est ce qui rend l'entraînement lisible : Kurokumo ne se bat pas au
+sans-faute — il faut un sans-faute **et** bien jouer ses rouleaux.
+
+### L'esquive scriptée
+
+Un bot n'a **pas de boîte de collision**. Il lit le plan de la piste (généré
+par la graine, comme le reste), décide à chaque rangée quoi faire — s'écarter,
+sauter, glisser — et tire au sort s'il réussit selon son `adresse`. Un raté
+déclenche exactement la pénalité du joueur : vitesse × 0,35.
+
+C'est ce qui rend la difficulté **réglable au lieu d'émerger** : on choisit le
+niveau d'un rival avec deux nombres, pas en bricolant une IA. Le retard causé
+par les fautes est d'ailleurs mesuré et **linéaire** : ≈ 30 × (1 − `adresse`)
+secondes. Sa graine est dérivée de celle de la course : même course rejouée =
+mêmes esquives et mêmes fautes, on peut donc retravailler une course ratée.
+
 ## 🗺️ Roadmap
 
 - [x] Course solo 1 920 m : obstacles, trébuchement, chrono, record
 - [x] Duel en ligne : matchmaking, piste partagée, adversaire visible, victoire
 - [x] 🔥 Sprint final au martèlement, calibré pour départager les ex æquo
-- [x] 📜 Parchemins, 1er lot : Vent du Nord, Armure de Fer, Kusarigama
-- [ ] 📜 Les 7 autres parchemins (Kunai explosif, Bombe fumigène, Onmyōji…)
+- [x] 🥷 Le roster en entraînement : Hana, Oni-Maru, Tamae, et le boss Kurokumo
+- [x] 📜 Les 10 parchemins de la fiche, et des rivaux qui les jouent aussi
 - [ ] 🌍 Mise en ligne publique (Vercel + Railway)
 - [ ] 🎨 Vrais modèles 3D low-poly, sons, décors variés
-- [ ] 🥷 Le roster : Hana, Oni-Maru, Tamae, et le boss Kurokumo
 
 ## 📜 L'univers
 

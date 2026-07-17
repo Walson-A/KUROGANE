@@ -110,6 +110,78 @@ body {
   display: none;
 }
 
+/* Un repère par rival d'entraînement, à sa couleur de bandeau. Un trait fin
+   plutôt qu'une pastille : la barre ne fait que 7 px, tout dépassement serait
+   rogné par son `overflow: hidden`. */
+.botmark {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0%;
+  width: 3px;
+  border-radius: 2px;
+  transform: translateX(-50%);
+  transition: left 0.2s linear;
+}
+.botmark.hidden {
+  display: none;
+}
+
+/* ——— Le classement en direct ——— */
+/* Sous la barre de progression : au-dessus, il chevaucherait le chrono sur
+   les écrans étroits. */
+#rank {
+  position: fixed;
+  top: max(78px, calc(env(safe-area-inset-top) + 64px));
+  left: 14px;
+  width: 142px;
+  padding: 6px;
+  border-radius: 9px;
+  background: rgba(13, 16, 28, 0.55);
+  border: 1px solid rgba(61, 69, 96, 0.7);
+  font-size: 0.74rem;
+  font-variant-numeric: tabular-nums;
+  text-shadow: 0 2px 6px rgba(0, 0, 0, 0.7);
+  pointer-events: none;
+}
+#rank.hidden {
+  display: none;
+}
+.rankrow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 4px;
+  border-radius: 5px;
+  color: #9aa4c0;
+}
+/* Ta ligne ressort : en course, on doit la trouver sans la chercher */
+.rankrow.moi {
+  background: rgba(226, 75, 58, 0.22);
+  color: #f0e8d8;
+  font-weight: 700;
+}
+.rankpos {
+  width: 10px;
+  text-align: right;
+  opacity: 0.75;
+}
+.rankdot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex: none;
+}
+.rankname {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.rankgap {
+  opacity: 0.9;
+}
+
 /* ——— Compte à rebours 3, 2, 1, GO ! ——— */
 #count {
   position: fixed;
@@ -139,6 +211,44 @@ body {
 #flash.show {
   opacity: 1;
   transition: opacity 0.05s;
+}
+
+/* ——— 💨 Bombe fumigène : la nuit tombe d'un coup ———
+   Elle n'entre pas jusqu'aux bords : on garde ses lignes, on perd la distance.
+   Aveugler complètement serait injouable, pas difficile. */
+#fumee {
+  position: fixed;
+  inset: 0;
+  background: radial-gradient(ellipse at 50% 70%, rgba(20, 22, 32, 0.35) 20%, rgba(14, 16, 24, 0.97) 75%);
+  opacity: 0;
+  transition: opacity 0.45s;
+  pointer-events: none;
+}
+#fumee.show {
+  opacity: 1;
+  transition: opacity 0.15s;
+}
+
+/* ——— ☠️ Senbon empoisonné : tout tangue ———
+   On fait onduler le CANVAS et non le HUD : le chrono et les slots doivent
+   rester lisibles, sinon c'est le joueur qu'on rend malade, pas Yasuke. */
+#game.poison {
+  animation: nausee 1.6s ease-in-out infinite;
+}
+@keyframes nausee {
+  0%,
+  100% {
+    transform: rotate(0deg) scale(1);
+  }
+  25% {
+    transform: rotate(1.1deg) scale(1.035);
+  }
+  50% {
+    transform: rotate(0deg) scale(1.05);
+  }
+  75% {
+    transform: rotate(-1.1deg) scale(1.035);
+  }
 }
 
 /* ——— Petits messages temporaires ——— */
@@ -273,4 +383,50 @@ body {
 }
 #overlay button:active {
   transform: scale(0.96);
+}
+
+/* ——— L'écran de choix des rivaux (2e écran du menu) ——— */
+#botpick {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  margin-top: 14px;
+}
+#botpick.hidden {
+  display: none;
+}
+#botpicklabel {
+  font-size: 0.7rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: #6b7594;
+}
+#botrow {
+  display: flex;
+  gap: 8px;
+}
+/* Deux id + une classe : on passe volontairement devant `#overlay button` */
+#overlay #botrow .botn {
+  width: 46px;
+  height: 46px;
+  padding: 0;
+  font-size: 1rem;
+  border-radius: 9px;
+  background: rgba(21, 26, 44, 0.6);
+  border: 1px solid #3d4560;
+  color: #6b7594;
+  box-shadow: none;
+}
+#overlay #botrow .botn.actif {
+  border-color: #d6ac5a;
+  color: #f0e8d8;
+  box-shadow: 0 0 12px rgba(214, 172, 90, 0.35);
+}
+/* Les noms changent à chaque clic : une hauteur fixe évite que le menu saute */
+#botnames {
+  font-size: 0.8rem;
+  color: #f0e8d8;
+  opacity: 0.75;
+  min-height: 1.2em;
 }

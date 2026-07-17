@@ -16,7 +16,8 @@ export interface NetCallbacks {
   onCountdown(seed: number): void // adversaire trouvé ! 3, 2, 1…
   onGo(): void // GO officiel du serveur
   onOpponent(op: RemotePlayer | null): void // nouvelles infos sur l'adversaire
-  onSpell(kind: string): void // l'adversaire nous a lancé un sort !
+  /** L'adversaire nous a lancé un sort ! `distance` = sa place (portail seul) */
+  onSpell(kind: string, distance: number): void
   onResults(iWon: boolean, oppTime: number): void // fin de course
   onError(message: string): void // serveur injoignable, déconnexion…
 }
@@ -75,7 +76,9 @@ export class Net {
 
     this.room.onStateChange((state: any) => this.readState(state))
     // Un sort nous arrive dessus : le serveur l'a relayé depuis l'adversaire
-    this.room.onMessage('spell', (msg: any) => this.cb.onSpell(String(msg?.kind ?? '')))
+    this.room.onMessage('spell', (msg: any) =>
+      this.cb.onSpell(String(msg?.kind ?? ''), Number(msg?.distance) || 0)
+    )
     this.room.onError(() => this.cb.onError('Erreur de connexion.'))
     this.room.onLeave(() => {
       this.room = null
@@ -123,9 +126,13 @@ export class Net {
     this.room?.send('progress', p)
   }
 
-  /** Envoie un sort offensif dans les pattes de l'adversaire */
-  sendSpell(kind: string) {
-    this.room?.send('spell', { kind })
+  /**
+   * Envoie un sort offensif dans les pattes de l'adversaire.
+   * `distance` ne sert qu'au 🔮 portail : c'est NOTRE place, celle qu'il va
+   * prendre. Les autres sorts n'en ont pas besoin.
+   */
+  sendSpell(kind: string, distance = 0) {
+    this.room?.send('spell', { kind, distance })
   }
 
   /** Prévient le serveur : j'ai franchi la ligne ! */
