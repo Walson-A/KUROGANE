@@ -128,9 +128,9 @@ la [doc Colyseus](https://docs.colyseus.io/state), et
 | 1 | **Actions en événements instantanés** | Esquives du rival nettes (−50 à −80 ms) | S | ✅ **fait** (17/07) |
 | 2 | **Reconnexion mobile** | Écran verrouillé ≠ défaite | M | ✅ **fait** (17/07) |
 | 3 | **Synchro d'horloge** (NTP-style) | Extrapolation moins sensible à la gigue | S | ✅ **fait** (17/07) |
-| 4 | **Lag compensation** (Valve) | Nécessaire quand les sorts viseront l'autre | M | 📜 avec les sorts |
-| 5 | Validation serveur (anti-triche) | Classements fiables | M | si jeu public |
-| 6 | WebTransport (datagrammes) | Moins de blocage sur réseaux avec pertes | L | plus tard |
+| 4 | **Lag compensation** (Valve) | Nécessaire quand les sorts viseront l'autre | M | 🧱 **fondations posées** (17/07) |
+| 5 | Validation serveur (anti-triche) | Classements fiables | M | ✅ **fait** (17/07) |
+| 6 | WebTransport (datagrammes) | Moins de blocage sur réseaux avec pertes | L | 🚫 **bloqué par l'hébergement** |
 
 **1. Actions en événements instantanés — FAIT.** La
 [doc Colyseus](https://docs.colyseus.io/state) est claire : l'état est
@@ -166,19 +166,45 @@ alors **horodatée à l'envoi** (`at`, en heure serveur — la référence commu
 aux deux joueurs) : l'extrapolation utilise l'âge exact du message au lieu
 de « heure d'arrivée + RTT/2 », et la gigue ne la fait plus respirer.
 
-**4. Lag compensation.** Le jour où un kunai « touche » l'adversaire, se
-poser la question de [Valve](https://www.gabrielgambetta.com/lag-compensation.html) :
-le lanceur visait la position d'il y a 100 ms. Le serveur devra juger le
-coup dans le passé (ou, plus simple pour nous : le sort annonce sa cible et
-l'effet est validé par le serveur, sans hitbox précise).
+**4. Lag compensation — FONDATIONS POSÉES.** Le jour où un kunai « touche »
+l'adversaire, question de [Valve](https://www.gabrielgambetta.com/lag-compensation.html) :
+le lanceur visait la position d'il y a 100 ms — il faut juger le coup **dans
+le passé**. Tout est prêt côté serveur ([RaceRoom.ts](../server/src/RaceRoom.ts)) :
+chaque position reçue alimente un **historique de 2 s par joueur**, et
+l'API **`positionAt(sessionId, t)`** répond « où était-il à l'heure serveur
+`t` ? » (interpolé entre les échantillons). Grâce à la synchro d'horloge, le
+lanceur horodate sa visée dans la même horloge → le serveur rejuge le coup à
+cet instant-là exactement. 📜 **Agents des parchemins : c'est votre API.**
 
-**6. WebTransport.** Nouveauté : c'est
+**5. Validation serveur (anti-triche) — FAIT.** Trois barrières, toutes
+appuyées sur l'horloge du serveur (`raceStartAt`, posée au GO) :
+
+- **La distance ne ment pas** : elle ne peut ni reculer, ni dépasser
+  `temps écoulé × 45 m/s` (au-delà de tout ce que le jeu permet, sprint
+  compris). Le tricheur qui annonce 600 m à la 3ᵉ seconde est ramené au
+  plafond, silencieusement.
+- **« J'ai fini » doit être crédible** : refusé si le temps écoulé rend
+  l'arrivée physiquement impossible, ou si les positions reçues ne
+  montrent pas ~600 m parcourus.
+- **Le chrono retenu est honnête** : celui du client s'il colle à l'horloge
+  du serveur (à la latence près), sinon celui du serveur. Annoncer « 2 s »
+  ne sert à rien.
+
+Vérifié par le test simulé : téléportation plafonnée, victoire éclair
+ignorée, chrono menteur corrigé, chrono honnête conservé.
+
+**6. WebTransport — BLOQUÉ, et pas par nous.** Côté navigateurs c'est
 [Baseline depuis mars 2026](https://webrtc.ventures/2026/04/webtransport-is-now-baseline-what-it-means-for-real-time-media/)
-(Safari 26.4 a enfin suivi). Datagrammes non fiables = plus de blocage TCP
-quand un paquet se perd (P99 de latence divisé par ~8 sur réseau avec
-pertes). Pertinent le jour où des joueurs jouent en 4G instable — pas tant
-que vous jouez en wifi. À réévaluer quand Colyseus stabilisera son transport
-WebTransport.
+(Safari 26.4 a enfin suivi), et les datagrammes non fiables supprimeraient
+le blocage TCP sur pertes de paquets. MAIS, vérifié le 17/07/2026 :
+
+1. le [transport WebTransport de Colyseus](https://docs.colyseus.io/server/transport/webtransport)
+   est officiellement **expérimental** (« pas testé au combat ») ;
+2. surtout, [Railway n'accepte pas le trafic UDP entrant](https://station.railway.com/questions/adding-inbound-udp-fad19847)
+   — or WebTransport = QUIC = UDP. **Aucun code ne peut contourner ça.**
+
+À réévaluer seulement si l'hébergement change (Fly.io accepte l'UDP) ET que
+le transport Colyseus sort de l'expérimental. D'ici là : non-sujet.
 
 ### La limite qu'aucun code ne franchira
 
@@ -192,10 +218,22 @@ Un sort qui affecte l'adversaire (kunai, brouillard…) doit passer par le
 serveur — jamais de client à client :
 
 ```
-lanceur ──'cast' {sort}──▶ RaceRoom (valide : possède-t-il le sort ? cooldown ?)
-                               │ broadcast 'spell' {sort, lanceur}
-                  les DEUX clients jouent l'effet, chacun chez soi
+lanceur ──'cast' {sort, at}──▶ RaceRoom
+                                 │ 1. valide : possède-t-il le sort ? cooldown ?
+                                 │ 2. si le sort VISE : positionAt(cible, at)
+                                 │    → où était la cible quand il a visé ?
+                                 │ 3. broadcast 'spell' {sort, lanceur, touché?}
+                    les DEUX clients jouent l'effet, chacun chez soi
 ```
 
 Le serveur valide (anti-triche), les clients affichent. Même logique que le
 reste : **le serveur décide, les clients racontent et dessinent.**
+
+Boîte à outils déjà en place pour vous :
+- **`positionAt(sessionId, t)`** — la position d'un joueur à l'heure serveur
+  `t` (lag compensation, 2 s d'historique) ;
+- **l'horodatage `at`** — les clients savent estampiller leurs messages en
+  heure serveur (`net.serverNow()`), la synchro d'horloge tourne déjà ;
+- **le canal messages** — pour tout effet instantané (cf. « Les deux
+  canaux ») ; ajoutez votre type à la liste blanche `ACTIONS` ou créez un
+  message `cast` dédié, mais ne mettez JAMAIS un événement dans le schema.

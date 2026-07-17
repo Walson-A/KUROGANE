@@ -36,6 +36,19 @@ export class RaceState extends Schema {
 /** Durée du décompte 3, 2, 1, GO (ms) — un poil plus long que côté client */
 const COUNTDOWN_MS = 3500
 
+/** ⚠️ À garder en phase avec COURSE_LENGTH dans src/main.ts */
+const COURSE_LENGTH = 600
+
+/**
+ * Au-delà de TOUT ce que le jeu permet : croisière max 30 m/s × sprint 1,15
+ * ≈ 34,5. La marge évite de punir un client honnête ; un tricheur, lui,
+ * voudra annoncer bien plus que 45.
+ */
+const MAX_SPEED = 45
+
+/** Profondeur de l'historique des positions (ms) — cf. positionAt() */
+const HISTORY_MS = 2000
+
 /** Les guerriers que le serveur accepte. Tout le reste → Yasuke. */
 const FIGHTERS = ['yasuke', 'hana', 'onimaru', 'tamae']
 const MAX_NAME = 12
@@ -64,6 +77,18 @@ function cleanFighter(v: unknown): string {
 export class RaceRoom extends Room<{ state: RaceState }> {
   maxClients = 2
   state = new RaceState()
+
+  /** Heure (Date.now) du GO — la référence de TOUTES les validations anti-triche */
+  private raceStartAt = 0
+
+  /**
+   * L'historique des positions de chaque joueur sur les 2 dernières secondes
+   * — la fondation de la LAG COMPENSATION (cf. positionAt, pour les sorts).
+   */
+  private history = new Map<
+    string,
+    { t: number; distance: number; lane: number; y: number }[]
+  >()
 
   onCreate() {
     this.state.seed = Math.floor(Math.random() * 2 ** 31)
@@ -97,17 +122,43 @@ export class RaceRoom extends Room<{ state: RaceState }> {
       if (!p || this.state.phase !== 'racing' || p.finished) return
       p.lane = Math.max(0, Math.min(2, Number(data.lane) || 0))
       p.y = Number(data.y) || 0
-      p.distance = Number(data.distance) || 0
       p.sliding = !!data.sliding
       p.at = Number(data.at) || 0 // l'heure serveur d'envoi, estimée par le client
+
+      // ————— Anti-triche : la distance annoncée doit être crédible —————
+      // Elle ne peut ni reculer, ni dépasser ce qui est physiquement possible
+      // depuis le GO. Un client modifié qui crie « 600 m ! » à la 3ᵉ seconde
+      // est ramené au plafond — silencieusement, sans le déconnecter.
+      const elapsed = (Date.now() - this.raceStartAt) / 1000
+      const claimed = Number(data.distance) || 0
+      p.distance = Math.min(Math.max(claimed, p.distance), elapsed * MAX_SPEED)
+
+      // ————— L'historique des positions (lag compensation) —————
+      const h = this.history.get(client.sessionId)
+      if (h) {
+        const t = Date.now()
+        h.push({ t, distance: p.distance, lane: p.lane, y: p.y })
+        while (h.length > 0 && h[0].t < t - HISTORY_MS) h.shift()
+      }
     })
 
     // Un joueur a franchi la ligne !
     this.onMessage('finished', (client, data: any) => {
       const p = this.state.players.get(client.sessionId)
       if (!p || p.finished || this.state.phase !== 'racing') return
+
+      // ————— Anti-triche : un « j'ai fini ! » doit être crédible —————
+      const serverElapsed = (Date.now() - this.raceStartAt) / 1000
+      // Finir plus vite que la vitesse max le permet ? Physiquement impossible.
+      if (serverElapsed < COURSE_LENGTH / MAX_SPEED) return
+      // Et il faut avoir réellement parcouru la course (positions à l'appui).
+      if (p.distance < COURSE_LENGTH * 0.95) return
+
       p.finished = true
-      p.time = Number(data.time) || 0
+      // Le chrono retenu : celui du client s'il colle à NOTRE horloge (l'écart
+      // normal, c'est juste la latence) — sinon le nôtre, qui ne ment pas.
+      const claimed = Number(data.time) || 0
+      p.time = Math.abs(claimed - serverElapsed) < 1.5 ? claimed : serverElapsed
 
       // Le premier arrivé est le vainqueur
       if (!this.state.winner) this.state.winner = client.sessionId
@@ -123,6 +174,7 @@ export class RaceRoom extends Room<{ state: RaceState }> {
     p.name = cleanName(options?.name)
     p.fighter = cleanFighter(options?.fighter)
     this.state.players.set(client.sessionId, p)
+    this.history.set(client.sessionId, [])
     console.log(
       `⚔️  ${p.name || 'anonyme'} (${p.fighter}) rejoint la course (${this.state.players.size}/2)`
     )
@@ -133,6 +185,7 @@ export class RaceRoom extends Room<{ state: RaceState }> {
       this.state.phase = 'countdown'
       this.clock.setTimeout(() => {
         this.state.phase = 'racing'
+        this.raceStartAt = Date.now() // top départ : la référence anti-triche
       }, COUNTDOWN_MS)
     }
   }
@@ -158,9 +211,42 @@ export class RaceRoom extends Room<{ state: RaceState }> {
     console.log(`📡 ${client.sessionId} est revenu !`)
   }
 
+  /**
+   * ————— LAG COMPENSATION : l'API des futurs sorts 📜 —————
+   * Où était ce joueur à l'heure serveur `t` (ms) ? Interpolé entre les deux
+   * échantillons qui encadrent t, sur 2 s d'historique.
+   *
+   * Pourquoi : quand un kunai « touche ce que le lanceur voyait », il faut
+   * juger le coup À L'INSTANT DE LA VISÉE (l'horodatage `at` du lanceur, qui
+   * partage notre horloge grâce à la synchro NTP) — pas à l'instant où son
+   * message nous parvient, 30 à 100 ms plus tard. C'est la technique des
+   * shooters (Valve) appliquée à notre course.
+   */
+  positionAt(sessionId: string, t: number): { distance: number; lane: number; y: number } | null {
+    const h = this.history.get(sessionId)
+    if (!h || h.length === 0) return null
+    if (t <= h[0].t) return h[0]
+    const last = h[h.length - 1]
+    if (t >= last.t) return last
+    for (let i = 1; i < h.length; i++) {
+      if (h[i].t >= t) {
+        const a = h[i - 1]
+        const b = h[i]
+        const k = (t - a.t) / Math.max(1, b.t - a.t)
+        return {
+          distance: a.distance + (b.distance - a.distance) * k,
+          lane: k < 0.5 ? a.lane : b.lane, // la ligne ne s'interpole pas : on prend la plus proche
+          y: a.y + (b.y - a.y) * k,
+        }
+      }
+    }
+    return last
+  }
+
   onLeave(client: Client) {
     console.log(`👋 ${client.sessionId} quitte la course`)
     this.state.players.delete(client.sessionId)
+    this.history.delete(client.sessionId)
 
     // Abandon en pleine course → victoire par forfait pour celui qui reste
     if (this.state.phase === 'countdown' || this.state.phase === 'racing') {

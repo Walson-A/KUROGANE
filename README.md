@@ -147,6 +147,51 @@ permet de le distinguer même si vous avez choisi le même perso.
 > qui marche *maintenant* (la glissade), et héritera de l'autre le jour où les
 > sorts arriveront.
 
+## 🎌 Le menu & les réglages
+
+Cinq écrans, un seul visible à la fois — un petit routeur dans
+[`menu.ts`](src/menu.ts) : **titre**, **choix du guerrier** (avec l'aperçu 3D
+qui tourne), **options**, **comment jouer**, et l'écran de **message**
+(recherche d'adversaire, verdict de fin de course).
+
+La recherche d'adversaire a un bouton **Annuler** : sans lui, une fois lancée,
+on ne pouvait plus en sortir sans recharger la page.
+
+Les réglages sont gardés sur le téléphone ([`settings.ts`](src/settings.ts)) et
+relus au démarrage. Tout est **validé au passage** : une vieille sauvegarde ou
+un `localStorage` bidouillé à la main ne doit pas pouvoir casser le jeu.
+
+### Le pseudo
+
+Saisi dans les options, il s'affiche en course en haut à gauche sous le chrono,
+**dans la couleur du bandeau de ton guerrier** (`弥助 Yasuke`). Sans pseudo, on
+montre le nom du guerrier plutôt qu'un vide. En duel il voyage par le réseau et
+apparaît chez l'adversaire, dans le HUD : « Noslow +12 m ».
+
+> ⚠️ **Le pseudo de l'autre joueur n'est jamais du HTML.** Le serveur le coupe à
+> 12 caractères, et il est **échappé à l'affichage** (`escapeHtml`, dans
+> [menu.ts](src/menu.ts)). Sans ça, quelqu'un pouvait s'appeler
+> `<img src=x onerror=…>` et faire exécuter son code sur ton téléphone. Partout
+> où c'est possible on passe par `textContent`, qui ne *peut pas* fabriquer une
+> balise.
+
+### La qualité graphique
+
+| Réglage | Pixels dessinés |
+|---|---|
+| **Auto** | ×2 sur PC, ×1,5 sur mobile |
+| **Belle** | ×2 |
+| **Fluide** | ×1 — 4 fois moins de pixels qu'en « Belle » |
+
+Elle ne joue **que** sur le nombre de pixels (`pixelRatio`) : c'est de loin le
+plus gros coût sur mobile, et diviser la densité par 2, c'est 4 fois moins de
+pixels à dessiner.
+
+On ne touche **surtout pas à la brume**, alors que la rapprocher ferait gagner
+des images/s : c'est elle qui décide à quelle distance on découvre les
+obstacles. Moins de brume = moins de temps pour réagir. Ce serait un réglage de
+**difficulté déguisé en réglage graphique** — et un désavantage en duel.
+
 ## 🔥 Le sprint final : départager sans refaire la course
 
 Sur les **120 derniers mètres**, marteler l'écran fait accélérer. La zone est
