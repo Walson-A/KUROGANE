@@ -58,11 +58,14 @@ const DECLENCHE_GLISSADE = 0.26
  * ————— Le calibrage (200 courses simulées avec ce code) —————
  * Les temps encadrent volontairement les 75,07 s d'une course propre : trois
  * rivaux rattrapables, un boss qui exige un sans-faute AVEC les parchemins.
+ * Mesuré rouleaux compris : les ramasser ne déplace un rival que de ~0,1 s,
+ * parce qu'il n'en trouve que dans sa ligne et que ses sorts partent surtout
+ * dans les pattes du joueur.
  *
- *   Hana      85,2 s (81,7 – 88,3)   la première victoire
- *   Oni-Maru  80,1 s (77,5 – 82,6)   il faut déjà tenir sa ligne
- *   Tamae     76,2 s (74,5 – 79,7)   duel serré : elle gagne 15 % du temps
- *   Kurokumo  71,2 s (70,8 – 73,4)   imbattable en course propre — le boss
+ *   Hana      85,2 s (81,7 – 89,0)   la première victoire
+ *   Oni-Maru  80,1 s (77,5 – 83,6)   il faut déjà tenir sa ligne
+ *   Tamae     76,0 s (74,5 – 79,7)   duel serré : elle gagne 20 % du temps
+ *   Kurokumo  71,1 s (70,8 – 73,4)   imbattable en course propre — le boss
  */
 export interface Profil {
   nom: string

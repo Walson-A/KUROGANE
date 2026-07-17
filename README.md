@@ -221,12 +221,16 @@ d'esquiver). Tout est dans [`src/bot.ts`](src/bot.ts).
 |---|---|---|
 | 🌸 **Hana** | 85,2 s | la première victoire |
 | 👹 **Oni-Maru** | 80,1 s | tenir sa ligne du début à la fin |
-| 🍃 **Tamae** | 76,2 s | le duel serré — elle gagne 15 % du temps |
-| ☁️ **Kurokumo** | 71,2 s | le boss : imbattable sans les parchemins |
+| 🍃 **Tamae** | 76,0 s | le duel serré — elle gagne 20 % du temps |
+| ☁️ **Kurokumo** | 71,1 s | le boss : imbattable sans les parchemins |
 
 Les temps **encadrent volontairement les 75,07 s** d'une course propre du
 joueur. C'est ce qui rend l'entraînement lisible : Kurokumo ne se bat pas au
 sans-faute — il faut un sans-faute **et** bien jouer ses rouleaux.
+
+Mesuré sur 200 courses, **rouleaux compris**. Les ramasser ne déplace un rival
+que de ~0,1 s : il n'en trouve que dans sa ligne, et ses sorts de sabotage
+partent surtout dans les pattes du joueur plutôt que de le faire avancer, lui.
 
 ### L'esquive scriptée
 
