@@ -179,12 +179,13 @@ choisit le style de jeu** —
 
 | Ornement | Style emprunté |
 |---|---|
-| 👤 aucun | l'équilibre de **Yasuke** (aucun point faible) |
+| 👁️ aucun | les réflexes de **Sasuke** (esquive éclair, fragile) |
 | 🐂 cornes | la peau d'oni d'**Oni-Maru** (encaisse, mais lourd) |
 | 🦊 oreilles | la ruse de **Tamae** (glissade longue, saut court) |
 
 « Choisis ton ornement, choisis ton jeu. » Les couleurs, elles, restent
-purement cosmétiques.
+purement cosmétiques. Sasuke n'est **pas un guerrier jouable** — ses réglages ne
+servent que de style par défaut au « + ».
 
 Tout est dans [`src/roster.ts`](src/roster.ts). Deux règles d'équité s'appliquent :
 

@@ -1,6 +1,6 @@
 import * as THREE from 'three'
 
-export type FighterId = 'yasuke' | 'hana' | 'onimaru' | 'tamae' | 'kurokumo' | 'perso'
+export type FighterId = 'yasuke' | 'hana' | 'onimaru' | 'tamae' | 'sasuke' | 'kurokumo' | 'perso'
 
 /** L'ornement de tête d'un guerrier — le « chapeau » de la personnalisation. */
 export type Head = 'rien' | 'cornes' | 'oreilles'
@@ -126,6 +126,26 @@ export const ROSTER: Fighter[] = [
     grip: 0.35,
   },
   {
+    // Sasuke n'est PAS un guerrier jouable (pickable: false → aucune vignette).
+    // Il ne sert que de MODÈLE DE STYLE au perso « + » sans ornement (cf.
+    // CUSTOM_STYLE) : ses réglages vivent ici, adressables par `fighterById`.
+    id: 'sasuke',
+    name: 'Sasuke',
+    jp: '佐助',
+    role: 'Vif · fragile',
+    blurb: "Le ninja au Sharingan — le style par défaut du perso « + ».",
+    passive: 'Œil du Sharingan — change de ligne en un éclair. Mais chaque choc lui coûte cher.',
+    pickable: false,
+    body: 0x1c2333, // bleu nuit
+    band: 0xc0392b, // rouge Sharingan
+    width: 0.66,
+    head: 'rien',
+    jump: 1,
+    laneSpeed: 1.4, // l'esquive la plus vive — sa signature
+    slide: 1,
+    grip: 0.25, // …payée par le grip le plus faible : un choc le sonne
+  },
+  {
     id: 'kurokumo',
     name: 'Kurokumo',
     jp: '黒雲',
@@ -148,7 +168,7 @@ export const ROSTER: Fighter[] = [
 //
 // Un skin que le joueur forge : deux couleurs ET un ornement de tête. Mais
 // l'ornement n'est PAS que décoratif : il décide du STYLE de jeu du perso.
-//   · sans ornement → l'équilibre de Yasuke (la référence, aucun point faible)
+//   · sans ornement → les réflexes de Sasuke (esquive éclair, fragile)
 //   · cornes 🐂 → la peau d'oni d'Oni-Maru (encaisse, mais lourd)
 //   · oreilles 🦊 → la ruse de Tamae (glissade longue, saut court)
 // « Choisis ton ornement, choisis ton jeu. »
@@ -157,7 +177,7 @@ export const PERSO_ID: FighterId = 'perso'
 
 /** L'ornement de tête → le guerrier dont le perso emprunte les réglages. */
 export const CUSTOM_STYLE: Record<Head, FighterId> = {
-  rien: 'yasuke',
+  rien: 'sasuke',
   cornes: 'onimaru',
   oreilles: 'tamae',
 }
@@ -192,7 +212,7 @@ function passifPerso(head: Head): string {
     return '🐂 Cornes d\'oni — garde bien plus de vitesse quand il trébuche. Mais lourd, esquive lente.'
   if (head === 'oreilles')
     return '🦊 Oreilles de renard — glissade très longue, esquive vive. Mais saut court.'
-  return '👤 Sans ornement — équilibré comme Yasuke : aucun bonus, mais aucun point faible.'
+  return '👁️ Œil du Sharingan — change de ligne en un éclair. Mais chaque choc lui coûte cher.'
 }
 
 /**
