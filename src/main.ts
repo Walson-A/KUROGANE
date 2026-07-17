@@ -6,7 +6,6 @@ import { Track, SPRINT_ZONE } from './track'
 import { Input } from './input'
 import { Net, type RemotePlayer } from './net'
 import { Menu, escapeHtml } from './menu'
-import { cssColor } from './roster'
 import type { Quality } from './settings'
 
 /** La longueur de la course, en mètres. Départ → torii sacré. */
@@ -71,7 +70,6 @@ function applyQuality(q: Quality) {
 
 // ————— L'interface —————
 const scoreEl = document.getElementById('score')!
-const meEl = document.getElementById('me')!
 const toastEl = document.getElementById('toast')!
 const countEl = document.getElementById('count')!
 const flashEl = document.getElementById('flash')!
@@ -80,6 +78,7 @@ const oppmarkEl = document.getElementById('oppmark')!
 const gapEl = document.getElementById('gap')!
 const sprintEl = document.getElementById('sprint')!
 const sprintFillEl = document.getElementById('sprintfill')!
+const sprintLabelEl = document.getElementById('sprintlabel')!
 
 let toastTimer = 0
 function toast(text: string) {
@@ -117,22 +116,24 @@ function rivalLabel() {
 }
 
 /**
- * Qui TU es, en haut à gauche : ton guerrier et ton pseudo, dans la couleur de
- * ton bandeau. Sans pseudo, on affiche le nom du guerrier plutôt qu'un vide.
- *
+ * Ton pseudo, sur ton étiquette au-dessus de ta tête.
  * Relu à chaque départ : c'est le seul moment qui compte, et le pseudo comme le
  * perso ont pu changer dans le menu entre deux courses.
  */
 function updateMeLabel() {
-  const f = menu.fighter
-  // textContent, pas innerHTML : on ne fabrique jamais de HTML avec un pseudo
-  meEl.textContent = `${f.jp} ${menu.settings.name || f.name.split(' ')[0]}`
-  meEl.style.color = cssColor(f.band)
+  player.setName(menu.settings.name)
 }
 
-/** Dans les derniers mètres, les taps accélèrent au lieu de lancer un sort. */
+/**
+ * Quand les taps servent à MARTELER plutôt qu'à esquiver :
+ * - le sprint final (les derniers mètres)
+ * - le décompte 3-2-1 : le DÉPART CANON — plus tu martèles, plus tu pars vite
+ */
 function inSprintZone() {
-  return state === 'course' && distance >= COURSE_LENGTH - SPRINT_ZONE
+  return (
+    (state === 'course' && distance >= COURSE_LENGTH - SPRINT_ZONE) ||
+    state === 'depart'
+  )
 }
 
 /** Retour à l'écran-titre. `banner` : le mot de la fin de la course précédente. */
@@ -169,7 +170,10 @@ function startRace(seed: number) {
   menu.hide()
   updateMeLabel()
   countEl.classList.add('show')
-  sprintEl.classList.add('hidden')
+  // Le départ canon : la jauge est là dès le décompte, prête à être martelée
+  sprintEl.classList.remove('hidden')
+  sprintLabelEl.textContent = '🚀 DÉPART CANON'
+  sprintFillEl.style.width = '0%'
   progressEl.style.width = '0%'
   opponent.active = online
   oppmarkEl.classList.toggle('hidden', !online)
@@ -221,9 +225,11 @@ const net = new Net({
   },
   onOpponent(op: RemotePlayer | null) {
     if (!op) return
-    // Son identité : le corps n'est refait que si le guerrier change vraiment
+    // Son identité : le corps n'est refait que si le guerrier change vraiment,
+    // et l'étiquette n'est redessinée que si le nom ou la couleur bougent.
     opponent.setFighter(op.fighter)
     oppName = op.name
+    opponent.setName(rivalLabel())
     // On nourrit l'extrapolation, avec l'âge RÉEL du message quand la synchro
     // d'horloge est prête. Le marqueur et l'écart, eux, sont mis à jour à
     // chaque image dans la boucle de jeu, sur la position ESTIMÉE.
@@ -326,8 +332,10 @@ new Input(document.body, {
     if (online && d > 0) net.sendAction({ t: 'slide', d })
   },
   spell: () => state === 'course' && toast('📜 Pas de parchemin équipé… (bientôt !)'),
-  // On horodate chaque coup : la boucle de jeu en déduit la cadence
-  sprint: () => sprintTaps.push(time),
+  // On horodate chaque coup : la boucle de jeu en déduit la cadence.
+  // Horloge de la page (pas le chrono de course) : le chrono est figé à 0
+  // pendant le décompte, or le DÉPART CANON se martèle pendant le décompte !
+  sprint: () => sprintTaps.push(performance.now() / 1000),
   isSprint: inSprintZone,
 })
 
@@ -340,14 +348,44 @@ function tick(now?: number) {
   const dt = Math.min(timer.getDelta(), 0.05) // temps écoulé depuis la dernière image
 
   if (state === 'depart') {
-    // 3… 2… 1… GO ! (en ligne, c'est le serveur qui donne le vrai GO)
-    countdown -= dt
-    countEl.textContent = countdown > 0 ? `${Math.ceil(countdown)}` : 'GO !'
-    const ready = online ? raceGo : countdown <= -0.6
-    if (ready && countdown <= 0) {
+    // 3… 2… 1… GO ! En duel, le départ est PROGRAMMÉ à une heure serveur
+    // précise (startAt) : les deux téléphones tirent au même instant absolu,
+    // quel que soit leur ping. (Avant, chacun partait à la réception du
+    // signal — le mieux connecté partait toujours en premier !)
+    if (online && net.startAt > 0 && net.clockReady) {
+      countdown = (net.startAt - net.serverNow()) / 1000
+    } else {
+      countdown -= dt // solo, ou horloge pas encore synchronisée
+    }
+    countEl.textContent = countdown > 0 ? `${Math.min(3, Math.ceil(countdown))}` : 'GO !'
+
+    // ————— Le DÉPART CANON : marteler pendant le décompte —————
+    const pnow = performance.now() / 1000
+    sprintTaps = sprintTaps.filter((t) => pnow - t < SPRINT_WINDOW)
+    const startRate = sprintTaps.length / SPRINT_WINDOW
+    sprintCharge += (Math.min(1, startRate / SPRINT_FULL_RATE) - sprintCharge) * Math.min(1, dt * 8)
+    sprintFillEl.style.width = `${sprintCharge * 100}%`
+
+    // Le GO : à l'heure programmée en duel (petit temps d'affichage du
+    // « GO ! » identique pour les deux), au bout du décompte en solo.
+    const ready = online
+      ? net.startAt > 0 && net.clockReady
+        ? countdown <= -0.4
+        : raceGo && countdown <= 0 // secours si l'horloge n'est pas prête
+      : countdown <= -0.6
+    if (ready) {
       countEl.classList.remove('show')
       state = 'course'
-      speed = 12
+      // La jauge convertit le martèlement en vitesse initiale : à fond, on
+      // part directement à la vitesse de croisière (≈ 0,3 s de gagnées) —
+      // toujours moins qu'un trébuchement : ça départage, ça ne décide pas.
+      speed = 12 + 10 * sprintCharge
+      if (sprintCharge > 0.75) toast('🚀 Départ canon !')
+      if (online) opponent.go()
+      sprintTaps = []
+      sprintCharge = 0
+      sprintEl.classList.add('hidden')
+      sprintLabelEl.textContent = 'SPRINT FINAL'
     } else if (online && countdown < -4) {
       // Le GO du serveur n'arrive pas : connexion perdue
       net.leave()
@@ -360,7 +398,8 @@ function tick(now?: number) {
 
     // ————— Sprint final : plus on martèle vite, plus on accélère —————
     const sprinting = inSprintZone()
-    sprintTaps = sprintTaps.filter((t) => time - t < SPRINT_WINDOW)
+    const pnow = performance.now() / 1000
+    sprintTaps = sprintTaps.filter((t) => pnow - t < SPRINT_WINDOW)
 
     // La cadence est PLAFONNÉE à SPRINT_FULL_RATE : au-delà, plus aucun gain.
     // C'est ce qui met le pouce d'un mobile et un autoclicker à égalité.
@@ -445,6 +484,15 @@ function tick(now?: number) {
 
   // La caméra suit en douceur la ligne du joueur
   camera.position.x += (player.mesh.position.x * 0.55 - camera.position.x) * Math.min(1, dt * 5)
+
+  // ————— Les étiquettes de nom, au-dessus des têtes —————
+  // Après le déplacement des persos ET de la caméra, sinon elles auraient une
+  // image de retard. Au menu, on les cache : le décor tourne à vide derrière.
+  const racing = state === 'depart' || state === 'course' || state === 'fini'
+  // player.mesh.visible clignote quand on se relève d'un trébuchement :
+  // l'étiquette clignote avec lui, c'est le même personnage.
+  player.tag.follow(player.mesh, camera, racing && player.mesh.visible)
+  opponent.tag.follow(opponent.mesh, camera, racing && opponent.active && opponent.mesh.visible)
 
   renderer.render(scene, camera)
   menu.update(dt) // l'aperçu 3D du guerrier, quand le menu de sélection est ouvert

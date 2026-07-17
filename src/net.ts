@@ -74,6 +74,13 @@ export class Net {
   /** Nos lignes sur la grille de départ, décidées par le serveur */
   myStartLane = 1
   oppStartLane = 1
+  /** L'heure serveur (ms) du GO programmé — 0 tant que le duel n'est pas lancé */
+  startAt = 0
+
+  /** La synchro d'horloge est-elle prête ? (quelques pongs suffisent) */
+  get clockReady() {
+    return this.offsetReady
+  }
   /**
    * Le ping (aller-retour, en secondes), mesuré en continu.
    * Sert à compenser le temps de trajet des positions de l'adversaire.
@@ -201,6 +208,7 @@ export class Net {
       }
     })
     if (opp) this.oppStartLane = (opp as RemotePlayer).startLane
+    this.startAt = state.startAt ?? 0
 
     // Changement de phase : attente → décompte → course → résultats
     if (state.phase !== this.lastPhase) {

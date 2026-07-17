@@ -166,6 +166,15 @@ alors **horodatée à l'envoi** (`at`, en heure serveur — la référence commu
 aux deux joueurs) : l'extrapolation utilise l'âge exact du message au lieu
 de « heure d'arrivée + RTT/2 », et la gigue ne la fait plus respirer.
 
+Bonus offert par cette synchro : **le GO programmé**. Avant, chaque client
+partait à la *réception* du signal `racing` → le joueur au meilleur ping
+partait toujours en premier (avance réelle de 50 à 200 ms, visible en jeu).
+Maintenant le serveur publie `startAt` (l'heure serveur du GO, décidée au
+verrouillage de la salle) et chaque client pilote son 3-2-1 sur
+`startAt − serverNow()` : **les deux tirent au même instant absolu**, quel
+que soit leur ping. Le fantôme reçoit aussi un `go()` qui l'anime à la
+vitesse de départ sans attendre ses premiers messages.
+
 **4. Lag compensation — FONDATIONS POSÉES.** Le jour où un kunai « touche »
 l'adversaire, question de [Valve](https://www.gabrielgambetta.com/lag-compensation.html) :
 le lanceur visait la position d'il y a 100 ms — il faut juger le coup **dans

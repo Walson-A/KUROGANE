@@ -1,6 +1,7 @@
 import * as THREE from 'three'
 import { LANES } from './player'
-import { buildFighter, clearFighter, fighterById, type Fighter } from './roster'
+import { NameTag } from './nametag'
+import { buildFighter, clearFighter, cssColor, fighterById, type Fighter } from './roster'
 import type { OppAction } from './net'
 
 /** Ce que le réseau nous apprend sur l'adversaire à chaque message */
@@ -52,9 +53,13 @@ export class Opponent {
 
   private fighter: Fighter = fighterById('kurokumo')
 
+  /** Son pseudo, qui flotte au-dessus de sa tête. Piloté par main.ts. */
+  readonly tag: NameTag
+
   constructor(scene: THREE.Scene) {
     this.mesh.visible = false
     scene.add(this.mesh)
+    this.tag = new NameTag(scene)
     this.build()
   }
 
@@ -68,6 +73,14 @@ export class Opponent {
     if (f.id === this.fighter.id) return
     this.fighter = f
     this.build()
+  }
+
+  /**
+   * Écrit son nom au-dessus de sa tête, dans la couleur de SON bandeau.
+   * Appelé à chaque état reçu : NameTag.set() ne redessine que si ça change.
+   */
+  setName(pseudo: string) {
+    this.tag.set(pseudo, cssColor(this.fighter.band))
   }
 
   private build() {
@@ -137,6 +150,15 @@ export class Opponent {
       // …et il clignote le temps de se relever, comme chez lui
       this.stumbleT = 1.2
     }
+  }
+
+  /**
+   * Le GO vient de sonner : il court forcément (~12 m/s minimum).
+   * Sans ça, l'extrapolation part de vitesse 0 et attend ses deux premiers
+   * messages pour le mettre en mouvement → il semblait mou au départ.
+   */
+  go() {
+    if (this.netSpeed < 12) this.netSpeed = 12
   }
 
   /**

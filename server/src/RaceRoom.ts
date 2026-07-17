@@ -32,6 +32,12 @@ export class PlayerState extends Schema {
 export class RaceState extends Schema {
   /** waiting → countdown → racing → results */
   @type('string') phase = 'waiting'
+  /**
+   * L'heure SERVEUR (ms) du GO. Les deux clients démarrent à cet instant
+   * PRÉCIS (via la synchro d'horloge) — sinon, chacun partirait à la
+   * réception du signal, et le mieux connecté partirait toujours en premier.
+   */
+  @type('number') startAt = 0
   /** La graine de la piste : les deux joueurs ont les MÊMES obstacles */
   @type('number') seed = 0
   /** L'identifiant du vainqueur */
@@ -193,9 +199,10 @@ export class RaceRoom extends Room<{ state: RaceState }> {
     if (this.state.players.size === 2) {
       this.lock()
       this.state.phase = 'countdown'
+      this.state.startAt = Date.now() + COUNTDOWN_MS // GO programmé, à la ms près
       this.clock.setTimeout(() => {
         this.state.phase = 'racing'
-        this.raceStartAt = Date.now() // top départ : la référence anti-triche
+        this.raceStartAt = this.state.startAt // la référence anti-triche = le GO programmé
       }, COUNTDOWN_MS)
     }
   }

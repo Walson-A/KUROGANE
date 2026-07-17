@@ -20,6 +20,10 @@ avec Claude Code comme développeur.
   perdant est celui qui arrive 2ᵉ
 - **🔥 Sprint final** : sur les 120 derniers mètres, martèle l'écran pour
   accélérer et voler la victoire sur le fil ([voir le calibrage](#-le-sprint-final--départager-sans-refaire-la-course))
+- **🚀 Départ canon** : martèle pendant le 3-2-1 — à fond, tu pars directement
+  à la vitesse de croisière (≈ 0,3 s de gagnées, toujours moins qu'un
+  trébuchement). Le GO est **programmé à la même milliseconde** sur les deux
+  téléphones, peu importe le ping
 - **⚔️ Duel en ligne** : matchmaking automatique, **grille de départ** (chacun
   sa ligne), les deux joueurs affrontent exactement la même piste, le serveur
   déclare le vainqueur
