@@ -255,7 +255,7 @@ function drawSlots(pop = -1) {
 
 /** Le sélecteur 1-2-3-4 du menu : boutons + qui on va affronter. */
 function drawBotPick() {
-  for (const el of botRowEl.children) {
+  for (const el of Array.from(botRowEl.children)) {
     el.classList.toggle('actif', Number((el as HTMLElement).dataset.n) === nbBots)
   }
   // On annonce les noms : le joueur doit savoir qu'ajouter un rival, c'est
