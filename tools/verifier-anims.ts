@@ -49,7 +49,7 @@ const PERSOS: Fighter[] = [
 ]
 
 console.log('\n————— Couverture : qui a quoi —————')
-const ACTIONS: Action[] = ['course', 'courseGenee', 'saut', 'glissade', 'chute', 'lancer', 'virageG', 'virageD', 'impact', 'attaque']
+const ACTIONS: Action[] = ['course', 'courseRapide', 'courseGenee', 'saut', 'glissade', 'chute', 'lancer', 'virageG', 'virageD', 'impact', 'attaque']
 for (const f of PERSOS) {
   const dispo = ACTIONS.filter((a) => clipDe(f, a))
   const nom = f.id === 'perso' ? `perso(${f.head})` : f.id
@@ -236,6 +236,31 @@ for (const geste of ['lancer', 'attaque', 'impact'] as const) {
   // Les JAMBES doivent continuer de courir : un lanceur ne patine pas sur place.
   verifier(`${geste.padEnd(10)} le bras joue`, brasBouge > 0.3, `bras ${brasBouge.toFixed(2)} rad`)
   verifier(`${geste.padEnd(10)} les jambes courent toujours`, jambeBouge > 1, `jambes ${jambeBouge.toFixed(2)} rad`)
+}
+
+console.log('\n————— La foulee pressee va vraiment plus vite —————')
+for (const f of PERSOS) {
+  const nom = f.id === 'perso' ? `perso(${f.head})` : f.id
+  // Combien de cycles de foulee en une seconde, pour chaque allure ?
+  const cycles = (a: Action) => {
+    const { racine, corps } = corpsDe(f)
+    const anim = new Anim()
+    let tours = 0
+    let precedent = new THREE.Euler().setFromQuaternion(corps.jambeG.pivot.quaternion, 'XYZ').x
+    let montait = true
+    for (let i = 0; i < 120; i++) {
+      animerGuerrier(racine, f, anim, a, 1 / 120, i / 120)
+      const x = new THREE.Euler().setFromQuaternion(corps.jambeG.pivot.quaternion, 'XYZ').x
+      // Un cycle = un passage par le point haut de la cuisse
+      if (montait && x < precedent) { tours++; montait = false }
+      if (!montait && x > precedent) montait = true
+      precedent = x
+    }
+    return tours
+  }
+  const lent = cycles('course')
+  const vite = cycles('courseRapide')
+  verifier(`${nom.padEnd(16)} cadence pressee > normale`, vite > lent, `${lent} → ${vite} appuis/s`)
 }
 
 console.log('\n————— Le repli quand le mouvement manque —————')

@@ -2399,7 +2399,11 @@ function tick(now?: number) {
       backToMenu('⚠️ Connexion perdue au départ.')
     }
     player.update(dt)
-    for (const r of rivals.values()) r.opp.update(dt, distance)
+    for (const r of rivals.values()) {
+      // Chacun entre dans le sprint a SA distance, pas a la notre
+      r.opp.presse = r.opp.distanceNow >= COURSE_LENGTH - SPRINT_ZONE
+      r.opp.update(dt, distance)
+    }
     // Les rivaux sont déjà sur la ligne de départ pendant le décompte
     for (const b of botsEnCourse()) b.placer(dt, distance)
     // 🌸 Les pétales tombent pendant tout le décompte (monde immobile : dz = 0)
@@ -2431,7 +2435,11 @@ function tick(now?: number) {
 
     distance += speed * dt
     player.update(dt)
-    for (const r of rivals.values()) r.opp.update(dt, distance)
+    for (const r of rivals.values()) {
+      // Chacun entre dans le sprint a SA distance, pas a la notre
+      r.opp.presse = r.opp.distanceNow >= COURSE_LENGTH - SPRINT_ZONE
+      r.opp.update(dt, distance)
+    }
     track.update(dt, speed, distance)
 
     // Chaque rival court sa propre course, sans jamais toucher à la nôtre
@@ -2724,6 +2732,16 @@ function tick(now?: number) {
 
     // 🥴 Empoisonné, aveuglé ou entravé : la foulée devient bancale.
     player.gene = time < senbonFin || time < fumigeneFin || time < kusarigamaFin
+
+    /*
+     * 🔥 La foulée s'emballe sous le Souffle de Vent et dans le sprint final.
+     *
+     * On ne réutilise PAS `inSprintZone()` : elle englobe aussi le départ
+     * canon, où l'on martèle sans avoir encore commencé à courir. Le coureur
+     * sprinterait sur la ligne de départ.
+     */
+    player.presse =
+      time < ventFin || distance >= COURSE_LENGTH - SPRINT_ZONE
 
     // Trébuchement : toucher un obstacle RALENTIT (on ne meurt pas, c'est une course)
     stumble = Math.max(0, stumble - dt)

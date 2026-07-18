@@ -143,6 +143,27 @@ n'a pas de saut — le guerrier **retombe sur l'ancienne foulée calculée**.
 > pas de corps articulé, donc rien à animer. Seuls le joueur et les rivaux en
 > ligne jouent ces mouvements.
 
+### 🔥 La foulée qui s'emballe
+
+Sous le **Souffle de Vent** et dans le **sprint final**, le coureur passe en
+`courseRapide`.
+
+Attention au piège : `Fast Run` est déjà la foulée de **tout le monde, en
+permanence**. Lui « mettre Fast Run » sur ces deux moments n'aurait donc rien
+changé à l'écran. Ce qui se voit, c'est la **cadence** : le même cycle joué à
+**1,35×**. Ce chiffre n'est pas au jugé — c'est exactement le gain du Souffle de
+Vent (`VENT_BOOST = 0,35`), donc les pieds ne patinent pas et ne courent pas
+devant le coureur.
+
+Le jour où un vrai clip de sprint atterrit dans un dossier, il est pris
+automatiquement : `courseRapide` cherche d'abord un fichier à elle, et ne
+retombe sur la course normale accélérée qu'à défaut.
+
+La **gêne l'emporte sur la hâte** : empoisonné, on titube même porté par le vent
+— sinon un sort offensif se verrait annulé à l'écran. Et les rivaux entrent dans
+le sprint à **leur** distance, pas à la nôtre : dans un peloton de dix, chacun
+son tour.
+
 ### Les gestes qui se superposent
 
 🔥 **Le lancer** part sur le **portail, le senbon, la fumigène et le kunai** —

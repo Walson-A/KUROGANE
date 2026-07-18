@@ -60,6 +60,8 @@ export class Player {
   private anim = new Anim() // le lecteur des mouvements importés
   /** 🥴 Vrai quand un sort brouille la course : on passe sur la foulée gênée. */
   gene = false
+  /** 🔥 Vrai sous le Souffle de Vent ou dans le sprint final : la foulée s'emballe. */
+  presse = false
   private vire = 0 // le côté du virage en cours : -1 gauche, +1 droite
   private vireT = 0 // ce qu'il en reste
 
@@ -72,7 +74,10 @@ export class Player {
     if (this.sliding > 0) return 'glissade'
     if (!this.onGround) return 'saut'
     if (this.vireT > 0) return this.vire < 0 ? 'virageG' : 'virageD'
-    return this.gene ? 'courseGenee' : 'course'
+    // La gêne l'emporte sur la hâte : empoisonné, on titube même porté par le
+    // vent — sinon un sort offensif se verrait annulé à l'écran.
+    if (this.gene) return 'courseGenee'
+    return this.presse ? 'courseRapide' : 'course'
   }
 
   /**

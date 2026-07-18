@@ -61,13 +61,20 @@ export class Opponent {
   private vire = 0 // le côté de son virage : -1 gauche, +1 droite
   private vireT = 0 // ce qu'il en reste
 
+  /**
+   * 🔥 Vrai dans le sprint final. On le déduit de SA distance, pas de la
+   * nôtre : dans un peloton de dix, chacun entre dans le sprint à son tour.
+   * Le vent, lui, ne transite pas par le réseau — on ne peut pas le savoir.
+   */
+  presse = false
+
   /** Le mouvement que réclame son état courant (cf. Player.action). */
   private action(): Action {
     if (this.stumbleT > 0) return 'courseGenee'
     if (this.sliding || this.slideTimer > 0) return 'glissade'
     if (this.mesh.position.y > 0.001) return 'saut'
     if (this.vireT > 0) return this.vire < 0 ? 'virageG' : 'virageD'
-    return 'course'
+    return this.presse ? 'courseRapide' : 'course'
   }
 
   /** Son pseudo, qui flotte au-dessus de sa tête. Piloté par main.ts. */

@@ -19,6 +19,7 @@ import { animerCourse, type Corps, type Fighter } from './roster'
 
 export type Action =
   | 'course'
+  | 'courseRapide'
   | 'courseGenee'
   | 'saut'
   | 'glissade'
@@ -96,13 +97,37 @@ function chaine(f: Fighter): string[] {
   return [f.id, 'tous']
 }
 
+/**
+ * Le mouvement de repli quand une action n'a pas de clip à elle.
+ *
+ * La course pressée n'a pas de fichier dédié : personne n'a déposé de sprint.
+ * Elle rejoue donc la course normale, mais PLUS VITE (cf. CADENCE) — ce qui
+ * suffit à lire l'accélération. Le jour où un vrai sprint atterrit dans un
+ * dossier, il sera pris sans toucher à une ligne de code.
+ */
+const REPLI: Partial<Record<Action, Action>> = {
+  courseRapide: 'course',
+}
+
+/**
+ * La vitesse de lecture d'une action.
+ *
+ * 1,35 n'est pas un chiffre au jugé : c'est exactement le gain du Souffle de
+ * Vent (VENT_BOOST = 0,35). La foulée s'accélère donc autant que le coureur —
+ * les pieds ne patinent pas et ne courent pas devant lui.
+ */
+const CADENCE: Partial<Record<Action, number>> = {
+  courseRapide: 1.35,
+}
+
 /** Le mouvement à jouer, ou null si personne n'en a fourni. */
 export function clipDe(f: Fighter, action: Action): Clip | null {
   for (const source of chaine(f)) {
     const c = CLIPS.get(`${source}/${action}`)
     if (c) return c
   }
-  return null
+  const repli = REPLI[action]
+  return repli ? clipDe(f, repli) : null
 }
 
 /** Ce guerrier a-t-il de quoi jouer cette action ? */
@@ -172,6 +197,7 @@ function membre(g: Corps, joint: string): THREE.Object3D | null {
 /** Les actions qui tournent en rond ; les autres se jouent une fois et tiennent. */
 const EN_BOUCLE: Record<Action, boolean> = {
   course: true,
+  courseRapide: true,
   courseGenee: true,
   saut: false,
   glissade: false,
@@ -247,7 +273,7 @@ export class Anim {
     this.clipCourant = clip
     if (!clip) return false
 
-    this.t += dt
+    this.t += dt * (CADENCE[this.action] ?? 1)
     this.fondu = Math.max(0, this.fondu - dt)
 
     const boucle = EN_BOUCLE[this.action]
