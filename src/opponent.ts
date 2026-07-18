@@ -161,6 +161,11 @@ export class Opponent {
     if (this.netSpeed < 12) this.netSpeed = 12
   }
 
+  /** Sa ligne actuelle — pour savoir si on peut le frapper. */
+  get laneNow() {
+    return this.lane
+  }
+
   /**
    * Notre meilleure estimation de sa distance EN CE MOMENT.
    * C'est ELLE qu'il faut utiliser pour « qui est devant ? » (HUD, marqueur…),

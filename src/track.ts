@@ -339,6 +339,32 @@ export class Track {
   }
 
   /**
+   * Le joueur PERCUTE-t-il une jarre au lieu de la frapper ? La poterie
+   * éclate, mais on se prend le choc.
+   *
+   * C'est ce qui donne son poids au combat : sans collision, ignorer une
+   * grappe ne coûtait rien et frapper n'était qu'un bonus facultatif.
+   * Maintenant une grappe sur sa ligne pose une vraie question — la frapper,
+   * la contourner, ou payer. Et en vol on passe au-dessus : une chaîne bien
+   * menée traverse tout sans jamais toucher une seule jarre.
+   */
+  heurteJarre(playerBox: THREE.Box3): boolean {
+    const box = new THREE.Box3()
+    for (const j of this.jarres) {
+      if (!j.active) continue
+      if (Math.abs(j.mesh.position.z) > 2.5) continue
+      box.setFromObject(j.mesh)
+      box.expandByScalar(-0.1) // un peu de tolérance : on frôle sans casser
+      if (box.intersectsBox(playerBox)) {
+        j.active = false
+        j.mesh.visible = false
+        return true
+      }
+    }
+    return false
+  }
+
+  /**
    * Casse la jarre à portée sur cette ligne. Renvoie ce qu'elle contenait :
    * `null` si rien à frapper, sinon le parchemin libéré (ou `null` pour une
    * jarre vide, qui ne donne que l'élan et le maillon de chaîne).

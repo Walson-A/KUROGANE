@@ -61,6 +61,19 @@ const MAX_SPEED = 45
 /** Profondeur de l'historique des positions (ms) — cf. positionAt() */
 const HISTORY_MS = 2000
 
+/** Portée d'un coup porté au rival, en mètres (⚠️ à garder égale au client) */
+const PVP_PORTEE = 5
+
+/** On ne matraque pas un joueur à terre : il a ce répit avant d'être frappable. */
+const PVP_REPOS_MS = 1500
+
+/**
+ * On n'accepte pas un coup daté de plus loin que ça dans le passé. C'est le
+ * garde-fou de la lag compensation : sans lui, un client bidouillé pourrait
+ * dater son coup d'une seconde plus tôt pour frapper là où l'autre ÉTAIT.
+ */
+const PVP_RECUL_MAX_MS = 400
+
 /** Les guerriers que le serveur accepte. Tout le reste → Yasuke. */
 const FIGHTERS = ['yasuke', 'hana', 'onimaru', 'tamae']
 const MAX_NAME = 12
@@ -108,6 +121,9 @@ export class RaceRoom extends Room<{ state: RaceState }> {
     string,
     { t: number; distance: number; lane: number; y: number }[]
   >()
+
+  /** Quand chaque joueur a encaissé son dernier coup (anti-matraquage) */
+  private dernierCoupSubi = new Map<string, number>()
 
   onCreate() {
     this.state.seed = Math.floor(Math.random() * 2 ** 31)
@@ -177,6 +193,51 @@ export class RaceRoom extends Room<{ state: RaceState }> {
         { kind: String(data.kind), distance: Number(data?.distance) || 0 },
         { except: client }
       )
+    })
+
+    /**
+     * ————— ⚔️ Un coup porté au rival —————
+     * C'est LE cas d'usage de la lag compensation. Le client dit « j'ai frappé
+     * la ligne L à l'instant T » ; on rejuge la scène telle qu'elle était à T,
+     * pas telle qu'elle est à l'arrivée du message. Sans ça, un joueur au ping
+     * élevé raterait des coups pourtant justes sur son écran — sa cible aurait
+     * « bougé » pendant le trajet du message.
+     *
+     * Le serveur tranche seul : le client ne fait que demander.
+     */
+    this.onMessage('pvp', (client, data: any) => {
+      if (this.state.phase !== 'racing') return
+      const moi = this.state.players.get(client.sessionId)
+      if (!moi || moi.finished) return
+
+      // La cible, c'est l'autre joueur de la salle
+      let cibleId = ''
+      this.state.players.forEach((_p, id) => {
+        if (id !== client.sessionId) cibleId = id
+      })
+      const cible = this.state.players.get(cibleId)
+      if (!cible || cible.finished) return
+
+      const now = Date.now()
+      if (now - (this.dernierCoupSubi.get(cibleId) ?? 0) < PVP_REPOS_MS) return
+
+      // L'instant du coup, borné : ni dans le futur, ni trop loin dans le passé
+      const brut = Number(data?.at) || now
+      const at = Math.max(now - PVP_RECUL_MAX_MS, Math.min(now, brut))
+      const lane = Math.max(0, Math.min(2, Number(data?.lane) || 0))
+
+      // On remonte le temps pour les DEUX : où étaient-ils à cet instant ?
+      const posMoi = this.positionAt(client.sessionId, at)
+      const posCible = this.positionAt(cibleId, at)
+      if (!posMoi || !posCible) return
+      if (posCible.lane !== lane) return
+
+      const ecart = posCible.distance - posMoi.distance
+      if (ecart < -2 || ecart > PVP_PORTEE) return
+
+      this.dernierCoupSubi.set(cibleId, now)
+      this.broadcast('pvp', { par: client.sessionId, sur: cibleId })
+      console.log(`⚔️  ${moi.name || client.sessionId} touche ${cible.name || cibleId}`)
     })
 
     // Un joueur a franchi la ligne !
@@ -289,6 +350,7 @@ export class RaceRoom extends Room<{ state: RaceState }> {
     console.log(`👋 ${client.sessionId} quitte la course`)
     this.state.players.delete(client.sessionId)
     this.history.delete(client.sessionId)
+    this.dernierCoupSubi.delete(client.sessionId)
 
     // Abandon en pleine course → victoire par forfait pour celui qui reste
     if (this.state.phase === 'countdown' || this.state.phase === 'racing') {

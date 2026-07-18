@@ -39,6 +39,8 @@ export interface NetCallbacks {
   /** L'adversaire nous a lancé un sort ! `distance` = sa place (portail seul) */
   onSpell(kind: string, distance: number): void
   onAction(a: OppAction): void // le rival vient de sauter/esquiver/trébucher
+  /** ⚔️ Un coup a porté, tranché par le serveur. `victime` : c'est moi qui l'ai pris. */
+  onPvp(victime: boolean): void
   onLink(up: boolean): void // NOTRE connexion : coupée (false) / rétablie (true)
   onResults(iWon: boolean, oppTime: number): void // fin de course
   onError(message: string): void // serveur injoignable, déconnexion…
@@ -156,6 +158,12 @@ export class Net {
     // Les actions du rival, relayées immédiatement (hors flux 30 Hz)
     this.room.onMessage('action', (a: OppAction) => this.cb.onAction(a))
 
+    // ⚔️ Le verdict d'un coup. Le serveur a déjà tranché : on l'applique.
+    this.room.onMessage('pvp', (r: { par: string; sur: string }) => {
+      if (!this.room) return
+      this.cb.onPvp(r.sur === this.room.sessionId)
+    })
+
     // ————— Reconnexion automatique —————
     // Écran verrouillé, wifi qui saute : le SDK retente tout seul (et met nos
     // messages en tampon), le serveur nous garde la place 30 s (RaceRoom.onDrop).
@@ -242,6 +250,15 @@ export class Net {
   /** Envoie une action (saut, esquive, trébuchement) — relayée immédiatement */
   sendAction(a: OppAction) {
     this.room?.send('action', a)
+  }
+
+  /**
+   * ⚔️ Demande à porter un coup sur cette ligne. On HORODATE le coup : c'est
+   * cet instant que le serveur rejouera pour juger s'il touche (lag
+   * compensation). Le serveur décide, nous ne faisons que demander.
+   */
+  sendPvp(lane: number) {
+    this.room?.send('pvp', { lane, at: this.offsetReady ? this.serverNow() : Date.now() })
   }
 
   /**
