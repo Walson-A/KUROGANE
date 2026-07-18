@@ -306,32 +306,256 @@ let lueurCible: THREE.Object3D | null = null // le corps de l'échangé
 
 /**
  * ⚡ L'éclair du Sharingan — le passif de Sasuke.
- * Une traînée cyan qui gicle entre l'ancienne et la nouvelle ligne à chaque
+ * DEUX vrais éclairs en zigzag, style cartoon (remplissage vif + gros contour
+ * bleu nuit), qui claquent entre l'ancienne et la nouvelle ligne à chaque
  * changement de voie, quand le guerrier a le style de Sasuke (`player.spark`).
- * Additive + scintillement : ça se lit comme de l'électricité.
  */
-const sparkMesh = new THREE.Mesh(
-  new THREE.PlaneGeometry(1, 0.85),
-  new THREE.MeshBasicMaterial({
-    color: 0x9fe8ff,
-    transparent: true,
-    opacity: 0,
-    blending: THREE.AdditiveBlending,
-    depthWrite: false,
-  })
-)
-sparkMesh.visible = false
-scene.add(sparkMesh)
-const SPARK_DUREE = 0.24 // secondes
+const SPARK_DUREE = 0.26 // secondes
 let sparkFin = 0
 
-/** Déclenche la traînée d'éclair entre deux positions X (centres de ligne). */
+/** La silhouette d'un éclair (zigzag façon ⚡), en unités locales. */
+function boltShape(): THREE.Shape {
+  const s = new THREE.Shape()
+  s.moveTo(0.08, 0.55)
+  s.lineTo(-0.24, 0.04)
+  s.lineTo(-0.05, 0.04)
+  s.lineTo(-0.17, -0.55)
+  s.lineTo(0.24, 0.1)
+  s.lineTo(0.04, 0.1)
+  s.closePath()
+  return s
+}
+
+/** Un éclair cartoon : un gros contour bleu nuit + un remplissage vif dessus. */
+function makeBolt(): THREE.Group {
+  const geo = new THREE.ShapeGeometry(boltShape())
+  const g = new THREE.Group()
+  const contour = new THREE.Mesh(
+    geo,
+    new THREE.MeshBasicMaterial({ color: 0x11224a, transparent: true, opacity: 0, depthWrite: false })
+  )
+  contour.scale.set(1.45, 1.18, 1)
+  contour.position.z = -0.01
+  const remplissage = new THREE.Mesh(
+    geo,
+    new THREE.MeshBasicMaterial({ color: 0x9fe8ff, transparent: true, opacity: 0, depthWrite: false })
+  )
+  g.add(contour, remplissage)
+  return g
+}
+
+const sparkBolts = [makeBolt(), makeBolt()]
+for (const b of sparkBolts) {
+  b.visible = false
+  scene.add(b)
+}
+
+/** Cache les deux éclairs (fin de course, retour menu). */
+function hideSpark() {
+  for (const b of sparkBolts) b.visible = false
+}
+
+/** Fait claquer les DEUX éclairs entre deux positions X (centres de ligne). */
 function flashSpark(fromX: number, toX: number) {
-  const mid = (fromX + toX) / 2
-  sparkMesh.position.set(mid, 0.95, player.mesh.position.z + 0.15)
-  sparkMesh.scale.set(Math.abs(toX - fromX) + 1.1, 1, 1)
-  sparkMesh.visible = true
+  const z = player.mesh.position.z + 0.12
+  const dir = Math.sign(toX - fromX) || 1
+  // Le 1er éclair, plus haut et incliné vers le départ ; le 2e plus bas, penché
+  // à l'inverse et plus petit : deux zigzags qui crépitent sur le trajet.
+  sparkBolts[0].position.set(fromX + (toX - fromX) * 0.32, 1.2, z)
+  sparkBolts[0].rotation.z = dir * -0.3
+  sparkBolts[0].scale.setScalar(1)
+  sparkBolts[1].position.set(fromX + (toX - fromX) * 0.72, 0.7, z + 0.04)
+  sparkBolts[1].rotation.z = dir * 0.45
+  sparkBolts[1].scale.setScalar(0.78)
+  for (const b of sparkBolts) b.visible = true
   sparkFin = time + SPARK_DUREE
+}
+
+// ═══════════ Effets visuels de course ═══════════
+
+// ————— 🌸 Le cerisier du départ + ses pétales —————
+// Un arbre UNIQUE, planté à la ligne de départ. Il défile vers l'arrière quand
+// on s'élance et ne réapparaît jamais : c'est le seuil du tournoi, pas un décor
+// qui se répète. Pendant le décompte, ses pétales tombent.
+const CERISIER_X = -5.6
+function makeCerisier(): THREE.Group {
+  const g = new THREE.Group()
+  const tronc = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.18, 0.3, 2.8, 6),
+    new THREE.MeshStandardMaterial({ color: 0x5a3a2e, roughness: 0.9 })
+  )
+  tronc.position.y = 1.4
+  g.add(tronc)
+  // La frondaison : des boules roses, deux tons pour le volume
+  const roses = [0xffb7d5, 0xf79ac2, 0xffc9e0]
+  for (let i = 0; i < 5; i++) {
+    const blob = new THREE.Mesh(
+      new THREE.SphereGeometry(0.9 + i * 0.12, 10, 8),
+      new THREE.MeshStandardMaterial({ color: roses[i % 3], roughness: 0.85 })
+    )
+    blob.position.set((i - 2) * 0.42, 3 + Math.sin(i) * 0.5, Math.cos(i) * 0.5)
+    g.add(blob)
+  }
+  return g
+}
+const cerisier = makeCerisier()
+cerisier.visible = false
+scene.add(cerisier)
+
+// Les pétales : un banc de petits plans roses qui chutent en tanguant.
+interface Petale {
+  mesh: THREE.Mesh
+  vx: number
+  vy: number
+  phase: number
+}
+const petaleMat = new THREE.MeshStandardMaterial({
+  color: 0xffc2dd,
+  roughness: 0.7,
+  side: THREE.DoubleSide,
+  transparent: true,
+  opacity: 0.95,
+})
+const petales: Petale[] = []
+for (let i = 0; i < 40; i++) {
+  const m = new THREE.Mesh(new THREE.PlaneGeometry(0.16, 0.12), petaleMat)
+  m.visible = false
+  scene.add(m)
+  petales.push({ mesh: m, vx: 0, vy: 0, phase: 0 })
+}
+let petalesActifs = false // on ne fait NAÎTRE de nouveaux pétales qu'au départ
+
+/** (Re)lâche un pétale autour de la frondaison. `neuf` : réparti en hauteur. */
+function poserPetale(p: Petale, neuf: boolean) {
+  p.mesh.position.set(
+    cerisier.position.x + (Math.random() - 0.5) * 2.6,
+    cerisier.position.y + (neuf ? 2 + Math.random() * 2 : 4.2),
+    cerisier.position.z + (Math.random() - 0.5) * 2.4
+  )
+  p.vx = -0.3 - Math.random() * 0.4
+  p.vy = -0.5 - Math.random() * 0.5
+  p.phase = Math.random() * 6.28
+  p.mesh.visible = true
+}
+
+// ————— 💥 L'explosion (Kunai qui touche, ou trébuchement) —————
+// Une boule additive qui gonfle et s'éteint. Un seul maillage recyclé : deux
+// explosions quasi simultanées se recouvrent, on l'assume.
+const BOOM_DUREE = 0.42
+const boomMat = new THREE.MeshBasicMaterial({
+  color: 0xffa23a,
+  transparent: true,
+  opacity: 0,
+  blending: THREE.AdditiveBlending,
+  depthWrite: false,
+})
+const boomMesh = new THREE.Mesh(new THREE.SphereGeometry(0.5, 16, 12), boomMat)
+boomMesh.visible = false
+scene.add(boomMesh)
+let boomFin = 0
+function boom(pos: THREE.Vector3) {
+  boomMesh.position.copy(pos)
+  boomMesh.scale.setScalar(0.4)
+  boomMesh.visible = true
+  boomFin = time + BOOM_DUREE
+}
+
+// ————— 💨 La zone de fumée au sol (reste 2 s) —————
+// Là où la bombe éclate, un nuage gris s'installe et traîne 2 s sur la piste,
+// en plus du voile d'écran. Un petit banc recyclé : rarement plus d'un ou deux
+// à la fois.
+const FUMEE_ZONE_DUREE = 2
+interface FumeeZone {
+  disque: THREE.Mesh
+  dome: THREE.Mesh
+  fin: number
+  actif: boolean
+}
+const fumeeZones: FumeeZone[] = []
+function spawnFumeeZone(pos: THREE.Vector3) {
+  let z = fumeeZones.find((f) => !f.actif)
+  if (!z) {
+    const disque = new THREE.Mesh(
+      new THREE.CircleGeometry(1.9, 24),
+      new THREE.MeshBasicMaterial({ color: 0x9aa2ad, transparent: true, opacity: 0, depthWrite: false })
+    )
+    disque.rotation.x = -Math.PI / 2
+    const dome = new THREE.Mesh(
+      new THREE.SphereGeometry(1.5, 16, 10),
+      new THREE.MeshBasicMaterial({ color: 0x8a929d, transparent: true, opacity: 0, depthWrite: false })
+    )
+    dome.scale.y = 0.5
+    scene.add(disque, dome)
+    z = { disque, dome, fin: 0, actif: false }
+    fumeeZones.push(z)
+  }
+  z.disque.position.set(pos.x, 0.05, pos.z)
+  z.dome.position.set(pos.x, 0.4, pos.z)
+  z.fin = time + FUMEE_ZONE_DUREE
+  z.actif = true
+  z.disque.visible = true
+  z.dome.visible = true
+}
+
+// ————— 💨💥 Le rideau de vitesse (sprint final + dash) —————
+// Un overlay DOM (créé ici, pas dans index.html, pour ne pas gêner l'autre
+// chantier en cours). Son intensité suit le martèlement et les dash.
+const speedEl = document.createElement('div')
+speedEl.id = 'speedlines'
+document.body.appendChild(speedEl)
+
+/** Fait avancer tous les effets d'un pas. `dz` = recul du monde cette image. */
+function updateEffets(dt: number, dz: number) {
+  // 🌸 Le cerisier glisse vers l'arrière puis disparaît, une fois dépassé
+  if (cerisier.visible) {
+    cerisier.position.z += dz
+    if (cerisier.position.z > 14) cerisier.visible = false
+  }
+  // 🌸 Les pétales : chute + tangage, recyclés tant qu'on en fait naître
+  for (const p of petales) {
+    if (!p.mesh.visible) {
+      if (petalesActifs && cerisier.visible && Math.random() < 0.4) poserPetale(p, true)
+      continue
+    }
+    p.phase += dt * 3
+    p.mesh.position.x += (p.vx + Math.sin(p.phase) * 0.6) * dt
+    p.mesh.position.y += p.vy * dt
+    p.mesh.position.z += dz
+    p.mesh.rotation.z += dt * 2
+    p.mesh.rotation.x += dt * 1.6
+    if (p.mesh.position.y < 0 || p.mesh.position.z > 14) {
+      if (petalesActifs && cerisier.visible) poserPetale(p, false)
+      else p.mesh.visible = false
+    }
+  }
+  // 💥 L'explosion gonfle et s'éteint
+  if (boomMesh.visible) {
+    const k = (boomFin - time) / BOOM_DUREE // 1 → 0
+    if (k <= 0) boomMesh.visible = false
+    else {
+      boomMesh.scale.setScalar(0.4 + (1 - k) * 2.8)
+      boomMat.opacity = k * 0.85
+    }
+  }
+  // 💨 Les zones de fumée : entrée franche, tenue, sortie en fondu ; elles montent
+  for (const z of fumeeZones) {
+    if (!z.actif) continue
+    const reste = z.fin - time
+    if (reste <= 0) {
+      z.actif = false
+      z.disque.visible = false
+      z.dome.visible = false
+      continue
+    }
+    const age = FUMEE_ZONE_DUREE - reste
+    const fade = Math.min(1, age / 0.3) * Math.min(1, reste / 0.6)
+    ;(z.disque.material as THREE.MeshBasicMaterial).opacity = fade * 0.5
+    ;(z.dome.material as THREE.MeshBasicMaterial).opacity = fade * 0.42
+    z.disque.position.z += dz
+    z.dome.position.z += dz
+    z.dome.rotation.y += dt * 0.6
+    z.dome.position.y = 0.4 + age * 0.16
+  }
 }
 
 // ————— Le rouleau-machine à sous —————
@@ -539,6 +763,7 @@ function subirSort(
     toast('🎯 Kunai en pleine course !')
   } else if (kind === 'fumigene') {
     fumigeneFin = time + FUMIGENE_DUREE
+    spawnFumeeZone(player.mesh.position) // 💨 le nuage gris s'installe à tes pieds
     toast('💨 Tu ne vois plus rien !')
   } else if (kind === 'senbon') {
     senbonFin = time + SENBON_DUREE
@@ -620,6 +845,7 @@ function lancerParchemin() {
         return
       }
       if (kind === 'kunai') lancerKunaiVisuel(player.mesh.position, cible.opp.mesh.position)
+      if (kind === 'fumigene') spawnFumeeZone(cible.opp.mesh.position)
       net.sendSpell(kind, cible.id)
       toast(`${p.icone} sur ${cible.name} !`)
       return
@@ -633,6 +859,7 @@ function lancerParchemin() {
     // `subirSort` rejouera le vol dans l'autre sens : c'est le même maillage,
     // donc le retour écrase l'aller — on ne voit que le trajet qui compte.
     if (kind === 'kunai') lancerKunaiVisuel(player.mesh.position, cible.mesh.position)
+    if (kind === 'fumigene') spawnFumeeZone(cible.mesh.position)
 
     // Sa parade peut nous le renvoyer dans les dents : on l'a bien cherché
     if (cible.subir(kind, time)) {
@@ -678,7 +905,7 @@ function backToMenu(banner?: string) {
   // Une lame encore en l'air à l'arrivée resterait plantée dans le menu
   kunaiVol = null
   kunaiMesh.visible = false
-  sparkMesh.visible = false
+  hideSpark()
   oppmarkEl.classList.add('hidden')
   rankEl.classList.add('hidden')
   gapEl.classList.add('hidden')
@@ -726,9 +953,22 @@ function startRace(seed: number) {
   lueurCible = null
   lueurJoueur.visible = false
   lueurRival.visible = false
-  sparkMesh.visible = false
+  hideSpark()
   fumeeEl.classList.remove('show')
   canvas.classList.remove('poison')
+  // 🌸💥💨 Les effets de course repartent à zéro : cerisier au départ, pétales
+  // et zones de fumée éteints, rideau de vitesse coupé.
+  cerisier.position.set(CERISIER_X, 0, -9)
+  cerisier.visible = true
+  for (const p of petales) p.mesh.visible = false
+  petalesActifs = true
+  boomMesh.visible = false
+  for (const z of fumeeZones) {
+    z.actif = false
+    z.disque.visible = false
+    z.dome.visible = false
+  }
+  speedEl.style.opacity = '0'
   drawSlots()
 
   // Les rivaux : uniquement en entraînement (en ligne, l'adversaire est réel).
@@ -1086,6 +1326,9 @@ function tick(now?: number) {
     for (const r of rivals.values()) r.opp.update(dt, distance)
     // Les rivaux sont déjà sur la ligne de départ pendant le décompte
     for (const b of botsEnCourse()) b.placer(dt, distance)
+    // 🌸 Les pétales tombent pendant tout le décompte (monde immobile : dz = 0)
+    petalesActifs = true
+    updateEffets(dt, 0)
   } else if (state === 'course') {
     time += dt
 
@@ -1206,6 +1449,7 @@ function tick(now?: number) {
     if (kunaiVol) {
       const reste = kunaiVol.fin - time
       if (reste <= 0) {
+        boom(kunaiVol.a) // 💥 la lame éclate en atteignant sa cible
         kunaiVol = null
         kunaiMesh.visible = false
       } else {
@@ -1213,6 +1457,19 @@ function tick(now?: number) {
         kunaiMesh.rotation.x += dt * 26 // il tournoie bout par-dessus bout
       }
     }
+
+    // 💨💥 Le rideau de vitesse : monte avec le martèlement du sprint final,
+    // à fond sur un dash 🌀. C'est le même effet pour les deux accélérations.
+    const dashing = time < ventFin
+    let vitesseInten = 0
+    if (sprinting) vitesseInten = 0.3 + 0.7 * sprintCharge
+    if (dashing) vitesseInten = Math.max(vitesseInten, 0.9)
+    speedEl.style.opacity = `${vitesseInten}`
+
+    // 🌸💥💨 On ne fait plus naître de pétales passé les 2,5 premières secondes ;
+    // ceux déjà en l'air finissent de tomber pendant que le cerisier s'éloigne.
+    petalesActifs = time < 2.5
+    updateEffets(dt, speed * dt)
 
     // 10 fois par seconde suffisent : à 60, on réécrirait le DOM pour rien
     rankTimer += dt
@@ -1253,6 +1510,7 @@ function tick(now?: number) {
         speed = Math.max(6, speed * player.grip)
         stumble = 1.2 // brève invincibilité le temps de se relever
         flash()
+        boom(new THREE.Vector3(player.mesh.position.x, 0.9, player.mesh.position.z)) // 💥
         toast('💥 Trébuché !')
         // Le rival doit le voir TOUT DE SUITE : sa version de nous ralentit
         // immédiatement (au lieu que son extrapolation nous fasse dépasser à tort)
@@ -1266,15 +1524,20 @@ function tick(now?: number) {
     fumeeEl.classList.toggle('show', time < fumigeneFin)
     canvas.classList.toggle('poison', time < senbonFin)
 
-    // ⚡ La traînée d'éclair de Sasuke s'éteint en scintillant
-    if (sparkMesh.visible) {
+    // ⚡ Les deux éclairs de Sasuke s'éteignent en scintillant
+    if (sparkBolts[0].visible) {
       const reste = sparkFin - time
       if (reste <= 0) {
-        sparkMesh.visible = false
+        hideSpark()
       } else {
         const k = reste / SPARK_DUREE // 1 → 0
-        ;(sparkMesh.material as THREE.MeshBasicMaterial).opacity = k * (0.55 + Math.random() * 0.45)
-        sparkMesh.position.y = 0.95 + (Math.random() - 0.5) * 0.18 // frémissement électrique
+        for (const b of sparkBolts) {
+          const op = k * (0.55 + Math.random() * 0.45) // scintillement électrique
+          for (const c of b.children) {
+            ;((c as THREE.Mesh).material as THREE.MeshBasicMaterial).opacity =
+              c === b.children[0] ? op * 0.9 : op // le contour un poil moins fort
+          }
+        }
       }
     }
 
@@ -1362,6 +1625,7 @@ function tick(now?: number) {
     track.update(dt, state === 'fini' ? 3 : 5)
     player.update(dt)
     if (state === 'fini' && online) for (const r of rivals.values()) r.opp.update(dt, distance)
+    speedEl.style.opacity = '0' // pas de rideau de vitesse hors course
   }
 
   // La caméra suit en douceur la ligne du joueur

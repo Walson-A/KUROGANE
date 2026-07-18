@@ -187,6 +187,10 @@ choisit le style de jeu** —
 purement cosmétiques. Sasuke n'est **pas un guerrier jouable** — ses réglages ne
 servent que de style par défaut au « + ».
 
+Signature visuelle du style Sasuke : **deux éclairs cartoon** (zigzag façon ⚡,
+remplissage cyan + gros contour bleu nuit) claquent à chaque changement de ligne.
+Réglé dans [`src/main.ts`](src/main.ts) (`SPARK_DUREE`, `makeBolt`, `flashSpark`).
+
 Tout est dans [`src/roster.ts`](src/roster.ts). Deux règles d'équité s'appliquent :
 
 1. **La hitbox est la même pour tout le monde**, alors que les corps n'ont pas
