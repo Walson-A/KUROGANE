@@ -23,6 +23,8 @@ export interface Settings {
   /** Le pseudo, vu par l'adversaire pendant le duel. Vide = anonyme. */
   name: string
   quality: Quality
+  /** La musique de fond. On joue aussi en cours ou dans le bus — ça se coupe. */
+  musique: boolean
 }
 
 const KEY = 'kurogane-settings'
@@ -74,6 +76,9 @@ export function loadSettings(): Settings {
     custom: loadCustom(raw.custom),
     name: cleanName(raw.name),
     quality: raw.quality === 'haut' || raw.quality === 'bas' ? raw.quality : 'auto',
+    // Allumée par défaut : elle fait beaucoup pour l'ambiance, et le premier
+    // réflexe de qui n'en veut pas est d'aller la couper dans les options.
+    musique: raw.musique !== false,
   }
 }
 

@@ -33,6 +33,8 @@ export interface MenuCallbacks {
   onFighter(f: Fighter): void
   /** Le joueur a changé la qualité graphique */
   onQuality(q: Quality): void
+  /** Le joueur a allumé ou coupé la musique */
+  onMusique(on: boolean): void
   /** Le joueur annule la recherche d'adversaire */
   onCancel(): void
   // ————— Les salons en ligne —————
@@ -106,6 +108,7 @@ export class Menu {
     forgeHead: document.getElementById('forgeHead')!,
     optName: document.getElementById('optName') as HTMLInputElement,
     optQuality: document.getElementById('optQuality')!,
+    optMusique: document.getElementById('optMusique')!,
     // ————— Salon —————
     joinCode: document.getElementById('joinCode') as HTMLInputElement,
     salonList: document.getElementById('salonList')!,
@@ -544,11 +547,28 @@ export class Menu {
       })
     }
     this.markQuality()
+
+    // La musique
+    for (const b of this.el.optMusique.querySelectorAll<HTMLElement>('button')) {
+      b.addEventListener('click', () => {
+        this.settings.musique = b.dataset.m === 'on'
+        saveSettings(this.settings)
+        this.markMusique()
+        this.cb.onMusique(this.settings.musique)
+      })
+    }
+    this.markMusique()
   }
 
   private markQuality() {
     for (const b of this.el.optQuality.querySelectorAll<HTMLElement>('button')) {
       b.classList.toggle('on', b.dataset.q === this.settings.quality)
+    }
+  }
+
+  private markMusique() {
+    for (const b of this.el.optMusique.querySelectorAll<HTMLElement>('button')) {
+      b.classList.toggle('on', (b.dataset.m === 'on') === this.settings.musique)
     }
   }
 }

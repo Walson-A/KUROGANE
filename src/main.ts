@@ -28,6 +28,7 @@ import {
 import { Menu, escapeHtml } from './menu'
 import { souffleDeVent } from './sfx'
 import type { Quality } from './settings'
+import { Musique } from './audio'
 
 /**
  * La longueur de la course, en mètres. Départ → torii sacré.
@@ -1638,6 +1639,7 @@ function inSprintZone() {
 function backToMenu(banner?: string) {
   state = 'menu'
   online = false
+  musique.jouer('menu')
   clearRivals()
   for (const b of bots) {
     b.actif = false
@@ -1670,6 +1672,9 @@ function backToMenu(banner?: string) {
 
 /** Lance une course. En ligne, la graine vient du serveur : même piste pour les deux ! */
 function startRace(seed: number) {
+  // Le décompte fait déjà partie de la course : la piste démarre avec lui.
+  musique.jouer('race')
+
   // ————— La grille de départ —————
   // On aligne joueur + bots sur la MÊME ligne, répartis de gauche à droite sur
   // les 3 voies (le joueur à gauche, les bots vers la droite). En duel, c'est le
@@ -1889,6 +1894,7 @@ const net = new Net({
     if (state === 'course' || state === 'depart') return
     if (state === 'fini' && view.phase === 'lobby') clearRivals() // rematch : on repart propre
     state = 'attente'
+    musique.jouer('lobby')
     menu.showLobby(view)
   },
   onCountdown(seed) {
@@ -2018,6 +2024,9 @@ const menu = new Menu({
   onQuality(q) {
     applyQuality(q)
   },
+  onMusique(on) {
+    musique.setActive(on)
+  },
   onCancel() {
     net.leave()
     backToMenu()
@@ -2029,9 +2038,16 @@ btnGo.addEventListener('click', () => {
   startRace(Math.floor(Math.random() * 2 ** 31))
 })
 
+// Créée APRÈS le menu : c'est lui qui détient le réglage sauvegardé.
+const musique = new Musique(menu.settings.musique)
+
 applyQuality(menu.settings.quality)
 updateMeLabel()
 menu.showTitle()
+
+// La musique des menus attend le premier geste du joueur : les navigateurs
+// interdisent le son avant. Elle démarrera donc à son premier clic (cf. audio.ts).
+musique.jouer('menu')
 
 // ————— Les contrôles —————
 // Chaque action est AUSSI envoyée au serveur en événement instantané : le
@@ -2573,6 +2589,7 @@ function tick(now?: number) {
 
   renderer.render(scene, camera)
   menu.update(dt) // l'aperçu 3D du guerrier, quand le menu de sélection est ouvert
+  musique.update(dt) // le fondu entre deux pistes
 }
 
 // ————— Adaptation à la taille de l'écran —————
