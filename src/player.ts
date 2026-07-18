@@ -1,7 +1,7 @@
 import * as THREE from 'three'
 import { NameTag } from './nametag'
 import { ROSTER, buildFighter, clearFighter, cssColor, type Fighter } from './roster'
-import { Anim, animerGuerrier, type Action } from './anims'
+import { Anim, animerGuerrier, type Action, type Geste } from './anims'
 
 /** Les 3 lignes de course (positions X dans le monde 3D) */
 export const LANES = [-2.2, 0, 2.2]
@@ -31,6 +31,14 @@ const JUMP_SPEED = 13.2
 const ATTACK_TIME = 0.26 // durée d'un coup : on ne peut pas réenchaîner avant
 const SLIDE_TIME = 0.55 // durée d'une glissade (secondes)
 const LANE_LERP = 12 // vitesse de glissement vers la ligne visée
+/**
+ * Combien de temps on penche dans le virage.
+ *
+ * Calé sur le temps de traversée réel : à LANE_LERP = 12, on couvre ~95 % de
+ * l'écart entre deux lignes en ~0,25 s. Pencher plus longtemps ferait traîner
+ * l'inclinaison après l'arrivée sur la ligne.
+ */
+export const VIRAGE_TEMPS = 0.25
 
 /**
  * Le coureur : le guerrier choisi dans le menu.
@@ -52,16 +60,27 @@ export class Player {
   private anim = new Anim() // le lecteur des mouvements importés
   /** 🥴 Vrai quand un sort brouille la course : on passe sur la foulée gênée. */
   gene = false
+  private vire = 0 // le côté du virage en cours : -1 gauche, +1 droite
+  private vireT = 0 // ce qu'il en reste
 
   /**
    * Le mouvement que réclame l'état courant du coureur.
    * L'ordre compte : la glissade prime sur le saut (on peut plonger en l'air),
-   * et le saut prime sur la course.
+   * le saut prime sur le virage, et le virage sur la course.
    */
   private action(): Action {
     if (this.sliding > 0) return 'glissade'
     if (!this.onGround) return 'saut'
+    if (this.vireT > 0) return this.vire < 0 ? 'virageG' : 'virageD'
     return this.gene ? 'courseGenee' : 'course'
+  }
+
+  /**
+   * Déclenche un geste du haut du corps : le jet d'un sort, une frappe, un
+   * encaissement. Les jambes continuent de courir dessous.
+   */
+  geste(g: Geste) {
+    this.anim.declencher(g)
   }
 
   constructor(scene: THREE.Scene) {
@@ -126,11 +145,17 @@ export class Player {
   }
 
   moveLeft() {
-    this.lane = Math.max(0, this.lane - 1)
+    if (this.lane === 0) return // déjà au bord : pas de virage dans le vide
+    this.lane--
+    this.vire = -1
+    this.vireT = VIRAGE_TEMPS
   }
 
   moveRight() {
-    this.lane = Math.min(2, this.lane + 1)
+    if (this.lane === 2) return
+    this.lane++
+    this.vire = 1
+    this.vireT = VIRAGE_TEMPS
   }
 
   /**
@@ -169,6 +194,7 @@ export class Player {
     if (this.attackT > 0) return false
     this.attackT = ATTACK_TIME
     this.sliding = 0 // on ne frappe pas accroupi
+    this.anim.declencher('attaque')
     return true
   }
 
@@ -201,6 +227,7 @@ export class Player {
 
   update(dt: number) {
     this.tAnim += dt
+    this.vireT = Math.max(0, this.vireT - dt)
     // Le mouvement suit l'ÉTAT, pas une horloge : au sol on court, en l'air on
     // joue le saut, au ras du sol la glissade. Le lecteur enchaîne en fondu.
     animerGuerrier(this.racine, this.fighter, this.anim, this.action(), dt, this.tAnim)

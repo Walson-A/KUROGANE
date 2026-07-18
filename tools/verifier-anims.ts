@@ -49,7 +49,7 @@ const PERSOS: Fighter[] = [
 ]
 
 console.log('\n————— Couverture : qui a quoi —————')
-const ACTIONS: Action[] = ['course', 'courseGenee', 'saut', 'glissade', 'chute']
+const ACTIONS: Action[] = ['course', 'courseGenee', 'saut', 'glissade', 'chute', 'lancer', 'virageG', 'virageD', 'impact', 'attaque']
 for (const f of PERSOS) {
   const dispo = ACTIONS.filter((a) => clipDe(f, a))
   const nom = f.id === 'perso' ? `perso(${f.head})` : f.id
@@ -185,6 +185,57 @@ for (const f of PERSOS) {
   // Laissé libre, l'epaule balançait de 40° et promenait la lame dans les
   // jambes. Verrouillée, elle ne doit plus s'en écarter que d'un souffle.
   verifier(`${nom.padEnd(16)} epaule armee tenue`, ecart < 0.3, `ecart max ${ecart.toFixed(2)} rad`)
+}
+
+console.log('\n————— Les virages penchent du bon cote —————')
+for (const f of PERSOS) {
+  const nom = f.id === 'perso' ? `perso(${f.head})` : f.id
+  const mesure = (a: Action) => {
+    const { racine, corps } = corpsDe(f)
+    const anim = new Anim()
+    let cumul = 0
+    let n = 0
+    const clip = clipDe(f, a)!
+    for (let i = 0; i < 30; i++) {
+      animerGuerrier(racine, f, anim, a, clip.duree / 30, i / 30)
+      // L'inclinaison du buste sur l'axe Z : negatif = penche vers -X.
+      cumul += new THREE.Euler().setFromQuaternion(corps.torse.quaternion, 'ZYX').z
+      n++
+    }
+    return cumul / n
+  }
+  const g = mesure('virageG')
+  const d = mesure('virageD')
+  /*
+   * Le coureur avance vers -Z. Un virage a GAUCHE le porte vers -X, et on se
+   * penche DANS son virage comme a moto. Les deux inclinaisons doivent donc
+   * etre opposees — c'est ce qui prouve qu'aucun cote n'a ete inverse.
+   */
+  verifier(`${nom.padEnd(16)} gauche et droite opposes`, g * d < 0, `gauche ${g.toFixed(3)} / droite ${d.toFixed(3)}`)
+}
+
+console.log('\n————— Les gestes se posent sur le HAUT du corps —————')
+for (const geste of ['lancer', 'attaque', 'impact'] as const) {
+  const f = PERSOS[0]
+  const { racine, corps } = corpsDe(f)
+  const anim = new Anim()
+  // On laisse d'abord la course s'installer, puis on declenche le geste.
+  for (let i = 0; i < 20; i++) animerGuerrier(racine, f, anim, 'course', 1 / 60, i / 60)
+  anim.declencher(geste)
+  let brasBouge = 0
+  let jambeBouge = 0
+  let precBras = corps.brasD.pivot.quaternion.clone()
+  let precJambe = corps.jambeG.pivot.quaternion.clone()
+  for (let i = 0; i < 40; i++) {
+    animerGuerrier(racine, f, anim, 'course', 1 / 60, (20 + i) / 60)
+    brasBouge += precBras.angleTo(corps.brasD.pivot.quaternion)
+    jambeBouge += precJambe.angleTo(corps.jambeG.pivot.quaternion)
+    precBras = corps.brasD.pivot.quaternion.clone()
+    precJambe = corps.jambeG.pivot.quaternion.clone()
+  }
+  // Les JAMBES doivent continuer de courir : un lanceur ne patine pas sur place.
+  verifier(`${geste.padEnd(10)} le bras joue`, brasBouge > 0.3, `bras ${brasBouge.toFixed(2)} rad`)
+  verifier(`${geste.padEnd(10)} les jambes courent toujours`, jambeBouge > 1, `jambes ${jambeBouge.toFixed(2)} rad`)
 }
 
 console.log('\n————— Le repli quand le mouvement manque —————')

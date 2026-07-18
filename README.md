@@ -139,6 +139,29 @@ Le perso « + » cherche d'abord son ornement (`perso/aucun`, `perso/kitsu`,
 Personne ne peut se retrouver figé : quand un mouvement manque — le perso « + »
 n'a pas de saut — le guerrier **retombe sur l'ancienne foulée calculée**.
 
+> Les **bots d'entraînement** (`bot.ts`) gardent leur maillage simple : ils n'ont
+> pas de corps articulé, donc rien à animer. Seuls le joueur et les rivaux en
+> ligne jouent ces mouvements.
+
+### Les gestes qui se superposent
+
+🔥 **Le lancer** part sur le **portail, le senbon, la fumigène et le kunai** —
+les quatre sorts qui quittent la main. Les sorts qu'on se jette à soi-même
+(armure, thé, grue) n'ont rien à lancer.
+
+Un coureur qui jette un sort **ne cesse pas de courir**. Le lancer, la frappe et
+l'encaissement ne sont donc pas des mouvements à part entière : ce sont des
+**gestes du haut du corps**, posés par-dessus la foulée. Les jambes continuent,
+seuls le buste, la tête et les bras jouent le geste — sinon le lanceur patinerait
+sur place au milieu de la piste.
+
+Pendant un geste, le **verrou du bras armé se relâche** : le garder tiendrait la
+garde et écraserait le lancer qu'on vient de déclencher.
+
+L'encaissement se déclenche sur le **front montant** de `stumble`, guetté à un
+seul endroit de la boucle — plutôt qu'aux cinq sources qui font trébucher (mur,
+kunai, coup d'un rival, armure entamée…), dont une aurait fini par être oubliée.
+
 ### Ce que le nom du fichier ne dit pas
 
 Un nom de fichier ment ; la courbe des os, non. La cuisson **mesure** chaque
@@ -154,6 +177,14 @@ clip et départage sur les faits :
   la même allure.
 - **un saut doit avancer.** `Joyful Jump` est un saut de joie sur place ; c'est
   `Jump (2)` qui franchit l'obstacle.
+- **le côté d'un virage se mesure.** Hana a deux fichiers nommés `Running Arc`
+  et `Running Arc (1)` — les noms ne disent rien. C'est la **dérive latérale des
+  hanches** qui tranche. Là où Mixamo nomme le côté (`Arc Left` / `Arc Right`),
+  la mesure tombe d'accord avec le nom : de quoi lui faire confiance ailleurs.
+- **un clip trop long est taillé autour de son geste.** `Fireball` dure 3,37 s :
+  la main recule jusqu'à 1,5 s, se projette à 1,90 s, puis récupère. On garde
+  1,35 → 2,45 s, joué une fois et demie plus vite. `Hell Slammer` dure 7,57 s
+  pour une frappe qui en dure 0,26 dans le jeu : on ne garde que le coup.
 
 ### Le contrôle anatomique
 

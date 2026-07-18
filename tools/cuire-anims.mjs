@@ -65,13 +65,42 @@ const JOINTS = [
  * venu : on les départage sur ce qu'ils font réellement (cf. `note`). Un nom
  * de fichier ment souvent — la courbe des os, jamais.
  */
+/*
+ * ⚠️ L'ORDRE COMPTE : le premier rôle dont un motif accroche gagne. Les cas
+ * précis passent donc AVANT les génériques — sans quoi « Run Forward Arc
+ * Left » serait pris pour une course par /^Run\b/ et le virage se perdrait.
+ *
+ * Le côté d'un virage n'est PAS lu dans le nom : deux fichiers peuvent
+ * s'appeler « Running Arc » et « Running Arc (1) » sans rien dire du côté.
+ * C'est la dérive latérale des hanches qui tranche, plus bas.
+ */
 const ACTIONS = {
-  course: [/^Fast Run/i, /^Run\b/i, /^Running\./i],
+  virage: [/Arc/i],
+  lancer: [/Fireball/i],
+  impact: [/Impact/i],
+  attaque: [/Slammer/i],
   courseGenee: [/Injured Run/i, /Drunk Run/i],
-  saut: [/Jump/i],
+  mur: [/Wall Run/i],
   glissade: [/Slide/i],
   chute: [/Defeated/i],
-  mur: [/Wall Run/i],
+  saut: [/Jump/i],
+  course: [/^Fast Run/i, /^Run\b/i, /^Running\./i],
+}
+
+/**
+ * Les clips trop longs pour le jeu, ramenés à leur geste utile.
+ * Les bornes viennent de la mesure, pas du ressenti : on suit la main droite
+ * et on garde la fenêtre autour de son pic de vitesse — le moment du lâcher.
+ *
+ * `[début, fin]` en secondes, `vitesse` = accélération de la lecture.
+ */
+const DECOUPES = {
+  // Fireball dure 3,37 s : la main recule jusqu'à 1,5 s, se projette à 1,90 s,
+  // puis récupère. On garde l'armé + le jet, joué une fois et demie plus vite.
+  'Fireball.fbx': { debut: 1.35, fin: 2.45, vitesse: 1.5 },
+  // Hell Slammer dure 7,57 s pour une attaque qui en dure 0,26 dans le jeu.
+  // Son pic est à 0,97 s : on ne garde que la frappe autour.
+  'Hell Slammer A.fbx': { debut: 0.62, fin: 1.32, vitesse: 1.4 },
 }
 
 /**
@@ -92,6 +121,9 @@ function note(action, m) {
     return boucleOk - m.avance / Math.max(0.01, m.duree)
   }
   if (action === 'saut') return (m.avance > 20 ? 0 : 10) + m.duree
+  // Un virage doit PENCHER franchement : entre deux, le plus incliné se lit
+  // mieux à l'écran.
+  if (action.startsWith('virage')) return -Math.abs(m.derive)
   return m.duree // le reste : au plus court, faute de meilleur critère
 }
 
@@ -151,6 +183,13 @@ function cuire(fichier) {
   const clip = racine.animations[0]
   if (!clip) return null
 
+  // Le découpage : on ne cuit que la fenêtre utile, et on la joue plus vite.
+  const coupe = DECOUPES[path.basename(fichier)]
+  const t0 = coupe ? Math.min(coupe.debut, clip.duration) : 0
+  const t1 = coupe ? Math.min(coupe.fin, clip.duration) : clip.duration
+  const etendue = Math.max(0.05, t1 - t0)
+  const vitesse = coupe?.vitesse ?? 1
+
   const os = {}
   racine.traverse((o) => {
     if (o.isBone) os[o.name.replace(/^mixamorig:?/, '')] = o
@@ -166,7 +205,7 @@ function cuire(fichier) {
   const mixer = new THREE.AnimationMixer(racine)
   mixer.clipAction(clip).play()
 
-  const n = Math.max(2, Math.round(clip.duration * FPS))
+  const n = Math.max(2, Math.round(etendue * FPS))
   const pistes = {}
   for (const j of JOINTS) pistes[j.nom] = []
   const hauteurs = []
@@ -177,10 +216,12 @@ function cuire(fichier) {
   const monde = new THREE.Vector3()
   let depart = 0
   let arrivee = 0
+  let departX = 0
+  let arriveeX = 0
 
   let precedent = 0
   for (let i = 0; i < n; i++) {
-    const t = (i / n) * clip.duration
+    const t = t0 + (i / n) * etendue
     mixer.update(t - precedent)
     precedent = t
     racine.updateMatrixWorld(true)
@@ -224,18 +265,27 @@ function cuire(fichier) {
     // défile). Les recopier ferait patiner le coureur.
     hanches.getWorldPosition(monde)
     hauteurs.push(Math.round(monde.y * ECHELLE * PRECISION) / PRECISION)
-    if (i === 0) depart = monde.z
+    if (i === 0) { depart = monde.z; departX = monde.x }
     arrivee = monde.z
+    arriveeX = monde.x
   }
 
+  const duree = etendue / vitesse
   return {
-    d: +clip.duration.toFixed(3),
+    d: +duree.toFixed(3),
     n,
     q: pistes,
     y: hauteurs,
     mesures: {
-      duree: clip.duration,
+      duree,
       avance: Math.abs(arrivee - depart),
+      /*
+       * La dérive latérale, qui dit de quel côté va un virage.
+       * Mixamo pose le personnage face à +Z, son côté DROIT en -X (l'épaule
+       * droite est à x négatif au repos). Une dérive vers -X est donc un
+       * virage à droite.
+       */
+      derive: arriveeX - departX,
       boucle: ecartDeBoucle(pistes, n),
     },
   }
@@ -300,8 +350,19 @@ for (const fichier of fichiers) {
     journal.push(`  · illisible : ${fichier}`)
     continue
   }
-  const cles = [`${persoDe(fichier)}/${action}`]
-  if (partages.has(fichier)) cles.push(`tous/${action}`)
+  // Un virage se range à gauche ou à droite d'après sa DÉRIVE, jamais d'après
+  // son nom : « Running Arc » et « Running Arc (1) » ne disent rien du côté.
+  let vraieAction = action
+  if (action === 'virage') {
+    if (Math.abs(cuit.mesures.derive) < 20) {
+      journal.push(`  · ${fichier} : virage sans dérive, on ne sait pas de quel côté`)
+      continue
+    }
+    vraieAction = cuit.mesures.derive > 0 ? 'virageG' : 'virageD'
+  }
+
+  const cles = [`${persoDe(fichier)}/${vraieAction}`]
+  if (partages.has(fichier)) cles.push(`tous/${vraieAction}`)
   for (const cle of cles) {
     if (!candidats.has(cle)) candidats.set(cle, [])
     candidats.get(cle).push({ fichier, cuit })

@@ -248,6 +248,7 @@ let distance = 0 // mètres parcourus
 let speed = 0
 let countdown = 0 // secondes avant le GO !
 let stumble = 0 // invincibilité après un trébuchement
+let stumblePrec = 0 // sa valeur à l'image d'avant : sert à repérer le choc
 let netTimer = 0 // pour n'envoyer notre position que 10 fois/s
 let sprintTaps: number[] = [] // instants des derniers taps → cadence
 let sprintCharge = 0 // la jauge de sprint, 0 → 1
@@ -1634,6 +1635,19 @@ function cibleDevant(): Bot | undefined {
 }
 
 /** Lance le parchemin le plus ancien. Rien à faire s'il n'y en a pas. */
+/**
+ * 🔥 Les sorts qu'on JETTE — ceux qui méritent le geste du lancer.
+ *
+ * Ce sont les quatre qui partent de la main : le portail, l'aiguille, la
+ * fumée et la lame. Les autres se posent sur soi (l'armure, le thé, la grue)
+ * et n'ont rien à jeter — leur donner le même geste ferait mimer un tir dans
+ * le vide.
+ *
+ * Le geste ne part qu'au moment où le sort SORT vraiment : quand on mène
+ * déjà, le rouleau est rendu et rien ne doit s'animer.
+ */
+const SORTS_LANCES = new Set(['onmyoji', 'senbon', 'fumigene', 'kunai'])
+
 function lancerParchemin() {
   // Dans le sprint, tous les taps servent à marteler : pas de sort ici, sinon
   // le clavier pourrait encore lancer (touche E) là où le mobile ne peut plus.
@@ -1683,6 +1697,7 @@ function lancerParchemin() {
     // la brûlure qu'il laissera sur le mur.
     const couleur = couleurPortail(menu.fighter.band)
     portail = { d: distance, lane: player.currentLane, couleur }
+    player.geste('lancer') // 🔥 le bras jette le portail devant lui
     for (const m of [portailHalo, portailAnneau]) {
       ;(m.material as THREE.MeshBasicMaterial).color.setHex(couleur)
     }
@@ -1703,6 +1718,7 @@ function lancerParchemin() {
         return
       }
       lancerProjet(kind, player.mesh.position, cible.opp.mesh.position, cible.opp.mesh)
+      if (SORTS_LANCES.has(kind)) player.geste('lancer') // 🔥
       if (kind === 'fumigene') spawnFumeeZone(cible.opp.mesh)
       net.sendSpell(kind, cible.id)
       toast(`${p.icone} sur ${cible.name} !`)
@@ -1717,6 +1733,7 @@ function lancerParchemin() {
     // `subirSort` rejouera le vol dans l'autre sens : c'est le même maillage,
     // donc le retour écrase l'aller — on ne voit que le trajet qui compte.
     lancerProjet(kind, player.mesh.position, cible.mesh.position, cible.mesh)
+    if (SORTS_LANCES.has(kind)) player.geste('lancer') // 🔥
     if (kind === 'fumigene') spawnFumeeZone(cible.mesh)
 
     // Sa parade peut nous le renvoyer dans les dents : on l'a bien cherché
@@ -2694,6 +2711,19 @@ function tick(now?: number) {
     // ⚔️ La chaîne retombe si on laisse passer trop de temps entre deux coups
     chaineT = Math.max(0, chaineT - dt)
     if (chaineT <= 0) chaine = 0
+
+    /*
+     * 😖 L'encaissement se déclenche sur le FRONT MONTANT de `stumble`.
+     *
+     * On le guette ici plutôt qu'aux cinq endroits qui font trébucher (mur,
+     * kunai, coup d'un rival, armure entamée…) : un seul point d'écoute, et
+     * aucune source ne peut être oubliée en chemin.
+     */
+    if (stumble > stumblePrec) player.geste('impact')
+    stumblePrec = stumble
+
+    // 🥴 Empoisonné, aveuglé ou entravé : la foulée devient bancale.
+    player.gene = time < senbonFin || time < fumigeneFin || time < kusarigamaFin
 
     // Trébuchement : toucher un obstacle RALENTIT (on ne meurt pas, c'est une course)
     stumble = Math.max(0, stumble - dt)

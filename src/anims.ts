@@ -17,7 +17,30 @@ import * as THREE from 'three'
 import cuites from './anims-cuites.json' with { type: 'json' }
 import { animerCourse, type Corps, type Fighter } from './roster'
 
-export type Action = 'course' | 'courseGenee' | 'saut' | 'glissade' | 'chute'
+export type Action =
+  | 'course'
+  | 'courseGenee'
+  | 'saut'
+  | 'glissade'
+  | 'chute'
+  | 'lancer'
+  | 'virageG'
+  | 'virageD'
+  | 'impact'
+  | 'attaque'
+
+/**
+ * Les gestes qui se SUPERPOSENT à la foulée au lieu de la remplacer.
+ *
+ * Un coureur qui lance un sort ne cesse pas de courir : il jette le bras
+ * pendant que ses jambes continuent. Jouer le lancer seul le ferait patiner
+ * sur place au milieu de la piste. On garde donc la foulée sur le bas du
+ * corps et on ne pose le geste que sur le haut.
+ *
+ * C'est un type à part pour que le compilateur refuse de superposer une
+ * course : `declencher('course')` n'a aucun sens et ne doit pas compiler.
+ */
+export type Geste = 'lancer' | 'attaque' | 'impact'
 
 /** Le temps d'un fondu entre deux mouvements. Court : on court, ça doit claquer. */
 const FONDU = 0.18
@@ -153,7 +176,15 @@ const EN_BOUCLE: Record<Action, boolean> = {
   saut: false,
   glissade: false,
   chute: false,
+  lancer: false,
+  virageG: false,
+  virageD: false,
+  impact: false,
+  attaque: false,
 }
+
+/** Les articulations du haut du corps — celles que pilote un geste superposé. */
+const JOINTS_HAUT = new Set(['torse', 'tete', 'brasG', 'brasGbas', 'brasD', 'brasDbas'])
 
 /**
  * L'état d'animation d'UN coureur. Chacun a le sien : le joueur, chaque bot,
@@ -175,6 +206,19 @@ export class Anim {
    */
   constructor(phase = 0) {
     this.t = phase
+  }
+
+  /** Le geste superposé en cours (lancer, attaque, encaissement) */
+  private geste: Geste | null = null
+  private tGeste = 0
+
+  /**
+   * Déclenche un geste du haut du corps, par-dessus la foulée en cours.
+   * Rejouer le même le REPART du début : on peut enchaîner deux sorts.
+   */
+  declencher(geste: Geste) {
+    this.geste = geste
+    this.tGeste = 0
   }
 
   /**
@@ -234,7 +278,49 @@ export class Anim {
     g.bassin.position.y = 0.72 + (y - 0.72) * intensite
 
     if (this.fondu <= 0) this.avant = null
+    this.poserGeste(f, g, dt, intensite)
     return true
+  }
+
+  /**
+   * Pose le geste du haut du corps par-dessus la foulée.
+   *
+   * Il s'ouvre et se referme en douceur : sans ça, le bras claquerait d'un
+   * coup dans la pose de lancer, puis retomberait tout aussi sec.
+   */
+  private poserGeste(f: Fighter, g: Corps, dt: number, intensite: number) {
+    if (!this.geste) return
+    const clip = clipDe(f, this.geste)
+    if (!clip) {
+      this.geste = null
+      return
+    }
+
+    this.tGeste += dt
+    if (this.tGeste >= clip.duree) {
+      this.geste = null
+      return
+    }
+
+    // Une ouverture et une fermeture proportionnelles au geste : un geste
+    // court ne peut pas s'offrir un fondu aussi long qu'un geste ample.
+    const rampe = Math.min(FONDU, clip.duree * 0.25)
+    const restant = clip.duree - this.tGeste
+    const poids =
+      Math.min(1, this.tGeste / rampe) * Math.min(1, restant / rampe) * intensite
+
+    for (const joint of Object.keys(clip.pistes)) {
+      if (!JOINTS_HAUT.has(joint)) continue
+      const cible = membre(g, joint)
+      if (!cible) continue
+      lire(clip, joint, this.tGeste, qTmp, false)
+      cible.quaternion.slerp(qTmp, poids)
+    }
+  }
+
+  /** Un geste est-il en train de se jouer ? */
+  get gesteEnCours() {
+    return this.geste !== null
   }
 
   /** Où en est le mouvement, de 0 à 1. Utile pour savoir s'il est fini. */
@@ -263,8 +349,11 @@ const REPOS = new THREE.Quaternion()
 const ARME_EPAULE = new THREE.Quaternion().setFromEuler(new THREE.Euler(-0.3, 0, 0))
 const ARME_COUDE = new THREE.Quaternion().setFromEuler(new THREE.Euler(1.15, 0, 0))
 
-function finitions(g: Corps, t: number, intensite: number) {
-  if (g.porteArme) {
+function finitions(g: Corps, t: number, intensite: number, geste: boolean) {
+  // Pendant un geste (lancer, frappe, encaissement), on RELÂCHE le verrou :
+  // le bras doit pouvoir partir. Le garder tiendrait la garde et écraserait
+  // le lancer qu'on vient justement de déclencher.
+  if (g.porteArme && !geste) {
     // Laissé libre, le bras qui PORTE balance de 40° et promène la lame dans
     // les jambes. On le ramène presque entièrement sur sa pose de garde, en
     // gardant un souffle de mouvement pour qu'il ne paraisse pas vissé.
@@ -308,5 +397,5 @@ export function animerGuerrier(
     animerCourse(racine, tSecours, intensite)
     return
   }
-  finitions(g, tSecours, intensite)
+  finitions(g, tSecours, intensite, anim.gesteEnCours)
 }

@@ -1,5 +1,5 @@
 import * as THREE from 'three'
-import { LANES } from './player'
+import { LANES, VIRAGE_TEMPS } from './player'
 import { NameTag } from './nametag'
 import { buildFighter, clearFighter, cssColor, fighterById, type Fighter } from './roster'
 import { Anim, animerGuerrier, type Action } from './anims'
@@ -58,11 +58,15 @@ export class Opponent {
   /** Son lecteur, décalé au hasard pour ne pas courir au pas avec les autres */
   private anim = new Anim(Math.random() * 3)
 
+  private vire = 0 // le côté de son virage : -1 gauche, +1 droite
+  private vireT = 0 // ce qu'il en reste
+
   /** Le mouvement que réclame son état courant (cf. Player.action). */
   private action(): Action {
     if (this.stumbleT > 0) return 'courseGenee'
     if (this.sliding || this.slideTimer > 0) return 'glissade'
     if (this.mesh.position.y > 0.001) return 'saut'
+    if (this.vireT > 0) return this.vire < 0 ? 'virageG' : 'virageD'
     return 'course'
   }
 
@@ -116,6 +120,7 @@ export class Opponent {
     this.vy = 0
     this.slideTimer = 0
     this.stumbleT = 0
+    this.vireT = 0
     // Sur SA ligne de la grille, à la même hauteur que nous : une vraie ligne de départ
     this.mesh.position.set(LANES[lane], 0, 0)
     this.mesh.scale.y = 1
@@ -152,7 +157,14 @@ export class Opponent {
    */
   applyAction(a: OppAction) {
     if (a.t === 'lane') {
-      this.lane = Math.max(0, Math.min(2, Math.round(a.lane)))
+      const vise = Math.max(0, Math.min(2, Math.round(a.lane)))
+      // Il penche du côté où il part — on le déduit de sa ligne précédente,
+      // le réseau ne transmet que la ligne d'arrivée.
+      if (vise !== this.lane) {
+        this.vire = vise < this.lane ? -1 : 1
+        this.vireT = VIRAGE_TEMPS
+      }
+      this.lane = vise
     } else if (a.t === 'jump') {
       // On rejoue son saut en physique locale : mêmes règles que player.ts
       this.vy = Math.min(20, Math.max(5, a.v))
@@ -164,6 +176,7 @@ export class Opponent {
       this.netSpeed *= Math.min(1, Math.max(0, a.keep))
       // …et il clignote le temps de se relever, comme chez lui
       this.stumbleT = 1.2
+      this.anim.declencher('impact') // 😖 on le voit encaisser
     }
   }
 
@@ -207,6 +220,7 @@ export class Opponent {
     // Sa foulée tourne avec SA propre horloge : sans ça, les deux coureurs
     // seraient au pas cadencé comme des soldats.
     this.tAnim += dt
+    this.vireT = Math.max(0, this.vireT - dt)
     animerGuerrier(this.racine, this.fighter, this.anim, this.action(), dt, this.tAnim)
 
     // ————— L'extrapolation —————
