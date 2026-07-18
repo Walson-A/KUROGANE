@@ -90,7 +90,13 @@ kurogane/
 │   ├── bot.ts          Les rivaux d'entraînement : esquive scriptée, parchemins
 │   ├── net.ts          La connexion au serveur : rejoindre, envoyer, recevoir
 │   ├── input.ts        Clavier + swipes + double-tap + martèlement du sprint
+│   ├── anims.ts        🎞️ Le lecteur des mouvements importés (Mixamo reciblé)
+│   ├── anims-cuites.json  Les mouvements, cuits — NE PAS ÉDITER À LA MAIN
 │   └── style.css       L'habillage de l'interface
+├── animation/          Les .fbx Mixamo déposés (la SOURCE des mouvements)
+├── tools/
+│   ├── cuire-anims.mjs    La cuisson : .fbx → anims-cuites.json
+│   └── verifier-anims.ts  Le contrôle anatomique des mouvements reciblés
 └── server/
     └── src/
         ├── index.ts    Démarrage du serveur (port 2567)
@@ -100,6 +106,72 @@ kurogane/
 `roster.ts` est la **source de vérité unique** : le menu, le joueur, le rival et
 l'aperçu 3D lisent tous la même fiche. Pour ajouter un guerrier, il suffit
 d'ajouter une entrée dans `ROSTER` — le reste du jeu suit tout seul.
+
+## 🎞️ Les animations : du Mixamo sur des boîtes
+
+Les mouvements viennent de `.fbx` Mixamo déposés dans `animation/`. Ils sont
+exportés **sans peau** : 65 os, aucun maillage. Impossible de les afficher tels
+quels — nos guerriers sont des empilements de boîtes montés par `buildFighter`.
+
+D'où le **reciblage**. On ne recopie pas les rotations Mixamo (leurs os n'ont ni
+la même pose de repos ni les mêmes proportions que nos boîtes) : on lit la
+**direction** de chaque membre dans le monde, et on cherche la rotation qui
+pointe notre boîte dans ce sens-là. Ça marche quelles que soient les
+proportions, et ça tient dans dix articulations.
+
+### Pourquoi cuire hors ligne
+
+Les 21 fichiers pèsent **8,7 Mo**, plus 200 Ko de `FBXLoader` dans le bundle.
+Une fois cuits : **26 Ko compressés** — 350 fois moins. Le jeu garde sa promesse,
+rien de lourd à télécharger sur mobile.
+
+```bash
+npm run anims        # recuit animation/*.fbx → src/anims-cuites.json
+npm run anims:test   # contrôle anatomique (à lancer après toute recuisson)
+```
+
+### La règle des dossiers
+
+`animation/hana/` n'anime que Hana ; à la **racine**, ça sert à tout le monde.
+Le perso « + » cherche d'abord son ornement (`perso/aucun`, `perso/kitsu`,
+`perso/oni2`), puis le fonds commun `perso/`, puis la racine.
+
+Personne ne peut se retrouver figé : quand un mouvement manque — le perso « + »
+n'a pas de saut — le guerrier **retombe sur l'ancienne foulée calculée**.
+
+### Ce que le nom du fichier ne dit pas
+
+Un nom de fichier ment ; la courbe des os, non. La cuisson **mesure** chaque
+clip et départage sur les faits :
+
+- **une course doit boucler.** On compare la pose d'arrivée à celle de départ,
+  rapportée à l'écart entre deux images. `Running.fbx` saute de 2,6 images à la
+  reprise — et pour cause, ce n'est pas une course : les hanches y tombent de 98
+  à 12 et dérivent de 436 sur le côté. C'est une roulade. Elle est **refusée**.
+- **entre deux clips qui bouclent, le plus rapide gagne.** Hana avait hérité de
+  `Run.fbx`, un jogging : elle levait les jambes deux fois moins haut que les
+  autres et se serait lue comme une coureuse à la traîne, alors qu'elle avance à
+  la même allure.
+- **un saut doit avancer.** `Joyful Jump` est un saut de joie sur place ; c'est
+  `Jump (2)` qui franchit l'obstacle.
+
+### Le contrôle anatomique
+
+Le reciblage est de la déduction : une erreur de repère et le guerrier court les
+**genoux à l'envers**, sans qu'aucun typage ne bronche. `npm run anims:test`
+joue les clips pour de vrai et mesure le squelette obtenu — les genoux se
+replient-ils derrière, les coudes devant, les pieds touchent-ils le sol, les
+bras balancent-ils à l'opposé des jambes, le bassin reste-t-il à hauteur d'homme.
+
+C'est ce contrôle qui a établi le repère : le coureur avance vers **−Z** (le
+décor défile vers +Z et sort derrière la caméra) et son buste se penche dans le
+sens de la marche. Donc −Z devant, +Z derrière.
+
+> ⚠️ Deux détails **antérieurs** à ces animations, laissés en l'état :
+> l'ancienne foulée calculée de `animerCourse` plie genoux et coudes dans
+> l'autre sens, et la plaque de visage (menpo, masque d'oni) est modelée du
+> côté +Z, donc à l'arrière de la tête. Les mouvements importés, eux, suivent
+> le repère ci-dessus.
 
 ## 🎌 Les salons — jouer jusqu'à 10
 

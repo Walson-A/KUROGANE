@@ -1,7 +1,8 @@
 import * as THREE from 'three'
 import { LANES } from './player'
 import { NameTag } from './nametag'
-import { animerCourse, buildFighter, clearFighter, cssColor, fighterById, type Fighter } from './roster'
+import { buildFighter, clearFighter, cssColor, fighterById, type Fighter } from './roster'
+import { Anim, animerGuerrier, type Action } from './anims'
 import type { OppAction } from './net'
 
 /** Ce que le réseau nous apprend sur l'adversaire à chaque message */
@@ -53,7 +54,17 @@ export class Opponent {
 
   private fighter: Fighter = fighterById('kurokumo')
   private racine?: THREE.Object3D // son corps articulé
-  private tAnim = 0 // l'horloge de SA foulée
+  private tAnim = 0 // l'horloge de SA foulée calculée (repli et flottants)
+  /** Son lecteur, décalé au hasard pour ne pas courir au pas avec les autres */
+  private anim = new Anim(Math.random() * 3)
+
+  /** Le mouvement que réclame son état courant (cf. Player.action). */
+  private action(): Action {
+    if (this.stumbleT > 0) return 'courseGenee'
+    if (this.sliding || this.slideTimer > 0) return 'glissade'
+    if (this.mesh.position.y > 0.001) return 'saut'
+    return 'course'
+  }
 
   /** Son pseudo, qui flotte au-dessus de sa tête. Piloté par main.ts. */
   readonly tag: NameTag
@@ -196,7 +207,7 @@ export class Opponent {
     // Sa foulée tourne avec SA propre horloge : sans ça, les deux coureurs
     // seraient au pas cadencé comme des soldats.
     this.tAnim += dt
-    animerCourse(this.racine, this.tAnim)
+    animerGuerrier(this.racine, this.fighter, this.anim, this.action(), dt, this.tAnim)
 
     // ————— L'extrapolation —————
     // L'âge du message : exact si horodaté (synchro d'horloge), sinon estimé

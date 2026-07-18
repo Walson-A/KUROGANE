@@ -1,0 +1,340 @@
+/**
+ * ————— La cuisson des animations —————
+ *
+ * Les .fbx déposés dans animation/ sont des exports Mixamo « sans peau » :
+ * 65 os, AUCUN maillage. Ils ne peuvent donc pas s'afficher tels quels — nos
+ * guerriers, eux, sont des empilements de boîtes montés dans roster.ts.
+ *
+ * Ce script fait le pont : il RECIBLE le mouvement des os Mixamo sur notre
+ * petit squelette à boîtes, puis l'écrit en JSON compact.
+ *
+ * Pourquoi cuire hors ligne plutôt que charger les FBX dans le navigateur ?
+ * Les 21 fichiers pèsent 9 Mo, plus 200 Ko de FBXLoader. Une fois cuits, les
+ * mêmes mouvements tiennent dans quelques dizaines de Ko — et le jeu garde sa
+ * promesse : rien de lourd à télécharger sur mobile.
+ *
+ *   node tools/cuire-anims.mjs
+ */
+import { FBXLoader } from 'three/examples/jsm/loaders/FBXLoader.js'
+import * as THREE from 'three'
+import fs from 'fs'
+import path from 'path'
+import crypto from 'crypto'
+
+const SOURCE = 'animation'
+const SORTIE = 'src/anims-cuites.json'
+const FPS = 30
+/** 3 décimales : au-delà, on paye des octets pour des angles invisibles. */
+const PRECISION = 1000
+
+/*
+ * ————— Le reciblage —————
+ *
+ * Mixamo place le personnage FACE À +Z ; notre coureur regarde -Z (la caméra
+ * est derrière lui). D'où le demi-tour appliqué à chaque direction.
+ */
+const DEMI_TOUR = (v) => v.set(-v.x, v.y, -v.z)
+
+/** Vers le BAS : la pose de repos de nos membres (le mesh pend sous le pivot) */
+const BAS = new THREE.Vector3(0, -1, 0)
+/** Vers le HAUT : la pose de repos du torse et de la tête */
+const HAUT = new THREE.Vector3(0, 1, 0)
+
+/**
+ * Chaque articulation de notre rig, dans l'ORDRE HIÉRARCHIQUE (parent d'abord).
+ * `de` → `vers` : les deux os Mixamo dont l'écart donne la direction du membre.
+ * `parent` : l'articulation au-dessus, dont on hérite l'orientation.
+ */
+const JOINTS = [
+  { nom: 'torse', parent: null, repos: HAUT, de: 'Spine', vers: 'Neck' },
+  { nom: 'tete', parent: 'torse', repos: HAUT, de: 'Neck', vers: 'Head' },
+  { nom: 'brasG', parent: 'torse', repos: BAS, de: 'LeftArm', vers: 'LeftForeArm' },
+  { nom: 'brasGbas', parent: 'brasG', repos: BAS, de: 'LeftForeArm', vers: 'LeftHand' },
+  { nom: 'brasD', parent: 'torse', repos: BAS, de: 'RightArm', vers: 'RightForeArm' },
+  { nom: 'brasDbas', parent: 'brasD', repos: BAS, de: 'RightForeArm', vers: 'RightHand' },
+  { nom: 'jambeG', parent: null, repos: BAS, de: 'LeftUpLeg', vers: 'LeftLeg' },
+  { nom: 'jambeGbas', parent: 'jambeG', repos: BAS, de: 'LeftLeg', vers: 'LeftFoot' },
+  { nom: 'jambeD', parent: null, repos: BAS, de: 'RightUpLeg', vers: 'RightLeg' },
+  { nom: 'jambeDbas', parent: 'jambeD', repos: BAS, de: 'RightLeg', vers: 'RightFoot' },
+]
+
+/**
+ * Quel fichier joue quel rôle, d'après son nom.
+ *
+ * Quand plusieurs fichiers visent le même rôle, on ne prend PAS le premier
+ * venu : on les départage sur ce qu'ils font réellement (cf. `note`). Un nom
+ * de fichier ment souvent — la courbe des os, jamais.
+ */
+const ACTIONS = {
+  course: [/^Fast Run/i, /^Run\b/i, /^Running\./i],
+  courseGenee: [/Injured Run/i, /Drunk Run/i],
+  saut: [/Jump/i],
+  glissade: [/Slide/i],
+  chute: [/Defeated/i],
+  mur: [/Wall Run/i],
+}
+
+/**
+ * La note d'un candidat pour un rôle : PLUS BAS = MEILLEUR.
+ *
+ * - une course doit BOUCLER : `boucle` mesure l'écart de pose entre la
+ *   première et la dernière image. Au-delà de ~0.1, la reprise se voit.
+ * - un saut doit AVANCER et rester court : un saut de joie sur place fait un
+ *   mauvais saut d'obstacle.
+ */
+function note(action, m) {
+  if (action === 'course' || action === 'courseGenee' || action === 'mur') {
+    // Boucler est éliminatoire, mais entre deux clips qui bouclent bien, le
+    // départage se fait à la VITESSE. On est dans une course : un jogging à
+    // côté de sprinteurs se lit comme un coureur à la traîne, même s'il
+    // avance à la même allure dans le jeu.
+    const boucleOk = m.boucle <= SEUIL_BOUCLE * 25 ? 0 : 100
+    return boucleOk - m.avance / Math.max(0.01, m.duree)
+  }
+  if (action === 'saut') return (m.avance > 20 ? 0 : 10) + m.duree
+  return m.duree // le reste : au plus court, faute de meilleur critère
+}
+
+/** Une boucle au-dessus de ce seuil se VOIT : on refuse de la jouer en boucle. */
+const SEUIL_BOUCLE = 0.1
+
+/** Le dossier tel qu'il est sur le disque → l'identifiant du guerrier. */
+const PERSOS = {
+  yasuke: 'yasuke',
+  hana: 'hana',
+  oni: 'onimaru',
+  tamea: 'tamae',
+  // Le perso « + » : son ornement décide de son style (cf. CUSTOM_STYLE)
+  'perso/aucun': 'perso-rien',
+  'perso/kitsu': 'perso-oreilles',
+  'perso/Nouveau dossier': 'perso-oreilles', // dossier resté sans nom
+  'perso/oni2': 'perso-cornes',
+  perso: 'perso', // à la racine de perso/ : pour les trois variantes
+}
+
+// ————————————————————————————————————————————————————————————————
+
+function parcourir(d) {
+  return fs.readdirSync(d, { withFileTypes: true }).flatMap((e) => {
+    const p = path.join(d, e.name)
+    return e.isDirectory() ? parcourir(p) : e.name.endsWith('.fbx') ? [p] : []
+  })
+}
+
+/** Le rôle d'un fichier, d'après son nom. null = on ne sait pas quoi en faire. */
+function actionDe(fichier) {
+  for (const [action, motifs] of Object.entries(ACTIONS)) {
+    if (motifs.some((m) => m.test(fichier))) return action
+  }
+  return null
+}
+
+/** Le propriétaire d'un clip : le dossier, ou 'tous' à la racine. */
+function persoDe(relatif) {
+  const dossier = path.dirname(relatif).split(path.sep).slice(1).join('/')
+  if (!dossier) return 'tous' // « pas dans un dossier, c'est pour tout le monde »
+  return PERSOS[dossier] ?? dossier
+}
+
+/**
+ * Recible un clip Mixamo sur notre rig à boîtes.
+ *
+ * Le principe : on ne recopie PAS les quaternions Mixamo (leurs os n'ont ni la
+ * même pose de repos ni les mêmes longueurs que nos boîtes). On lit la
+ * DIRECTION de chaque membre dans le monde, et on cherche la rotation qui
+ * pointe notre boîte dans cette direction-là. C'est du reciblage : ça marche
+ * quelles que soient les proportions.
+ */
+function cuire(fichier) {
+  const b = fs.readFileSync(fichier)
+  const racine = new FBXLoader().parse(b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength), '')
+  const clip = racine.animations[0]
+  if (!clip) return null
+
+  const os = {}
+  racine.traverse((o) => {
+    if (o.isBone) os[o.name.replace(/^mixamorig:?/, '')] = o
+  })
+  const hanches = os.Hips
+  if (!hanches) return null
+
+  // La hauteur de repos des hanches sert d'étalon : Mixamo travaille en
+  // centimètres, notre bassin vit à 0.72 unité du sol.
+  const hauteurRepos = hanches.position.y || 100
+  const ECHELLE = 0.72 / hauteurRepos
+
+  const mixer = new THREE.AnimationMixer(racine)
+  mixer.clipAction(clip).play()
+
+  const n = Math.max(2, Math.round(clip.duration * FPS))
+  const pistes = {}
+  for (const j of JOINTS) pistes[j.nom] = []
+  const hauteurs = []
+
+  const pos1 = new THREE.Vector3()
+  const pos2 = new THREE.Vector3()
+  const dir = new THREE.Vector3()
+  const monde = new THREE.Vector3()
+  let depart = 0
+  let arrivee = 0
+
+  let precedent = 0
+  for (let i = 0; i < n; i++) {
+    const t = (i / n) * clip.duration
+    mixer.update(t - precedent)
+    precedent = t
+    racine.updateMatrixWorld(true)
+
+    // L'orientation MONDE accumulée de chaque articulation, au fil de la
+    // descente : c'est elle qui permet d'exprimer la suivante en local.
+    const accum = { null: new THREE.Quaternion() }
+
+    for (const j of JOINTS) {
+      const a = os[j.de]
+      const bOs = os[j.vers]
+      if (!a || !bOs) {
+        pistes[j.nom].push(0, 0, 0)
+        accum[j.nom] = accum[j.parent] ?? new THREE.Quaternion()
+        continue
+      }
+      a.getWorldPosition(pos1)
+      bOs.getWorldPosition(pos2)
+      dir.subVectors(pos2, pos1).normalize()
+      DEMI_TOUR(dir)
+
+      // La direction voulue, ramenée dans le repère du parent
+      const qParent = accum[j.parent] ?? new THREE.Quaternion()
+      const local = dir.clone().applyQuaternion(qParent.clone().invert())
+      const q = new THREE.Quaternion().setFromUnitVectors(j.repos, local)
+
+      // Canonique (w >= 0) : on ne stocke que x, y, z et on retrouve w au
+      // chargement. 25 % d'octets en moins, sans perte.
+      if (q.w < 0) { q.x = -q.x; q.y = -q.y; q.z = -q.z; q.w = -q.w }
+      const arr = pistes[j.nom]
+      arr.push(
+        Math.round(q.x * PRECISION) / PRECISION,
+        Math.round(q.y * PRECISION) / PRECISION,
+        Math.round(q.z * PRECISION) / PRECISION
+      )
+      accum[j.nom] = qParent.clone().multiply(q)
+    }
+
+    // Le rebond du bassin. On garde UNIQUEMENT la hauteur : l'avancée et les
+    // écarts latéraux sont pilotés par le jeu (les lignes, le décor qui
+    // défile). Les recopier ferait patiner le coureur.
+    hanches.getWorldPosition(monde)
+    hauteurs.push(Math.round(monde.y * ECHELLE * PRECISION) / PRECISION)
+    if (i === 0) depart = monde.z
+    arrivee = monde.z
+  }
+
+  return {
+    d: +clip.duration.toFixed(3),
+    n,
+    q: pistes,
+    y: hauteurs,
+    mesures: {
+      duree: clip.duration,
+      avance: Math.abs(arrivee - depart),
+      boucle: ecartDeBoucle(pistes, n),
+    },
+  }
+}
+
+/**
+ * L'écart de raccord, mesuré sur le mouvement RECIBLÉ — celui qu'on jouera
+ * vraiment, pas celui du fichier d'origine.
+ *
+ * On le rapporte à l'écart moyen entre deux images : un clip qui boucle bien
+ * finit à ~1 image du début, donc un rapport proche de 1. Un clip qui ne
+ * boucle pas saute beaucoup plus loin. Normaliser ainsi rend la mesure
+ * indépendante de la vitesse du clip.
+ */
+function ecartDeBoucle(pistes, n) {
+  if (n < 3) return 99
+  let raccord = 0
+  let cumul = 0
+  for (const arr of Object.values(pistes)) {
+    for (let k = 0; k < 3; k++) raccord += Math.abs(arr[k] - arr[(n - 1) * 3 + k])
+    for (let i = 1; i < n; i++) {
+      for (let k = 0; k < 3; k++) cumul += Math.abs(arr[i * 3 + k] - arr[(i - 1) * 3 + k])
+    }
+  }
+  const parImage = cumul / (n - 1)
+  return parImage < 1e-6 ? 99 : raccord / parImage
+}
+
+// ————— On cuit tout —————
+
+const candidats = new Map() // 'perso/action' → [{ fichier, cuit }]
+const journal = []
+
+const fichiers = parcourir(SOURCE)
+
+/*
+ * Un même fichier rangé dans PLUSIEURS dossiers de personnage ne dit rien de
+ * personne : c'est un mouvement commun, recopié. On le repère à son empreinte
+ * et on le propose aussi en repli pour ceux qui n'ont rien — sinon Yasuke et
+ * Oni-Maru, qui n'ont pas de course à eux, resteraient sans course du tout.
+ */
+const empreintes = new Map()
+for (const f of fichiers) {
+  const h = crypto.createHash('md5').update(fs.readFileSync(f)).digest('hex')
+  if (!empreintes.has(h)) empreintes.set(h, [])
+  empreintes.get(h).push(f)
+}
+const partages = new Set()
+for (const [, liste] of empreintes) {
+  const dossiers = new Set(liste.map((f) => persoDe(f)))
+  if (dossiers.size >= 2) for (const f of liste) partages.add(f)
+}
+
+for (const fichier of fichiers) {
+  const action = actionDe(path.basename(fichier))
+  if (!action) {
+    journal.push(`  · ignoré, rôle inconnu : ${fichier}`)
+    continue
+  }
+  const cuit = cuire(fichier)
+  if (!cuit) {
+    journal.push(`  · illisible : ${fichier}`)
+    continue
+  }
+  const cles = [`${persoDe(fichier)}/${action}`]
+  if (partages.has(fichier)) cles.push(`tous/${action}`)
+  for (const cle of cles) {
+    if (!candidats.has(cle)) candidats.set(cle, [])
+    candidats.get(cle).push({ fichier, cuit })
+  }
+}
+
+const clips = {}
+const boucles = new Set(['course', 'courseGenee', 'mur'])
+
+for (const [cle, liste] of [...candidats].sort()) {
+  liste.sort((a, b) => note(cle.split('/')[1], a.cuit.mesures) - note(cle.split('/')[1], b.cuit.mesures))
+  const [gagnant, ...perdants] = liste
+  const action = cle.split('/')[1]
+  const m = gagnant.cuit.mesures
+
+  // Une course qui ne boucle pas saccaderait à chaque reprise : mieux vaut
+  // ne rien fournir et laisser le repli faire son travail.
+  if (boucles.has(action) && m.boucle > SEUIL_BOUCLE * 25) {
+    journal.push(`  ✗ ${cle.padEnd(22)} REFUSÉ : ne boucle pas (${m.boucle.toFixed(1)}×) — ${path.basename(gagnant.fichier)}`)
+    continue
+  }
+
+  const { mesures, ...garde } = gagnant.cuit
+  clips[cle] = garde
+  const boucle = boucles.has(action) ? `, raccord ${m.boucle.toFixed(1)}×` : ''
+  journal.push(`  ✓ ${cle.padEnd(22)} ← ${path.basename(gagnant.fichier).padEnd(28)} (${gagnant.cuit.n} img${boucle})`)
+  for (const p of perdants) {
+    journal.push(`      écarté : ${path.basename(p.fichier)}`)
+  }
+}
+
+fs.writeFileSync(SORTIE, JSON.stringify({ fps: FPS, clips }))
+const ko = (fs.statSync(SORTIE).size / 1024).toFixed(0)
+
+console.log(journal.join('\n'))
+console.log(`\n${Object.keys(clips).length} clips → ${SORTIE} (${ko} Ko)`)

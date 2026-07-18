@@ -3,7 +3,6 @@ import {
   ROSTER,
   PERSO_ID,
   SKIN_PALETTE,
-  animerCourse,
   buildFighter,
   clearFighter,
   cssColor,
@@ -12,6 +11,7 @@ import {
   type Fighter,
   type Head,
 } from './roster'
+import { Anim, animerGuerrier } from './anims'
 import { cleanName, loadSettings, saveSettings, type Quality, type Settings } from './settings'
 import type { LobbyView, SalonInfo } from './net'
 
@@ -86,6 +86,9 @@ export class Menu {
   /** La dernière vue du salon reçue — pour savoir qui je suis, si je suis prêt… */
   private view: LobbyView | null = null
   private apercu?: THREE.Object3D
+  /** Le guerrier montré dans la vignette — il a sa propre foulée. */
+  private fighterAffiche: Fighter = ROSTER[0]
+  private anim = new Anim()
 
   private el = {
     banner: document.getElementById('banner')!,
@@ -457,6 +460,7 @@ export class Menu {
     clearFighter(this.preview.group)
     const parts = buildFighter(f)
     this.apercu = parts[0] // on le fait courir sur place dans la vignette
+    this.fighterAffiche = f // c'est SA foulée qu'on joue : chacun la sienne
     this.preview.group.add(...parts)
   }
 
@@ -513,7 +517,7 @@ export class Menu {
     this.preview.group.rotation.y = this.spin
     // Il court sur place pendant qu'on le regarde : une pose figée donnerait
     // l'impression d'un mannequin, pas d'un coureur.
-    animerCourse(this.apercu, this.spin)
+    animerGuerrier(this.apercu, this.fighterAffiche, this.anim, 'course', dt, this.spin)
     this.preview.renderer.render(this.preview.scene, this.preview.camera)
   }
 

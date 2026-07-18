@@ -1,6 +1,7 @@
 import * as THREE from 'three'
 import { NameTag } from './nametag'
-import { ROSTER, animerCourse, buildFighter, clearFighter, cssColor, type Fighter } from './roster'
+import { ROSTER, buildFighter, clearFighter, cssColor, type Fighter } from './roster'
+import { Anim, animerGuerrier, type Action } from './anims'
 
 /** Les 3 lignes de course (positions X dans le monde 3D) */
 export const LANES = [-2.2, 0, 2.2]
@@ -47,7 +48,21 @@ export class Player {
   private attackT = 0 // temps restant du coup en cours (0 = libre de frapper)
   private rabSaut = 0 // 🕊️ sauts en réserve pour le vol (Saut de la Grue)
   private racine?: THREE.Object3D // le corps articulé, cf. roster.buildFighter
-  private tAnim = 0 // l'horloge de la foulée
+  private tAnim = 0 // l'horloge de la foulée calculée (repli et flottants)
+  private anim = new Anim() // le lecteur des mouvements importés
+  /** 🥴 Vrai quand un sort brouille la course : on passe sur la foulée gênée. */
+  gene = false
+
+  /**
+   * Le mouvement que réclame l'état courant du coureur.
+   * L'ordre compte : la glissade prime sur le saut (on peut plonger en l'air),
+   * et le saut prime sur la course.
+   */
+  private action(): Action {
+    if (this.sliding > 0) return 'glissade'
+    if (!this.onGround) return 'saut'
+    return this.gene ? 'courseGenee' : 'course'
+  }
 
   constructor(scene: THREE.Scene) {
     scene.add(this.mesh)
@@ -185,9 +200,10 @@ export class Player {
   }
 
   update(dt: number) {
-    // La foulée. En l'air on fige le cycle : on ne pédale pas dans le vide.
     this.tAnim += dt
-    animerCourse(this.racine, this.tAnim, this.onGround ? 1 : 0.25)
+    // Le mouvement suit l'ÉTAT, pas une horloge : au sol on court, en l'air on
+    // joue le saut, au ras du sol la glissade. Le lecteur enchaîne en fondu.
+    animerGuerrier(this.racine, this.fighter, this.anim, this.action(), dt, this.tAnim)
 
     // Glisse en douceur vers la ligne choisie
     const targetX = LANES[this.lane]
