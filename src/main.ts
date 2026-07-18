@@ -26,6 +26,7 @@ import {
   type ParcheminKind,
 } from './parchemin'
 import { Menu, escapeHtml } from './menu'
+import { souffleDeVent } from './sfx'
 import type { Quality } from './settings'
 
 /**
@@ -424,16 +425,22 @@ for (let i = 0; i < 40; i++) {
   petales.push({ mesh: m, vx: 0, vy: 0, phase: 0 })
 }
 let petalesActifs = false // on ne fait NAÎTRE de nouveaux pétales qu'au départ
+let ventPhase = 0 // l'horloge de la rafale (le chrono, lui, est figé au décompte)
 
-/** (Re)lâche un pétale autour de la frondaison. `neuf` : réparti en hauteur. */
+/**
+ * (Re)lâche un pétale. `neuf` : au tout premier souffle on en sème déjà EN
+ * TRAVERS de l'écran — sinon la première seconde est vide, le temps qu'ils
+ * traversent depuis l'arbre.
+ */
 function poserPetale(p: Petale, neuf: boolean) {
   p.mesh.position.set(
-    cerisier.position.x + (Math.random() - 0.5) * 2.6,
-    cerisier.position.y + (neuf ? 2 + Math.random() * 2 : 4.2),
+    cerisier.position.x + (neuf ? Math.random() * 9 : (Math.random() - 0.5) * 2.6),
+    cerisier.position.y + (neuf ? 1.2 + Math.random() * 3.2 : 3.4 + Math.random() * 1.4),
     cerisier.position.z + (Math.random() - 0.5) * 2.4
   )
-  p.vx = -0.3 - Math.random() * 0.4
-  p.vy = -0.5 - Math.random() * 0.5
+  // Le vent les emporte vers la DROITE : ils balaient toute la piste
+  p.vx = 3.4 + Math.random() * 2.8
+  p.vy = -0.35 - Math.random() * 0.4
   p.phase = Math.random() * 6.28
   p.mesh.visible = true
 }
@@ -460,19 +467,27 @@ function boom(pos: THREE.Vector3) {
   boomFin = time + BOOM_DUREE
 }
 
-// ————— 💨 La zone de fumée au sol (reste 2 s) —————
-// Là où la bombe éclate, un nuage gris s'installe et traîne 2 s sur la piste,
-// en plus du voile d'écran. Un petit banc recyclé : rarement plus d'un ou deux
-// à la fois.
-const FUMEE_ZONE_DUREE = 2
+// ————— 💨 La zone de fumée, COLLÉE à sa victime —————
+// Le nuage gris suit le coureur enfumé pendant toute la durée du sort, en plus
+// du voile d'écran. Deux règles, et elles vont ensemble :
+//
+//  · Il COLLE à sa cible. Posé au sol une fois pour toutes, il serait distancé
+//    en une seconde (on court à 30 m/s) et n'apprendrait plus rien à personne.
+//    Accroché au coureur, il dit « c'est LUI qui est aveuglé ».
+//  · Il dure exactement FUMIGENE_DUREE. Le nuage n'est pas un décor : c'est la
+//    JAUGE de l'effet. Tant qu'il est là, l'effet court ; il s'éteint avec lui.
+//
+// Un petit banc recyclé : rarement plus d'un ou deux à la fois.
 interface FumeeZone {
   disque: THREE.Mesh
   dome: THREE.Mesh
+  /** Le coureur enfumé : la zone se recale sur lui à chaque image. */
+  cible: THREE.Object3D
   fin: number
   actif: boolean
 }
 const fumeeZones: FumeeZone[] = []
-function spawnFumeeZone(pos: THREE.Vector3) {
+function spawnFumeeZone(cible: THREE.Object3D) {
   let z = fumeeZones.find((f) => !f.actif)
   if (!z) {
     const disque = new THREE.Mesh(
@@ -486,15 +501,22 @@ function spawnFumeeZone(pos: THREE.Vector3) {
     )
     dome.scale.y = 0.5
     scene.add(disque, dome)
-    z = { disque, dome, fin: 0, actif: false }
+    z = { disque, dome, cible, fin: 0, actif: false }
     fumeeZones.push(z)
   }
-  z.disque.position.set(pos.x, 0.05, pos.z)
-  z.dome.position.set(pos.x, 0.4, pos.z)
-  z.fin = time + FUMEE_ZONE_DUREE
+  z.cible = cible
+  z.fin = time + FUMIGENE_DUREE // la zone vit exactement le temps de l'effet
   z.actif = true
   z.disque.visible = true
   z.dome.visible = true
+  placerFumeeZone(z, 0) // en place dès la 1re image, sans attendre la boucle
+}
+
+/** Recale la zone sur sa victime. `age` fait monter le dôme au fil du temps. */
+function placerFumeeZone(z: FumeeZone, age: number) {
+  const p = z.cible.position
+  z.disque.position.set(p.x, 0.05, p.z)
+  z.dome.position.set(p.x, 0.4 + age * 0.16, p.z)
 }
 
 // ————— 💨💥 Le rideau de vitesse (sprint final + dash) —————
@@ -502,6 +524,22 @@ function spawnFumeeZone(pos: THREE.Vector3) {
 // chantier en cours). Son intensité suit le martèlement et les dash.
 const speedEl = document.createElement('div')
 speedEl.id = 'speedlines'
+// Les éclats triangulaires, semés une fois pour toutes. Tailles, départs et
+// vitesses tirés au hasard : sans ça, les deux bords battraient à l'unisson et
+// l'effet ferait « rideau » au lieu de « rafale ».
+for (const cote of ['g', 'd'] as const) {
+  for (let i = 0; i < 14; i++) {
+    const t = document.createElement('i')
+    t.className = `tri ${cote}`
+    t.style.top = `${Math.random() * 100}%`
+    t.style.height = `${5 + Math.random() * 13}px`
+    t.style.width = `${70 + Math.random() * 170}px`
+    t.style.background = `rgba(233, 240, 255, ${0.4 + Math.random() * 0.5})`
+    t.style.animationDuration = `${0.32 + Math.random() * 0.4}s`
+    t.style.animationDelay = `${-Math.random() * 0.8}s` // déjà en vol au 1er affichage
+    speedEl.appendChild(t)
+  }
+}
 document.body.appendChild(speedEl)
 
 /** Fait avancer tous les effets d'un pas. `dz` = recul du monde cette image. */
@@ -511,19 +549,23 @@ function updateEffets(dt: number, dz: number) {
     cerisier.position.z += dz
     if (cerisier.position.z > 14) cerisier.visible = false
   }
-  // 🌸 Les pétales : chute + tangage, recyclés tant qu'on en fait naître
+  // 🌸 Les pétales : emportés vers la DROITE par le vent, en tanguant.
+  // La rafale enfle et retombe : un vent constant ferait « tapis roulant ».
+  ventPhase += dt
+  const rafale = 1 + Math.sin(ventPhase * 1.6) * 0.35
   for (const p of petales) {
     if (!p.mesh.visible) {
       if (petalesActifs && cerisier.visible && Math.random() < 0.4) poserPetale(p, true)
       continue
     }
     p.phase += dt * 3
-    p.mesh.position.x += (p.vx + Math.sin(p.phase) * 0.6) * dt
-    p.mesh.position.y += p.vy * dt
+    p.mesh.position.x += (p.vx * rafale + Math.sin(p.phase) * 0.5) * dt
+    p.mesh.position.y += (p.vy + Math.sin(p.phase * 0.7) * 0.25) * dt
     p.mesh.position.z += dz
-    p.mesh.rotation.z += dt * 2
-    p.mesh.rotation.x += dt * 1.6
-    if (p.mesh.position.y < 0 || p.mesh.position.z > 14) {
+    p.mesh.rotation.z += dt * 3.2 // ils tourbillonnent plus fort dans le vent
+    p.mesh.rotation.x += dt * 2.2
+    // Recyclés dès qu'ils sortent : par la droite (le vent), par le bas, ou derrière
+    if (p.mesh.position.y < 0 || p.mesh.position.x > 13 || p.mesh.position.z > 14) {
       if (petalesActifs && cerisier.visible) poserPetale(p, false)
       else p.mesh.visible = false
     }
@@ -547,14 +589,16 @@ function updateEffets(dt: number, dz: number) {
       z.dome.visible = false
       continue
     }
-    const age = FUMEE_ZONE_DUREE - reste
-    const fade = Math.min(1, age / 0.3) * Math.min(1, reste / 0.6)
+    const age = FUMIGENE_DUREE - reste
+    // Elle tient pleine presque tout l'effet : on ne fond qu'à la toute fin,
+    // pour que sa disparition annonce la fin de l'aveuglement.
+    const fade = Math.min(1, age / 0.3) * Math.min(1, reste / 0.5)
     ;(z.disque.material as THREE.MeshBasicMaterial).opacity = fade * 0.5
     ;(z.dome.material as THREE.MeshBasicMaterial).opacity = fade * 0.42
-    z.disque.position.z += dz
-    z.dome.position.z += dz
+    // Elle SUIT sa victime au lieu de défiler avec le décor : c'est ce qui en
+    // fait un indicateur d'effet et non une simple tache sur la piste.
+    placerFumeeZone(z, age)
     z.dome.rotation.y += dt * 0.6
-    z.dome.position.y = 0.4 + age * 0.16
   }
 }
 
@@ -763,7 +807,7 @@ function subirSort(
     toast('🎯 Kunai en pleine course !')
   } else if (kind === 'fumigene') {
     fumigeneFin = time + FUMIGENE_DUREE
-    spawnFumeeZone(player.mesh.position) // 💨 le nuage gris s'installe à tes pieds
+    spawnFumeeZone(player.mesh) // 💨 le nuage te suit tant que tu es aveuglé
     toast('💨 Tu ne vois plus rien !')
   } else if (kind === 'senbon') {
     senbonFin = time + SENBON_DUREE
@@ -845,7 +889,7 @@ function lancerParchemin() {
         return
       }
       if (kind === 'kunai') lancerKunaiVisuel(player.mesh.position, cible.opp.mesh.position)
-      if (kind === 'fumigene') spawnFumeeZone(cible.opp.mesh.position)
+      if (kind === 'fumigene') spawnFumeeZone(cible.opp.mesh)
       net.sendSpell(kind, cible.id)
       toast(`${p.icone} sur ${cible.name} !`)
       return
@@ -859,7 +903,7 @@ function lancerParchemin() {
     // `subirSort` rejouera le vol dans l'autre sens : c'est le même maillage,
     // donc le retour écrase l'aller — on ne voit que le trajet qui compte.
     if (kind === 'kunai') lancerKunaiVisuel(player.mesh.position, cible.mesh.position)
-    if (kind === 'fumigene') spawnFumeeZone(cible.mesh.position)
+    if (kind === 'fumigene') spawnFumeeZone(cible.mesh)
 
     // Sa parade peut nous le renvoyer dans les dents : on l'a bien cherché
     if (cible.subir(kind, time)) {
@@ -962,6 +1006,10 @@ function startRace(seed: number) {
   cerisier.visible = true
   for (const p of petales) p.mesh.visible = false
   petalesActifs = true
+  ventPhase = 0
+  // 🌬️ La rafale qui emporte les pétales, le temps du décompte (10 s en salon,
+  // 3 s en solo). Le son est synthétisé : aucun fichier à charger.
+  souffleDeVent(online ? 5 : 3.2)
   boomMesh.visible = false
   for (const z of fumeeZones) {
     z.actif = false
