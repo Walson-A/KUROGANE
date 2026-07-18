@@ -1,5 +1,7 @@
 import * as THREE from 'three'
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
+// Type seul : effacé à la compilation, donc aucun cycle d'import avec track.ts.
+import type { Kind } from './track'
 
 /**
  * ————— Les quatre biomes du Tournoi des Voies —————
@@ -56,6 +58,17 @@ export interface Biome {
   fabriqueDecor: (rng: () => number) => THREE.Group
   /** Un élément tous les combien de mètres, de chaque côté. */
   ecartDecor: number
+
+  /**
+   * L'habillage des obstacles, propre au biome. Facultatif : sans lui, le biome
+   * garde les blocs génériques.
+   *
+   * ⚠️ Ce n'est QUE de l'apparence. La boîte de collision vient de
+   * `TAILLE_OBSTACLE` dans track.ts et ne dépend jamais du maillage — un
+   * habillage peut donc déborder, pencher ou s'orner sans rien changer au jeu.
+   * L'origine du groupe est AU SOL.
+   */
+  fabriqueObstacle?: (kind: Kind, rng: () => number) => THREE.Group
 }
 
 /**
@@ -339,6 +352,120 @@ const BAMBOUS: Biome = {
     }
 
     return groupe(assemble(corps, MAT_SOLIDE), assemble(feuilles, MAT_FEUILLE))
+  },
+
+  /*
+   * ————— Les obstacles de la forêt —————
+   *
+   * La règle qui prime sur tout le reste : **la couleur reste sémantique**.
+   * Le vermillon dit « saute », l'or dit « glisse », le sombre dit « change de
+   * ligne ». À 28 m/s, on lit la couleur avant la forme — un joueur n'a pas le
+   * temps d'analyser une silhouette. Tout habiller en vert bambou aurait été
+   * plus joli et beaucoup moins jouable.
+   *
+   * Le bambou apporte donc la MATIÈRE (tiges, nœuds, ligatures), et l'accent de
+   * couleur d'origine reste bien visible sur chacun.
+   */
+  fabriqueObstacle: (kind, rng) => {
+    const p: Piece[] = []
+
+    if (kind === 'saut') {
+      // Un gros tronc couché en travers de la ligne : ça se saute.
+      const r = 0.26
+      p.push({
+        geo: GEO.tige.clone().scale(r, 1.75, r),
+        couleur: teinte(0x8a9a52, 0x5d6b34, rng()),
+        x: 0, y: 0.3, z: 0,
+        rz: Math.PI / 2, // le cylindre est vertical par défaut : on le couche
+      })
+      // Les nœuds du tronc
+      for (const nx of [-0.5, 0, 0.5]) {
+        p.push({
+          geo: GEO.anneau.clone().scale(r * 1.15, 0.09, r * 1.15),
+          couleur: 0x9fb268,
+          x: nx, y: 0.3, z: 0, rz: Math.PI / 2,
+        })
+      }
+      // Les ligatures VERMILLON : c'est elles qu'on voit arriver de loin.
+      for (const nx of [-0.68, 0.68]) {
+        p.push({
+          geo: GEO.anneau.clone().scale(r * 1.3, 0.16, r * 1.3),
+          couleur: 0xc33a2c,
+          x: nx, y: 0.3, z: 0, rz: Math.PI / 2,
+        })
+      }
+      // Deux billots qui le calent : sans eux, le tronc a l'air de flotter.
+      for (const nx of [-0.8, 0.8]) {
+        p.push({
+          geo: GEO.tige.clone().scale(0.13, 0.3, 0.13),
+          couleur: 0x4a4028,
+          x: nx, y: 0.15, z: 0.2,
+        })
+      }
+    } else if (kind === 'glissade') {
+      // Une perche tendue en hauteur : on passe DESSOUS.
+      const r = 0.19
+      p.push({
+        geo: GEO.tige.clone().scale(r, 1.75, r),
+        couleur: teinte(0x8a9a52, 0x64703a, rng()),
+        x: 0, y: 1.55, z: 0,
+        rz: Math.PI / 2,
+      })
+      // Les cordages DORÉS, l'accent de couleur du « glisse »
+      for (const nx of [-0.55, 0.55]) {
+        p.push({
+          geo: GEO.anneau.clone().scale(r * 1.45, 0.2, r * 1.45),
+          couleur: 0xd6ac5a,
+          x: nx, y: 1.55, z: 0, rz: Math.PI / 2,
+        })
+      }
+      /*
+       * Les deux montants qui la portent.
+       *
+       * Volontairement FINS, et plantés au bord exact de la ligne (±0,85 m) :
+       * ils expliquent pourquoi la perche tient en l'air, sans jamais se
+       * trouver sur la trajectoire d'un joueur — qui court au centre de sa
+       * ligne. Ils ne sont pas dans la boîte de collision : un montant épais
+       * aurait été un mensonge visuel.
+       */
+      for (const nx of [-0.85, 0.85]) {
+        p.push({
+          geo: GEO.tige.clone().scale(0.07, 1.95, 0.07),
+          couleur: 0x5a6636,
+          x: nx, y: 0.97, z: 0,
+        })
+      }
+    } else {
+      // Une palissade dense : infranchissable, il faut changer de ligne.
+      const n = 7
+      for (let i = 0; i < n; i++) {
+        const x = -0.75 + (1.5 / (n - 1)) * i
+        const h = 2.4 - rng() * 0.18 // des hauteurs inégales : c'est bâti à la main
+        p.push({
+          geo: GEO.tige.clone().scale(0.12, h, 0.12),
+          couleur: teinte(0x3f4a58, 0x232a35, rng()),
+          x, y: h / 2, z: 0,
+          rz: (rng() - 0.5) * 0.05,
+        })
+        // Une pointe taillée en haut de chaque pieu
+        p.push({
+          geo: GEO.sapin.clone().scale(0.13, 0.26, 0.13),
+          couleur: 0x2b3340,
+          x, y: h + 0.11, z: 0,
+        })
+      }
+      // Les deux traverses de ligature qui tiennent l'ensemble
+      for (const hy of [0.7, 1.85]) {
+        p.push({
+          geo: GEO.tige.clone().scale(0.08, 1.68, 0.08),
+          couleur: 0x574a33,
+          x: 0, y: hy, z: -0.16,
+          rz: Math.PI / 2,
+        })
+      }
+    }
+
+    return groupe(assemble(p, MAT_SOLIDE))
   },
 }
 

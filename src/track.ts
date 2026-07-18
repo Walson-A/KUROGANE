@@ -1,7 +1,7 @@
 import * as THREE from 'three'
 import { LANES, MUR_X, JUMP_SPEED } from './player'
 import { tirerParchemin, TIRAGE, type ParcheminKind } from './parchemin'
-import { BIOMES, ambianceA } from './biomes'
+import { BIOMES, ambianceA, indexBiome } from './biomes'
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
 
 /**
@@ -10,6 +10,29 @@ import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js
  * `saut` et `glissade` sont les petits. L'Armure de Fer fait la différence.
  */
 export type Kind = 'saut' | 'glissade' | 'mur'
+
+/**
+ * ————— Les dimensions de collision, et elles seules —————
+ *
+ * La boîte de chaque obstacle était déduite de son maillage (`setFromObject`).
+ * Tant qu'il n'existait qu'un seul décor, ça marchait. Dès que chaque biome
+ * habille ses obstacles à sa façon, ça devient un piège : un tronc de bambou un
+ * peu plus épais qu'une barrière peinte, et la difficulté change en cours de
+ * course — sans que rien ne le signale, et en emportant toute la calibration
+ * (un trébuchement coûte 0,53 s ; ce chiffre suppose des boîtes fixes).
+ *
+ * Le visuel et la collision sont donc SÉPARÉS ici pour de bon. Ces valeurs sont
+ * celles d'origine, au centimètre près : le jeu se comporte exactement comme
+ * avant. Les habillages de biome peuvent désormais déborder, se tordre ou
+ * s'orner sans jamais toucher à l'équilibrage.
+ *
+ * `y` est la hauteur du CENTRE de la boîte au-dessus du sol.
+ */
+export const TAILLE_OBSTACLE: Record<Kind, { larg: number; haut: number; prof: number; y: number }> = {
+  saut: { larg: 1.7, haut: 0.6, prof: 0.5, y: 0.3 }, // barrière basse → sauter
+  glissade: { larg: 1.7, haut: 0.5, prof: 0.5, y: 1.55 }, // barre haute → glisser dessous
+  mur: { larg: 1.7, haut: 2.4, prof: 0.5, y: 1.2 }, // bloc complet → changer de ligne
+}
 
 const LOOKAHEAD = 85 // les obstacles apparaissent 85 m devant (cachés par la brume)
 /** L'écart entre deux pointillés — et donc la période de leur défilement. */
@@ -24,8 +47,10 @@ const DESPAWN_Z = 8 // et disparaissent derrière la caméra
 export const SPRINT_ZONE = 120
 
 interface Obstacle {
-  mesh: THREE.Mesh
+  mesh: THREE.Object3D
   kind: Kind
+  /** Le biome dont il porte l'habillage : on recycle par type ET par biome. */
+  biome: number
   active: boolean
 }
 
@@ -486,7 +511,10 @@ export class Track {
         this.plan[this.planIdx].d <= distance + LOOKAHEAD
       ) {
         const p = this.plan[this.planIdx]
-        this.spawn(p.kind, p.lane, -(p.d - distance))
+        // L'obstacle porte l'habillage du biome où il SE TROUVE, pas de celui
+        // où l'on court : il apparaît 85 m devant, parfois de l'autre côté
+        // d'une frontière.
+        this.spawn(p.kind, p.lane, -(p.d - distance), indexBiome(p.d, this.courseLength))
         this.planIdx++
       }
 
@@ -686,11 +714,18 @@ export class Track {
     return null
   }
 
-  private spawn(kind: Kind, lane: number, z: number) {
-    // On réutilise un obstacle éteint du même type si possible (recyclage)
-    let o = this.obstacles.find((o) => !o.active && o.kind === kind)
+  private spawn(kind: Kind, lane: number, z: number, biome: number) {
+    // On recycle un obstacle éteint du même type ET du même biome : un tronc de
+    // bambou ne peut pas se réincarner en poutre calcinée.
+    let o = this.obstacles.find((o) => !o.active && o.kind === kind && o.biome === biome)
     if (!o) {
-      o = { mesh: makeObstacleMesh(kind), kind, active: false }
+      const habille = BIOMES[biome].fabriqueObstacle
+      o = {
+        mesh: habille ? habille(kind, this.graineDecor) : makeObstacleMesh(kind),
+        kind,
+        biome,
+        active: false,
+      }
       this.obstacles.push(o)
       this.scene.add(o.mesh)
     }
@@ -703,14 +738,21 @@ export class Track {
   /**
    * Le joueur touche-t-il un obstacle ? Renvoie LEQUEL (ou null) : l'Armure de
    * Fer n'encaisse pas de la même façon une barrière et un mur.
+   *
+   * ⚠️ La boîte vient de `TAILLE_OBSTACLE`, JAMAIS du maillage : c'est ce qui
+   * permet à chaque biome d'habiller ses obstacles sans toucher au jeu. Le
+   * maillage ne fournit que la position au sol.
    */
   hits(playerBox: THREE.Box3): Kind | null {
     const box = new THREE.Box3()
+    const M = 0.12 // un peu de tolérance, plus sympa à jouer
     for (const o of this.obstacles) {
       if (!o.active) continue
-      if (Math.abs(o.mesh.position.z) > 2.5) continue // trop loin, on ne teste pas
-      box.setFromObject(o.mesh)
-      box.expandByScalar(-0.12) // un peu de tolérance, plus sympa à jouer
+      const { x, z } = o.mesh.position
+      if (Math.abs(z) > 2.5) continue // trop loin, on ne teste pas
+      const t = TAILLE_OBSTACLE[o.kind]
+      box.min.set(x - t.larg / 2 + M, t.y - t.haut / 2 + M, z - t.prof / 2 + M)
+      box.max.set(x + t.larg / 2 - M, t.y + t.haut / 2 - M, z + t.prof / 2 - M)
       if (box.intersectsBox(playerBox)) return o.kind
     }
     return null
@@ -1054,35 +1096,25 @@ function makeRouleauMesh(): THREE.Group {
   return g
 }
 
-/** Fabrique le visuel d'un obstacle selon son type */
+/**
+ * L'habillage GÉNÉRIQUE d'un obstacle : un bloc de la taille exacte de sa boîte
+ * de collision. Il sert de repli pour tout biome qui n'a pas encore le sien.
+ *
+ * Les trois couleurs sont sémantiques et ne doivent jamais bouger : le vermillon
+ * dit « saute », l'or dit « glisse », l'ardoise dit « change de ligne ». À
+ * 28 m/s, c'est la couleur qu'on lit en premier — bien avant la forme.
+ *
+ * ⚠️ Comme les habillages de biome, son origine est AU SOL (y = 0) : la hauteur
+ * est portée par la géométrie. `hits()` ne lit que x et z.
+ */
 function makeObstacleMesh(kind: Kind): THREE.Mesh {
-  let geo: THREE.BoxGeometry
-  let color: number
-  let y: number
+  const t = TAILLE_OBSTACLE[kind]
+  const couleur =
+    kind === 'saut' ? 0xc33a2c : kind === 'glissade' ? 0xd6ac5a : 0x3a4258
 
-  if (kind === 'saut') {
-    // Barrière basse → il faut sauter
-    geo = new THREE.BoxGeometry(1.7, 0.6, 0.5)
-    color = 0xc33a2c
-    y = 0.3
-  } else if (kind === 'glissade') {
-    // Barre en hauteur → il faut glisser dessous
-    geo = new THREE.BoxGeometry(1.7, 0.5, 0.5)
-    color = 0xd6ac5a
-    y = 1.55
-  } else {
-    // Mur complet → il faut changer de ligne
-    geo = new THREE.BoxGeometry(1.7, 2.4, 0.5)
-    color = 0x3a4258
-    y = 1.2
-  }
-
-  const mesh = new THREE.Mesh(
-    geo,
-    new THREE.MeshStandardMaterial({ color, roughness: 0.7 })
-  )
-  mesh.position.y = y
-  return mesh
+  const geo = new THREE.BoxGeometry(t.larg, t.haut, t.prof)
+  geo.translate(0, t.y, 0)
+  return new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ color: couleur, roughness: 0.7 }))
 }
 
 /** Le torii sacré de l'arrivée : plus grand, tout en OR, avec la ligne au sol */
