@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="theme-color" content="#151a2c" />
+    <title>KUROGANE — panneau dev</title>
+    <style>
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      body {
+        min-height: 100vh;
+        padding: clamp(20px, 5vw, 44px);
+        background: #151a2c;
+        color: #f0e8d8;
+        font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+      }
+      .jp {
+        font-family: "Yu Mincho", "Hiragino Mincho ProN", serif;
+        font-size: 2.4rem;
+        color: #e24b3a;
+        line-height: 1;
+      }
+      h1 {
+        font-size: 1.35rem;
+        letter-spacing: 0.22em;
+        margin: 6px 0 4px;
+        font-weight: 800;
+      }
+      .sous { color: #6b7594; font-size: 0.84rem; letter-spacing: 0.04em; }
+
+      .grille {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+        gap: 14px;
+        margin-top: 28px;
+        max-width: 900px;
+      }
+      /* Chaque banc est une carte cliquable en entier : sur un téléphone, on ne
+         vise pas un lien de 12 px au milieu d'un paragraphe. */
+      a.carte {
+        display: block;
+        padding: 16px 18px;
+        border-radius: 12px;
+        background: rgba(61, 69, 96, 0.22);
+        border: 1px solid #3d4560;
+        border-bottom: 3px solid var(--c);
+        color: inherit;
+        text-decoration: none;
+        transition: background 0.15s, transform 0.1s;
+      }
+      a.carte:hover { background: rgba(226, 75, 58, 0.14); border-color: var(--c); }
+      a.carte:active { transform: scale(0.985); }
+
+      .icone { font-size: 1.6rem; line-height: 1; }
+      .titre { font-size: 1.02rem; font-weight: 700; margin: 8px 0 5px; }
+      .quoi { font-size: 0.84rem; color: #9aa4c0; line-height: 1.55; }
+
+      .touches { margin-top: 11px; display: flex; flex-wrap: wrap; gap: 5px; }
+      kbd {
+        background: #3d4560;
+        color: #f0e8d8;
+        border-radius: 4px;
+        padding: 1px 6px;
+        font-family: inherit;
+        font-size: 0.72rem;
+      }
+      .note {
+        margin-top: 30px;
+        max-width: 62ch;
+        font-size: 0.82rem;
+        line-height: 1.7;
+        color: #6b7594;
+        border-top: 1px dashed #3d4560;
+        padding-top: 14px;
+      }
+      .note b { color: #9aa4c0; }
+      .retour { display: inline-block; margin-top: 22px; color: #d6ac5a; font-size: 0.88rem; }
+    </style>
+  </head>
+  <body>
+    <div class="jp">黒鉄</div>
+    <h1>PANNEAU DEV</h1>
+    <div class="sous">Les bancs d'essai — hors du jeu, hors de la production</div>
+
+    <div class="grille">
+      <a class="carte" href="/test-sorts.html" style="--c: #b98cff">
+        <div class="icone">📜</div>
+        <div class="titre">Les sorts</div>
+        <div class="quoi">
+          Les 10 parchemins, mis directement en main. Plus besoin de relancer des
+          courses jusqu'à ce que le hasard donne celui qu'on veut voir.
+        </div>
+        <div class="touches">
+          <kbd>o</kbd><kbd>i</kbd> parcourir · <kbd>e</kbd> lancer
+        </div>
+      </a>
+
+      <a class="carte" href="/test-anims.html" style="--c: #5ef08a">
+        <div class="icone">🥷</div>
+        <div class="titre">Les animations</div>
+        <div class="quoi">
+          Les 11 mouvements sur chaque guerrier, dans une scène nue et sur un sol
+          quadrillé. Chacun dit s'il joue un vrai clip ou un repli calculé.
+        </div>
+        <div class="touches">
+          <kbd>o</kbd><kbd>i</kbd> action · <kbd>p</kbd><kbd>m</kbd> guerrier ·
+          <kbd>espace</kbd> rejouer
+        </div>
+      </a>
+
+      <a class="carte" href="/sfx-lab.html" style="--c: #d6ac5a">
+        <div class="icone">🔊</div>
+        <div class="titre">Les bruitages</div>
+        <div class="quoi">
+          Tous les sons du jeu, déclenchables un par un. Ils sont synthétisés à la
+          volée : aucun fichier à charger, donc rien à télécharger sur mobile.
+        </div>
+        <div class="touches"><kbd>clic</kbd> jouer</div>
+      </a>
+    </div>
+
+    <p class="note">
+      Ces pages ne partent <b>pas en production</b> : Vite ne construit que
+      <b>index.html</b>, elles n'existent donc qu'en développement. Le guichet
+      qu'utilise le banc des sorts est lui aussi sous <b>import.meta.env.DEV</b>,
+      et disparaît du bundle final — impossible de s'en servir pour tricher en
+      ligne.
+    </p>
+
+    <a class="retour" href="/">‹ Retour au jeu</a>
+  </body>
+</html>

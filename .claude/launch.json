@@ -12,7 +12,8 @@
       "name": "kurogane-server",
       "runtimeExecutable": "npm",
       "runtimeArgs": ["--prefix", "server", "run", "dev"],
-      "port": 2567
+      "port": 2567,
+      "autoPort": false
     }
   ]
 }
