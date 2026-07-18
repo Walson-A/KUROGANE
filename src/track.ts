@@ -434,6 +434,31 @@ export class Track {
    * train d'atterrir dessus. Ils sont pris SOUS le plateau, donc ils ne
    * permettent jamais de monter sans sauter — 1,6 m reste 1,6 m.
    */
+  /**
+   * Le flanc de plateforme qu'on peut agripper depuis la ligne `lane` en
+   * swipant vers `cote` — ou null.
+   *
+   * On n'escalade un mur que de FACE. Vu de côté, une plateforme est une paroi
+   * comme celles qui bordent la piste : on s'y accroche et on la longe. C'est
+   * ce qui donne une troisième réponse au convoi, à côté de « prendre la rampe »
+   * et « payer l'escalade » — et la seule qui demande du geste.
+   *
+   * Renvoie l'abscisse exacte du flanc, pour que le corps s'y colle vraiment.
+   */
+  flancA(lane: number, cote: number): number | null {
+    const cible = lane + cote
+    if (cible < 0 || cible > 2) return null
+    for (const p of this.plateformes) {
+      if (!p.active || p.plan.lane !== cible) continue
+      const zAvant = p.mesh.userData.zAvant as number
+      // Il faut être le long du plateau, pas devant son nez : arriver sur le
+      // bord avant, c'est une rencontre de face, donc une escalade.
+      if (zAvant < 1 || zAvant > p.plan.longueur) continue
+      return LANES[cible] - cote * (PLATEFORME_LARG / 2)
+    }
+    return null
+  }
+
   supportSous(x: number, pieds: number): { sol: number; heurte: boolean } {
     let sol = 0
     let heurte = false

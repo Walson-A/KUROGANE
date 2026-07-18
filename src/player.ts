@@ -73,6 +73,8 @@ export class Player {
   /** 0 = au sol ou en vol ; -1 / +1 = accroché à la paroi de ce côté */
   private mur: -1 | 0 | 1 = 0
   private murT = 0 // temps restant sur la paroi
+  /** L'abscisse de la paroi qu'on longe : bord de piste, ou flanc de plateforme. */
+  private murX = 0
   private rabSaut = 0 // 🕊️ sauts en réserve pour le vol (Saut de la Grue)
   private racine?: THREE.Object3D // le corps articulé, cf. roster.buildFighter
   private tAnim = 0 // l'horloge de la foulée calculée (repli et flottants)
@@ -282,9 +284,25 @@ export class Player {
    * Sans lui, la moindre différence de hauteur au contact s'accumulerait d'un
    * bond à l'autre et l'on finirait par dériver — vers le ciel ou vers le sol.
    */
+  /**
+   * Rebondir sur le sommet d'une jarre qu'on vient de briser.
+   *
+   * ⚠️ L'impulsion est FIXE — surtout pas multipliée par le passif de saut.
+   *
+   * L'espacement des jarres est calculé par la graine, donc identique pour tout
+   * le monde : c'est la règle du multi, les deux joueurs voient la même piste.
+   * Mais tant que le rebond suivait `fighter.jump` (0,88 à 1,18 selon le
+   * guerrier), la chaîne n'était calibrée que pour Yasuke. Mesuré : Yasuke
+   * enchaînait 10 jarres sur 10, **les trois autres AUCUNE** — Hana passait
+   * 1,66 m au-dessus de la suivante, hors de portée de lame.
+   *
+   * Le rebond appartient donc à la JARRE, pas aux jambes : c'est un tremplin, et
+   * un tremplin renvoie tout le monde à la même hauteur. Le passif de saut garde
+   * tout son sens là où il est né — les sauts ordinaires, et les murs.
+   */
   rebondSur(hauteur: number) {
     this.mesh.position.y = hauteur
-    this.vy = JUMP_SPEED * this.fighter.jump
+    this.vy = JUMP_SPEED
   }
 
   get enAttaque() {
@@ -300,10 +318,15 @@ export class Player {
    * ————— S'accrocher à la paroi —————
    * Uniquement EN VOL : le mur est une manœuvre aérienne, pas un raccourci
    * qu'on prend au sol. Il faut donc décider de sauter avant d'y arriver.
+   *
+   * `x` dit à QUELLE abscisse se coller. Par défaut le bord de piste, mais le
+   * flanc d'une plateforme est une paroi comme une autre : on n'escalade un mur
+   * que de FACE, alors que de côté on doit pouvoir le longer.
    */
-  accrocheMur(cote: -1 | 1): boolean {
+  accrocheMur(cote: -1 | 1, x = cote * MUR_X): boolean {
     if (this.mur !== 0 || this.onGround) return false
     this.mur = cote
+    this.murX = x
     this.murT = MUR_DUREE
     this.vy = 0 // on se colle : plus de gravité tant qu'on tient
     this.sliding = 0
@@ -347,7 +370,7 @@ export class Player {
       this.murT -= dt
       if (this.murT > 0) {
         const k = Math.min(1, dt * 14)
-        this.mesh.position.x += (this.mur * MUR_X - this.mesh.position.x) * k
+        this.mesh.position.x += (this.murX - this.mesh.position.x) * k
         this.mesh.position.y += (MUR_HAUTEUR - this.mesh.position.y) * Math.min(1, dt * 12)
         // Le corps bascule vers la paroi : c'est ce qui fait « tenir » au mur
         this.mesh.rotation.z += (this.mur * 0.55 - this.mesh.rotation.z) * k

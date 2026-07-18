@@ -208,6 +208,15 @@ const GEO = {
    * montrent leur section au joueur — ouverts, ils paraîtraient creux.
    */
   tigeCreuse: new THREE.CylinderGeometry(0.8, 1, 1, 6, 1, true),
+  /**
+   * La tige du LOINTAIN : 4 pans au lieu de 6, et creuse.
+   *
+   * À vingt mètres et dans la brume, on ne lit qu'une silhouette verticale —
+   * personne ne comptera jamais ses arêtes. Comme ces tiges-là forment le gros
+   * du décor (jusqu'à 70 par massif), leur faire économiser un tiers de leurs
+   * triangles est le seul geste qui pèse vraiment.
+   */
+  tigeLoin: new THREE.CylinderGeometry(0.8, 1, 1, 4, 1, true),
   bloc: new THREE.BoxGeometry(1, 1, 1),
   cone: new THREE.ConeGeometry(1, 1, 4),
   sapin: new THREE.ConeGeometry(1, 1, 6),
@@ -295,21 +304,32 @@ const BAMBOUS: Biome = {
    * nombre de massifs — d'où le choix de charger chacun plutôt que d'en
    * multiplier.
    */
+  /*
+   * ⚠️ La densité au mètre ne dépend QUE du rapport tiges/écartement.
+   *
+   * Chaque massif apporte ses tiges tous les `ecartDecor` mètres : la densité
+   * vaut donc `proches / ecartDecor`, et l'étalement en z ne joue que sur
+   * l'uniformité. Serrer les massifs (6 → 4 m) faisait grimper les appels de
+   * dessin d'un tiers — 175, au-dessus du confortable — pour le même résultat
+   * que charger chaque massif, qui lui ne coûte RIEN de plus (tout est soudé).
+   *
+   * On garde donc 6 m, et l'on remplit.
+   */
   ecartDecor: 6,
   fabriqueDecor: (rng) => {
     const corps: Piece[] = []
     const feuilles: Piece[] = []
 
     // ————— Plan rapproché : les tiges qu'on voit vraiment —————
-    const proches = 16 + Math.floor(rng() * 10)
+    const proches = 40 + Math.floor(rng() * 20)
     for (let i = 0; i < proches; i++) {
-      const h = 7 + rng() * 6
+      const h = 7 + rng() * 7
       const r = 0.085 + rng() * 0.05
-      const x = rng() * 4.5
-      const z = (rng() - 0.5) * 18
+      const x = rng() * 5.5
+      const z = (rng() - 0.5) * 22
       // Plus la tige est loin, plus elle est sombre : la profondeur se lit à la
       // valeur avant de se lire à la taille.
-      const recul = Math.min(1, x / 4.5)
+      const recul = Math.min(1, x / 5.5)
       const vert = teinte(0x6d8a42, 0x2f4423, recul * 0.65 + rng() * 0.2)
       const penche = (rng() - 0.5) * 0.14
 
@@ -360,16 +380,18 @@ const BAMBOUS: Biome = {
     // Elles sont NOMBREUSES : c'est le rideau du fond, et le moindre trou
     // dedans se voit comme un manque. Une tige lointaine ne coûte que quelques
     // triangles, alors on en met beaucoup.
-    const loin = 34 + Math.floor(rng() * 18)
+    const loin = 60 + Math.floor(rng() * 30)
     for (let i = 0; i < loin; i++) {
-      const h = 13 + rng() * 10
+      const h = 13 + rng() * 11
       const r = 0.11 + rng() * 0.08
       corps.push({
-        geo: GEO.tigeCreuse.clone().scale(r, h, r),
+        geo: GEO.tigeLoin.clone().scale(r, h, r),
         couleur: teinte(0x2b3d22, 0x141d12, rng()),
-        x: 5 + rng() * 14,
+        // Jusqu'à 26 m : le rideau doit dépasser la portée de la brume (88 m),
+        // sinon on devine son bord en tournant la caméra.
+        x: 5.5 + rng() * 20,
         y: h / 2,
-        z: (rng() - 0.5) * 20,
+        z: (rng() - 0.5) * 24,
         rz: (rng() - 0.5) * 0.1,
       })
     }

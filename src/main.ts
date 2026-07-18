@@ -1930,13 +1930,34 @@ function rivalAuContact() {
  */
 function tenteMur(cote: -1 | 1): boolean {
   if (!acte2() || player.onGround || player.surMur !== 0) return false
-  // La voie extérieure du bon côté : 0 à gauche, 2 à droite
-  if (player.currentLane !== (cote === -1 ? 0 : 2)) return false
-  if (!track.murA(distance, cote)) return false
-  if (!player.accrocheMur(cote)) return false
-  jouerBruit('glissade')
-  toast('🧱 Au mur !')
-  return true
+
+  /*
+   * Deux parois possibles, et la seconde est la nouveauté.
+   *
+   * 1. Le PAN DE MUR qui borde la piste — depuis la voie extérieure seulement.
+   * 2. Le FLANC D'UNE PLATEFORME, depuis n'importe quelle voie.
+   *
+   * On n'escalade un mur que de face : vu de côté, un wagon est une paroi comme
+   * une autre. Ça donne une troisième réponse au convoi — après « prendre la
+   * rampe » et « payer l'escalade » — et c'est la seule qui demande du geste :
+   * il faut avoir sauté AVANT d'arriver à sa hauteur.
+   */
+  const surVoieExterieure = player.currentLane === (cote === -1 ? 0 : 2)
+  const flanc = track.flancA(player.currentLane, cote)
+
+  if (surVoieExterieure && track.murA(distance, cote)) {
+    if (!player.accrocheMur(cote)) return false
+    jouerBruit('glissade')
+    toast('🧱 Au mur !')
+    return true
+  }
+  if (flanc !== null) {
+    if (!player.accrocheMur(cote, flanc)) return false
+    jouerBruit('glissade')
+    toast('🚃 Au flanc !')
+    return true
+  }
+  return false
 }
 
 function botAuContact(): Bot | null {
@@ -3160,7 +3181,16 @@ function tick(now?: number) {
 
     // Le pan de mur s'achève : il nous relance en l'air, même si l'on aurait
     // pu tenir plus longtemps. On ne court pas sur du vide.
-    if (player.surMur !== 0 && !track.murA(distance, player.surMur)) player.lacheMur()
+    // La paroi s'achève : elle nous relance en l'air, même si l'on aurait pu
+    // tenir plus longtemps. On ne court pas sur du vide — et ça vaut pour les
+    // deux sortes de parois, le bord de piste comme le flanc d'un wagon.
+    if (
+      player.surMur !== 0 &&
+      !track.murA(distance, player.surMur) &&
+      track.flancA(player.currentLane, player.surMur) === null
+    ) {
+      player.lacheMur()
+    }
 
     /*
      * 😖 L'encaissement se déclenche sur le FRONT MONTANT de `stumble`.
