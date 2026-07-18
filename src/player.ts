@@ -11,6 +11,8 @@ export const LANES = [-2.2, 0, 2.2]
  */
 const GRAVITY = 42 // force qui te ramène au sol
 const JUMP_SPEED = 14 // impulsion du saut
+const REBOND_SPEED = 9.5 // le petit bond d'un coup réussi (plus court qu'un saut)
+const ATTACK_TIME = 0.26 // durée d'un coup : on ne peut pas réenchaîner avant
 const SLIDE_TIME = 0.55 // durée d'une glissade (secondes)
 const LANE_LERP = 12 // vitesse de glissement vers la ligne visée
 
@@ -27,6 +29,7 @@ export class Player {
   private lane = 1 // 0 = gauche, 1 = centre, 2 = droite
   private vy = 0 // vitesse verticale
   private sliding = 0 // temps de glissade restant
+  private attackT = 0 // temps restant du coup en cours (0 = libre de frapper)
   private rabSaut = 0 // 🕊️ sauts en réserve pour le vol (Saut de la Grue)
 
   constructor(scene: THREE.Scene) {
@@ -64,8 +67,10 @@ export class Player {
     this.vy = 0
     this.sliding = 0
     this.rabSaut = 0
+    this.attackT = 0
     this.mesh.position.set(LANES[lane], 0, 0)
     this.mesh.scale.y = 1
+    this.mesh.rotation.z = 0
   }
 
   get onGround() {
@@ -113,6 +118,34 @@ export class Player {
     return 0
   }
 
+  /**
+   * ————— Frapper —————
+   * L'attaque a une durée : pendant `ATTACK_TIME`, la lame est sortie et on ne
+   * peut pas réenchaîner. C'est ce petit verrou qui fait qu'on ne gagne pas la
+   * course en martelant l'écran au hasard — il faut viser la jarre suivante.
+   *
+   * Renvoie false si un coup est déjà en cours (le swipe est alors ignoré).
+   */
+  attaquer(): boolean {
+    if (this.attackT > 0) return false
+    this.attackT = ATTACK_TIME
+    this.sliding = 0 // on ne frappe pas accroupi
+    return true
+  }
+
+  /**
+   * Le rebond d'un coup réussi : un petit saut, plus court qu'un vrai saut.
+   * C'est LUI qui rend la chaîne possible — on retombe de jarre en jarre sans
+   * jamais toucher le sol, et tant qu'on est en l'air on survole les obstacles.
+   */
+  rebond() {
+    this.vy = REBOND_SPEED * this.fighter.jump
+  }
+
+  get enAttaque() {
+    return this.attackT > 0
+  }
+
   /** Glisse au sol (renvoie la durée) ou plonge en l'air (renvoie 0). */
   slide(): number {
     if (this.onGround) {
@@ -142,6 +175,13 @@ export class Player {
     this.sliding = Math.max(0, this.sliding - dt)
     const targetScale = this.sliding > 0 ? 0.45 : 1
     this.mesh.scale.y += (targetScale - this.mesh.scale.y) * Math.min(1, dt * 18)
+
+    // Le coup : le corps pivote vif à l'impact puis revient. Tout est encore en
+    // boîtes, donc l'inclinaison EST l'animation — c'est le seul signal qui dit
+    // « ton coup est parti » sans regarder le HUD.
+    this.attackT = Math.max(0, this.attackT - dt)
+    const penche = this.attackT > 0 ? Math.sin((this.attackT / ATTACK_TIME) * Math.PI) * 0.5 : 0
+    this.mesh.rotation.z += (penche - this.mesh.rotation.z) * Math.min(1, dt * 22)
   }
 
   /**

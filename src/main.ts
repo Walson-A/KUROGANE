@@ -52,6 +52,24 @@ const SPRINT_BOOST = 0.15 // +15 % de vitesse à jauge pleine
 const SPRINT_FULL_RATE = 8 // taps/s pour remplir la jauge — au-delà, plus rien
 const SPRINT_WINDOW = 0.6 // durée sur laquelle on mesure la cadence (s)
 
+/**
+ * ————— Le combat —————
+ * Frapper COÛTE de la vitesse ; c'est la CHAÎNE qui rembourse. Un coup isolé
+ * est à peu près neutre — taper au hasard ne fait pas gagner la course. Une
+ * chaîne de trois ou quatre jarres, elle, rapporte vraiment.
+ *
+ * L'étalon reste le trébuchement (on perd ~65 % de sa vitesse) : même une
+ * chaîne parfaite vaut moins que d'éviter une faute. On ajoute une compétence
+ * par-dessus la course, on ne la remplace pas.
+ *
+ * Et comme le rebond garde en l'air, enchaîner survole les obstacles : c'est
+ * la « route rapide » des bons joueurs, payée par le risque de rater un coup.
+ */
+const COUP_COUT = 0.06 // −6 % de vitesse à chaque coup porté
+const COUP_GAIN = 1.5 // m/s rendus, MULTIPLIÉS par le rang dans la chaîne
+const CHAINE_MAX = 5 // au-delà, le rang ne compte plus (anti-spam)
+const CHAINE_FENETRE = 1.4 // s sans toucher → la chaîne retombe
+
 // ————— La scène 3D —————
 const canvas = document.querySelector<HTMLCanvasElement>('#game')!
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true })
@@ -143,6 +161,8 @@ let sprintTaps: number[] = [] // instants des derniers taps → cadence
 let sprintCharge = 0 // la jauge de sprint, 0 → 1
 let sprintSeen = false // la bannière ne s'annonce qu'une fois
 let rankTimer = 0 // le classement se redessine 10 fois/s, pas 60
+let chaine = 0 // coups enchaînés sans toucher le sol de la chaîne
+let chaineT = 0 // temps restant pour enchaîner (sinon la chaîne retombe)
 
 // ————— Les rivaux d'entraînement —————
 // Le choix est gardé sur le téléphone : on reprend l'entraînement où on l'a
@@ -473,6 +493,53 @@ function updateMeLabel() {
 }
 
 /**
+ * Le combat n'existe qu'au 2ᵉ ACTE — le corps de la course.
+ * Ni pendant le départ canon, ni dans le sprint final : là, seul le
+ * martèlement compte. Chaque acte a sa compétence, aucun ne déborde.
+ */
+function combatActif() {
+  return state === 'course' && distance < COURSE_LENGTH - SPRINT_ZONE
+}
+
+/** Range un parchemin dans une main libre. Partagé par les rouleaux et les jarres dorées. */
+function gagneParchemin(kind: ParcheminKind) {
+  if (slots.length >= SLOTS_MAX) {
+    // Les deux mains sont pleines : il faut en lancer un pour reprendre
+    toast('✋ Mains pleines — lance un parchemin !')
+    return
+  }
+  slots.push(kind)
+  drawSlots(slots.length - 1)
+  toast(`📜 ${PARCHEMINS[kind].icone} ${PARCHEMINS[kind].nom}`)
+}
+
+/**
+ * Tente de frapper sur la ligne `lane`. Renvoie true si le swipe a été
+ * consommé par une attaque — l'appelant n'exécute alors PAS le déplacement.
+ */
+function frappe(lane: number): boolean {
+  if (lane < 0 || lane > 2) return false
+  if (!combatActif() || !track.jarreDevant(lane)) return false
+
+  // Un coup est déjà en cours : le swipe est avalé, mais rien ne part. C'est ce
+  // verrou qui empêche de gagner en martelant l'écran sans viser.
+  if (!player.attaquer()) return true
+
+  const { touchee, parchemin } = track.casseJarre(lane)
+  if (!touchee) return true
+
+  // Le rang dans la chaîne décide du gain : c'est tout l'intérêt d'enchaîner
+  chaine = Math.min(CHAINE_MAX, chaine + 1)
+  chaineT = CHAINE_FENETRE
+  speed = Math.max(6, speed * (1 - COUP_COUT) + COUP_GAIN * chaine)
+  player.rebond() // le petit bond qui relance vers la jarre suivante
+
+  if (parchemin) gagneParchemin(parchemin)
+  else if (chaine >= 2) toast(`⚔️ Chaîne ×${chaine}`)
+  return true
+}
+
+/**
  * Quand les taps servent à MARTELER plutôt qu'à esquiver :
  * - le sprint final (les derniers mètres)
  * - le décompte 3-2-1 : le DÉPART CANON — plus tu martèles, plus tu pars vite
@@ -522,6 +589,8 @@ function startRace(seed: number) {
   sprintTaps = []
   sprintCharge = 0
   sprintSeen = false
+  chaine = 0
+  chaineT = 0
   slots = []
   ventFin = 0
   kusarigamaFin = 0
@@ -748,24 +817,31 @@ menu.showTitle()
 // ————— Les contrôles —————
 // Chaque action est AUSSI envoyée au serveur en événement instantané : le
 // rival la voit ~50 ms plus tôt que si elle était fondue dans le flux 20 Hz.
+// Chaque swipe est CONTEXTUEL : s'il y a une cible dans cette direction, il
+// devient une attaque ; sinon c'est le déplacement habituel. Un seul geste,
+// deux sens — aucun bouton de plus à apprendre sur un écran de téléphone.
 new Input(document.body, {
   left: () => {
     if (state !== 'course') return
+    if (frappe(player.currentLane - 1)) return // on se fend sur la jarre
     player.moveLeft()
     if (online) net.sendAction({ t: 'lane', lane: player.currentLane })
   },
   right: () => {
     if (state !== 'course') return
+    if (frappe(player.currentLane + 1)) return
     player.moveRight()
     if (online) net.sendAction({ t: 'lane', lane: player.currentLane })
   },
   jump: () => {
     if (state !== 'course') return
+    if (frappe(player.currentLane)) return // le coup d'en haut : il lance la chaîne
     const v = player.jump(time < grueFin)
     if (online && v > 0) net.sendAction({ t: 'jump', v })
   },
   slide: () => {
     if (state !== 'course') return
+    if (frappe(player.currentLane)) return
     const d = player.slide()
     if (online && d > 0) net.sendAction({ t: 'slide', d })
   },
@@ -963,16 +1039,11 @@ function tick(now?: number) {
 
     // 📜 Ramassage d'un rouleau — on découvre son contenu maintenant
     const trouve = track.ramasse(player.hitbox())
-    if (trouve) {
-      if (slots.length < SLOTS_MAX) {
-        slots.push(trouve)
-        drawSlots(slots.length - 1)
-        toast(`📜 ${PARCHEMINS[trouve].icone} ${PARCHEMINS[trouve].nom}`)
-      } else {
-        // Les deux mains sont pleines : il faut en lancer un pour reprendre
-        toast('✋ Mains pleines — lance un parchemin !')
-      }
-    }
+    if (trouve) gagneParchemin(trouve)
+
+    // ⚔️ La chaîne retombe si on laisse passer trop de temps entre deux coups
+    chaineT = Math.max(0, chaineT - dt)
+    if (chaineT <= 0) chaine = 0
 
     // Trébuchement : toucher un obstacle RALENTIT (on ne meurt pas, c'est une course)
     stumble = Math.max(0, stumble - dt)

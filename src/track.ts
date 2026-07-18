@@ -46,6 +46,37 @@ interface Rouleau {
 }
 
 /**
+ * ————— Les jarres : les cibles du combat —————
+ * `vide` ne donne que de l'élan et un maillon de chaîne ; `doree` cache un
+ * parchemin. Comme tout naît de la graine partagée, les deux joueurs voient
+ * les MÊMES jarres : la dorée devient un point de friction — on ne court plus
+ * seulement contre le chrono, on se bat pour un objet que l'autre convoite.
+ */
+export type JarreKind = 'vide' | 'doree'
+
+export interface PlannedJarre {
+  d: number
+  lane: number
+  kind: JarreKind
+  /** Ce que la dorée recèle (ignoré pour une jarre vide) */
+  parchemin: ParcheminKind
+}
+
+interface Jarre {
+  mesh: THREE.Group
+  kind: JarreKind
+  parchemin: ParcheminKind
+  active: boolean
+}
+
+/**
+ * La portée de frappe, en mètres devant soi. Généreuse exprès : une attaque
+ * ratée de peu est bien plus frustrante qu'une attaque un peu assistée, et on
+ * vise au doigt sur un écran qui bouge.
+ */
+const PORTEE_FRAPPE = 5.5
+
+/**
  * Générateur de nombres pseudo-aléatoires AVEC GRAINE (algorithme mulberry32).
  * Même graine → même suite de nombres → même piste pour les deux joueurs.
  * C'est LA clé du multijoueur équitable !
@@ -76,6 +107,9 @@ export class Track {
   private parcheminPlan: PlannedParchemin[] = []
   private parcheminIdx = 0
   private tempsRouleaux = 0 // horloge d'animation des rouleaux (rotation, flottement)
+  private jarres: Jarre[] = []
+  private jarrePlan: PlannedJarre[] = []
+  private jarreIdx = 0
   private courseLength = 0
 
   constructor(scene: THREE.Scene) {
@@ -129,6 +163,10 @@ export class Track {
       r.active = false
       r.mesh.visible = false
     }
+    for (const j of this.jarres) {
+      j.active = false
+      j.mesh.visible = false
+    }
     this.courseLength = length
     this.finish.position.z = -length
     this.plan = buildPlan(length, seed)
@@ -136,6 +174,8 @@ export class Track {
     // Les rouleaux sont places APRES les obstacles : ils doivent s'en ecarter
     this.parcheminPlan = buildParcheminPlan(length, seed, this.plan)
     this.parcheminIdx = 0
+    this.jarrePlan = buildJarrePlan(length, seed, this.plan)
+    this.jarreIdx = 0
   }
 
   /**
@@ -214,6 +254,18 @@ export class Track {
       }
     }
 
+    // Les jarres, elles, restent posées au sol : rien ne bouge, seule la dorée
+    // pivote lentement pour se signaler de loin.
+    for (const j of this.jarres) {
+      if (!j.active) continue
+      j.mesh.position.z += dz
+      if (j.kind === 'doree') j.mesh.rotation.y = this.tempsRouleaux * 1.1
+      if (j.mesh.position.z > DESPAWN_Z) {
+        j.active = false
+        j.mesh.visible = false
+      }
+    }
+
     if (distance >= 0) {
       // La ligne d'arrivée est TOUJOURS placée d'après la distance parcourue :
       // impossible qu'elle se désynchronise.
@@ -238,7 +290,65 @@ export class Track {
         this.spawnRouleau(p.kind, p.lane, -(p.d - distance))
         this.parcheminIdx++
       }
+
+      // Idem pour les jarres
+      while (
+        this.jarreIdx < this.jarrePlan.length &&
+        this.jarrePlan[this.jarreIdx].d <= distance + LOOKAHEAD
+      ) {
+        const p = this.jarrePlan[this.jarreIdx]
+        this.spawnJarre(p, -(p.d - distance))
+        this.jarreIdx++
+      }
     }
+  }
+
+  private spawnJarre(p: PlannedJarre, z: number) {
+    // Les deux sortes n'ont pas le même corps : on recycle par sorte.
+    let j = this.jarres.find((j) => !j.active && j.kind === p.kind)
+    if (!j) {
+      j = { mesh: makeJarreMesh(p.kind), kind: p.kind, parchemin: p.parchemin, active: false }
+      this.jarres.push(j)
+      this.scene.add(j.mesh)
+    }
+    j.parchemin = p.parchemin
+    j.mesh.position.x = LANES[p.lane]
+    j.mesh.position.z = z
+    j.mesh.rotation.y = 0
+    j.mesh.visible = true
+    j.active = true
+  }
+
+  /** La jarre à portée de frappe sur cette ligne, s'il y en a une. */
+  private jarreAPortee(lane: number): Jarre | null {
+    for (const j of this.jarres) {
+      if (!j.active) continue
+      if (Math.abs(j.mesh.position.x - LANES[lane]) > 1.1) continue
+      const z = j.mesh.position.z
+      if (z > -PORTEE_FRAPPE && z < 1.5) return j
+    }
+    return null
+  }
+
+  /**
+   * Y a-t-il quelque chose à frapper sur cette ligne ?
+   * C'est CE test qui décide si un swipe est un déplacement ou une attaque.
+   */
+  jarreDevant(lane: number): boolean {
+    return this.jarreAPortee(lane) !== null
+  }
+
+  /**
+   * Casse la jarre à portée sur cette ligne. Renvoie ce qu'elle contenait :
+   * `null` si rien à frapper, sinon le parchemin libéré (ou `null` pour une
+   * jarre vide, qui ne donne que l'élan et le maillon de chaîne).
+   */
+  casseJarre(lane: number): { touchee: boolean; parchemin: ParcheminKind | null } {
+    const j = this.jarreAPortee(lane)
+    if (!j) return { touchee: false, parchemin: null }
+    j.active = false
+    j.mesh.visible = false
+    return { touchee: true, parchemin: j.kind === 'doree' ? j.parchemin : null }
   }
 
   private spawnRouleau(kind: ParcheminKind, lane: number, z: number) {
@@ -311,7 +421,7 @@ export class Track {
  * 1 ou 2 obstacles par rangée, jamais 3 : il y a toujours un passage !
  * La zone de sprint final est dégagée.
  */
-function buildPlan(length: number, seed: number): PlannedObstacle[] {
+export function buildPlan(length: number, seed: number): PlannedObstacle[] {
   const rng = mulberry32(seed)
   const kinds: Kind[] = ['saut', 'glissade', 'mur']
   const plan: PlannedObstacle[] = []
@@ -376,6 +486,107 @@ function buildParcheminPlan(
     d += 130 + rng() * 80
   }
   return plan
+}
+
+/**
+ * Place les jarres — en GRAPPES, et c'est tout l'enjeu du réglage.
+ *
+ * Une jarre isolée ne vaut rien : frapper coûte de la vitesse, et un coup seul
+ * ne la rembourse pas. Ce qui paie, c'est la CHAÎNE. Il faut donc que les
+ * cibles se suivent d'assez près pour qu'on aille de l'une à l'autre sans
+ * retomber : après un rebond on reste en l'air ~0,6 s, soit une quinzaine de
+ * mètres à vitesse de croisière. D'où l'espacement de 12 à 15 m — assez serré
+ * pour enchaîner, assez large pour rater si on frappe trop tôt.
+ *
+ * Une grappe tient sur UNE ligne : on enchaîne tout droit, et le choix « je
+ * prends la grappe ou je garde ma trajectoire » reste lisible en une seconde.
+ *
+ * Graine décalée (`^`) : sinon les jarres tomberaient toujours sur les mêmes
+ * points que les obstacles et les rouleaux.
+ */
+export function buildJarrePlan(
+  length: number,
+  seed: number,
+  obstacles: PlannedObstacle[]
+): PlannedJarre[] {
+  const rng = mulberry32(seed ^ 0x2b91e6a7)
+  const plan: PlannedJarre[] = []
+
+  let d = 90 // le temps d'avoir pris sa vitesse
+  while (d < length - SPRINT_ZONE - 30) {
+    const taille = 2 + Math.floor(rng() * 3) // 2 à 4 jarres
+    const ecart = 12 + rng() * 3
+
+    // On cherche une ligne libre sur TOUTE la longueur de la grappe : une
+    // grappe coupée par un mur serait un piège, pas un choix.
+    //
+    // ⚠️ La fin est recalculée à CHAQUE essai : quand on décale la grappe, sa
+    // fin se décale avec elle. L'oublier laissait passer des jarres dans les
+    // murs — et comme les rangées d'obstacles bouchent souvent les 3 lignes
+    // sur une fenêtre aussi large, ce décalage arrive tout le temps.
+    let lane = -1
+    for (let essai = 0; essai < 10; essai++) {
+      const fin = d + ecart * (taille - 1)
+      const occupees = new Set(
+        obstacles.filter((o) => o.d > d - 8 && o.d < fin + 8).map((o) => o.lane)
+      )
+      const libres = [0, 1, 2].filter((l) => !occupees.has(l))
+      if (libres.length > 0) {
+        lane = libres[Math.floor(rng() * libres.length)]
+        break
+      }
+      d += 6 // ce tronçon est bouché : on décale la grappe un peu plus loin
+    }
+
+    // La grappe doit tenir ENTIÈREMENT dans le 2ᵉ acte. Une jarre posée dans
+    // la zone de sprint serait incassable — le combat y est éteint — donc on
+    // arrête d'en poser dès que la grappe déborderait.
+    if (d + ecart * (taille - 1) >= length - SPRINT_ZONE) break
+
+    if (lane >= 0) {
+      // Une grappe sur trois cache une dorée, jamais en première position :
+      // il faut avoir commencé la chaîne pour la cueillir.
+      const doree = rng() < 0.34 ? 1 + Math.floor(rng() * (taille - 1)) : -1
+      for (let i = 0; i < taille; i++) {
+        plan.push({
+          d: d + ecart * i,
+          lane,
+          kind: i === doree ? 'doree' : 'vide',
+          parchemin: TIRAGE[Math.floor(rng() * TIRAGE.length)],
+        })
+      }
+    }
+    d += 90 + rng() * 60
+  }
+  return plan
+}
+
+/**
+ * Le visuel d'une jarre. La dorée doit se repérer de TRÈS loin (on décide de
+ * changer de ligne pour elle) : d'où l'or émissif, qui perce la brume.
+ */
+function makeJarreMesh(kind: JarreKind): THREE.Group {
+  const g = new THREE.Group()
+  const doree = kind === 'doree'
+
+  const mat = doree
+    ? new THREE.MeshStandardMaterial({
+        color: 0xd6ac5a,
+        roughness: 0.3,
+        emissive: 0x6a4f12, // elle brille dans la nuit
+      })
+    : new THREE.MeshStandardMaterial({ color: 0x8a6a52, roughness: 0.9 })
+
+  // Le ventre : plus large en bas qu'en haut, comme une vraie poterie
+  const ventre = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.36, 0.62, 12), mat)
+  ventre.position.y = 0.31
+
+  // Le col
+  const col = new THREE.Mesh(new THREE.CylinderGeometry(0.19, 0.19, 0.14, 10), mat)
+  col.position.y = 0.69
+
+  g.add(ventre, col)
+  return g
 }
 
 /**
