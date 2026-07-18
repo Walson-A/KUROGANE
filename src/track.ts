@@ -2,6 +2,7 @@ import * as THREE from 'three'
 import { LANES, MUR_X, JUMP_SPEED } from './player'
 import { tirerParchemin, TIRAGE, type ParcheminKind } from './parchemin'
 import { BIOMES, ambianceA } from './biomes'
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
 
 /**
  * Les 3 familles d'obstacles : comment les franchir.
@@ -11,6 +12,8 @@ import { BIOMES, ambianceA } from './biomes'
 export type Kind = 'saut' | 'glissade' | 'mur'
 
 const LOOKAHEAD = 85 // les obstacles apparaissent 85 m devant (cachés par la brume)
+/** L'écart entre deux pointillés — et donc la période de leur défilement. */
+const PAS_POINTILLE = 6
 const DESPAWN_Z = 8 // et disparaissent derrière la caméra
 
 /**
@@ -130,7 +133,8 @@ export function mulberry32(seed: number) {
 export class Track {
   private scene: THREE.Scene
   private obstacles: Obstacle[] = []
-  private stripes: THREE.Mesh[] = []
+  /** Le ruban de pointillés, soudé en un seul maillage (cf. constructeur). */
+  private pointilles: THREE.Mesh
   private toriis: THREE.Group[] = []
   private finish: THREE.Group // la ligne d'arrivée : le torii sacré
   private plan: PlannedObstacle[] = [] // tous les obstacles de la course, décidés à l'avance
@@ -197,18 +201,29 @@ export class Track {
     ground.position.z = -90
     scene.add(ground)
 
-    // Pointillés entre les lignes → sensation de vitesse
+    /*
+     * Les pointillés entre les lignes → la sensation de vitesse.
+     *
+     * Ils étaient 60 maillages indépendants qui défilaient chacun leur tour :
+     * à eux seuls, plus du tiers du budget d'appels de dessin d'un téléphone.
+     * Ils sont désormais SOUDÉS en un seul, qu'on fait glisser d'un bloc.
+     *
+     * Le motif se répète tous les 6 m : ramener la position dans [0, 6[ suffit
+     * donc à donner un ruban infini, sans que rien ne saute à l'œil.
+     */
     this.matLigne = new THREE.MeshBasicMaterial({ color: BIOMES[0].ligne })
-    const stripeMat = this.matLigne
+    const traits: THREE.BufferGeometry[] = []
     for (let i = 0; i < 30; i++) {
       for (const x of [-1.1, 1.1]) {
-        const s = new THREE.Mesh(new THREE.PlaneGeometry(0.12, 1.6), stripeMat)
-        s.rotation.x = -Math.PI / 2
-        s.position.set(x, 0.01, -i * 6)
-        this.stripes.push(s)
-        scene.add(s)
+        const t = new THREE.PlaneGeometry(0.12, 1.6)
+        t.rotateX(-Math.PI / 2)
+        t.translate(x, 0.01, -i * PAS_POINTILLE)
+        traits.push(t)
       }
     }
+    this.pointilles = new THREE.Mesh(mergeGeometries(traits, false)!, this.matLigne)
+    for (const t of traits) t.dispose()
+    scene.add(this.pointilles)
 
     // Des torii rouges enjambent la piste (décor, pas de collision)
     for (let i = 0; i < 3; i++) {
@@ -324,10 +339,8 @@ export class Track {
   update(dt: number, speed: number, distance = -1) {
     const dz = speed * dt // tout le décor avance de dz vers le joueur
 
-    for (const s of this.stripes) {
-      s.position.z += dz
-      if (s.position.z > 6) s.position.z -= 180
-    }
+    // Le ruban de pointillés glisse d'un bloc, et se recale tous les 6 m.
+    this.pointilles.position.z = (this.pointilles.position.z + dz) % PAS_POINTILLE
 
     for (const t of this.toriis) {
       t.position.z += dz
@@ -530,9 +543,17 @@ export class Track {
       this.scene.add(dec.mesh)
     }
     dec.mesh.position.set(cote * (7 + this.graineDecor() * 2.5), 0, z)
-    // On le retourne d'un côté à l'autre : la même touffe recyclée à droite
-    // puis à gauche ne doit pas se lire comme un copier-coller.
-    dec.mesh.scale.x = cote
+    /*
+     * Les décors sont dessinés d'un seul côté (x local croissant = vers
+     * l'extérieur). Pour le bord gauche, on fait DEMI-TOUR.
+     *
+     * ⚠️ Surtout pas `scale.x = -1` : sur une géométrie fusionnée, une échelle
+     * négative retourne les normales, et tout le massif s'éclaire à l'envers —
+     * les faces au soleil deviennent noires. La rotation, elle, préserve
+     * l'éclairage, et retourne aussi la profondeur : la même touffe recyclée à
+     * droite puis à gauche ne se lit pas comme un copier-coller.
+     */
+    dec.mesh.rotation.y = cote < 0 ? Math.PI : 0
     dec.mesh.visible = true
     dec.active = true
   }
