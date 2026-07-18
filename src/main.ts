@@ -2458,7 +2458,6 @@ const net = new Net({
     state = 'fini'
     sprintEl.classList.add('hidden')
     gapEl.classList.add('hidden')
-    rankEl.classList.add('hidden')
     showResults(view)
     // Le serveur vient de payer les arrivants : on relit notre bourse. Elle est
     // créditée LÀ-BAS, on ne fait que la constater — d'où la relecture plutôt
