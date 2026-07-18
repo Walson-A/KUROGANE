@@ -269,11 +269,14 @@ body {
   transition: opacity 0.05s;
 }
 
-/* ——— 💨 Bombe fumigène : l'encre du bloup (façon Mario Kart) ———
-   De grosses taches d'encre presque opaques COUVRENT l'écran, avec juste
-   quelques trous pour deviner la piste — et un voile général par-dessus tout,
-   pour qu'on voie « un tout petit peu » même dans les trous. Aveugler à 100 %
-   serait injouable ; on cache beaucoup, pas tout. */
+/* ——— 💨 Bombe fumigène : de la FUMÉE, pas de l'encre ———
+   De grosses volutes grises couvrent l'écran, avec des trous pour deviner la
+   piste, et un voile léger par-dessus tout.
+
+   C'était d'abord de l'encre presque noire (#090a11 à 90 % d'opacité) : ça
+   aveuglait si bien qu'on ne jouait plus, on attendait. On l'éclaircit en
+   gris-bleu translucide — on gêne beaucoup, on ne coupe plus la vue. Le sort
+   doit se subir en courant, pas les yeux fermés. */
 #fumee {
   position: fixed;
   inset: -20%; /* déborde : quand la tache « gicle » (scale), pas de bord vide */
@@ -281,17 +284,17 @@ body {
   opacity: 0;
   transition: opacity 0.4s ease;
   background:
-    /* les taches d'encre : discs quasi opaques, bord flou, disposés au hasard */
-    radial-gradient(circle at 24% 30%, #090a11 0 20%, transparent 30%),
-    radial-gradient(circle at 72% 22%, #090a11 0 24%, transparent 33%),
-    radial-gradient(circle at 84% 64%, #090a11 0 22%, transparent 31%),
-    radial-gradient(circle at 33% 74%, #090a11 0 25%, transparent 34%),
-    radial-gradient(circle at 56% 50%, #090a11 0 26%, transparent 36%),
-    radial-gradient(circle at 13% 58%, #090a11 0 17%, transparent 26%),
-    radial-gradient(circle at 62% 84%, #090a11 0 18%, transparent 27%),
-    radial-gradient(circle at 92% 40%, #090a11 0 15%, transparent 24%),
-    /* le voile de fond : même les trous restent sombres → on ne voit qu'un peu */
-    linear-gradient(rgba(7, 8, 13, 0.6), rgba(7, 8, 13, 0.6));
+    /* les volutes : gris translucide, bord flou, dispersées au hasard */
+    radial-gradient(circle at 24% 30%, rgba(126, 140, 163, 0.82) 0 20%, transparent 32%),
+    radial-gradient(circle at 72% 22%, rgba(126, 140, 163, 0.82) 0 24%, transparent 35%),
+    radial-gradient(circle at 84% 64%, rgba(112, 126, 150, 0.8) 0 22%, transparent 33%),
+    radial-gradient(circle at 33% 74%, rgba(126, 140, 163, 0.82) 0 25%, transparent 36%),
+    radial-gradient(circle at 56% 50%, rgba(112, 126, 150, 0.78) 0 26%, transparent 38%),
+    radial-gradient(circle at 13% 58%, rgba(126, 140, 163, 0.8) 0 17%, transparent 28%),
+    radial-gradient(circle at 62% 84%, rgba(112, 126, 150, 0.8) 0 18%, transparent 29%),
+    radial-gradient(circle at 92% 40%, rgba(126, 140, 163, 0.8) 0 15%, transparent 26%),
+    /* le voile de fond : il trouble les trous sans les fermer */
+    linear-gradient(rgba(150, 162, 182, 0.3), rgba(150, 162, 182, 0.3));
   background-repeat: no-repeat;
 }
 /* Le « ploop » : l'encre gicle sur l'écran d'un coup, avec un petit rebond */
