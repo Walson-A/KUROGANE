@@ -3,6 +3,7 @@ import {
   ROSTER,
   PERSO_ID,
   SKIN_PALETTE,
+  animerCourse,
   buildFighter,
   clearFighter,
   cssColor,
@@ -84,6 +85,7 @@ export class Menu {
   private spin = 0
   /** La dernière vue du salon reçue — pour savoir qui je suis, si je suis prêt… */
   private view: LobbyView | null = null
+  private apercu?: THREE.Object3D
 
   private el = {
     banner: document.getElementById('banner')!,
@@ -453,7 +455,9 @@ export class Menu {
     if (!this.preview) this.initPreview()
     if (!this.preview) return // pas de WebGL pour le petit canvas : tant pis, on garde les vignettes
     clearFighter(this.preview.group)
-    this.preview.group.add(...buildFighter(f))
+    const parts = buildFighter(f)
+    this.apercu = parts[0] // on le fait courir sur place dans la vignette
+    this.preview.group.add(...parts)
   }
 
   private initPreview() {
@@ -507,6 +511,9 @@ export class Menu {
     this.resizePreview()
     this.spin += dt * 0.7
     this.preview.group.rotation.y = this.spin
+    // Il court sur place pendant qu'on le regarde : une pose figée donnerait
+    // l'impression d'un mannequin, pas d'un coureur.
+    animerCourse(this.apercu, this.spin)
     this.preview.renderer.render(this.preview.scene, this.preview.camera)
   }
 

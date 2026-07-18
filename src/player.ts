@@ -1,6 +1,6 @@
 import * as THREE from 'three'
 import { NameTag } from './nametag'
-import { ROSTER, buildFighter, clearFighter, cssColor, type Fighter } from './roster'
+import { ROSTER, animerCourse, buildFighter, clearFighter, cssColor, type Fighter } from './roster'
 
 /** Les 3 lignes de course (positions X dans le monde 3D) */
 export const LANES = [-2.2, 0, 2.2]
@@ -11,6 +11,7 @@ export const LANES = [-2.2, 0, 2.2]
  */
 const GRAVITY = 42 // force qui te ramène au sol
 const JUMP_SPEED = 14 // impulsion du saut
+const ATTACK_TIME = 0.26 // durée d'un coup : on ne peut pas réenchaîner avant
 const SLIDE_TIME = 0.55 // durée d'une glissade (secondes)
 const LANE_LERP = 12 // vitesse de glissement vers la ligne visée
 
@@ -27,7 +28,10 @@ export class Player {
   private lane = 1 // 0 = gauche, 1 = centre, 2 = droite
   private vy = 0 // vitesse verticale
   private sliding = 0 // temps de glissade restant
+  private attackT = 0 // temps restant du coup en cours (0 = libre de frapper)
   private rabSaut = 0 // 🕊️ sauts en réserve pour le vol (Saut de la Grue)
+  private racine?: THREE.Object3D // le corps articulé, cf. roster.buildFighter
+  private tAnim = 0 // l'horloge de la foulée
 
   constructor(scene: THREE.Scene) {
     scene.add(this.mesh)
@@ -39,7 +43,9 @@ export class Player {
   setFighter(f: Fighter) {
     this.fighter = f
     clearFighter(this.mesh)
-    this.mesh.add(...buildFighter(f))
+    const parts = buildFighter(f)
+    this.racine = parts[0] // c'est elle que la foulée anime
+    this.mesh.add(...parts)
   }
 
   /**
@@ -69,8 +75,10 @@ export class Player {
     this.vy = 0
     this.sliding = 0
     this.rabSaut = 0
+    this.attackT = 0
     this.mesh.position.set(LANES[lane], 0, 0)
     this.mesh.scale.y = 1
+    this.mesh.rotation.z = 0
   }
 
   get onGround() {
@@ -118,6 +126,38 @@ export class Player {
     return 0
   }
 
+  /**
+   * ————— Frapper —————
+   * L'attaque a une durée : pendant `ATTACK_TIME`, la lame est sortie et on ne
+   * peut pas réenchaîner. C'est ce petit verrou qui fait qu'on ne gagne pas la
+   * course en martelant l'écran au hasard — il faut viser la jarre suivante.
+   *
+   * Renvoie false si un coup est déjà en cours (le swipe est alors ignoré).
+   */
+  attaquer(): boolean {
+    if (this.attackT > 0) return false
+    this.attackT = ATTACK_TIME
+    this.sliding = 0 // on ne frappe pas accroupi
+    return true
+  }
+
+  /**
+   * Le rebond d'un coup porté EN L'AIR : un VRAI saut, exactement celui d'un
+   * swipe vers le haut — mais donné automatiquement par le coup.
+   *
+   * C'est lui qui rend la chaîne possible : on repart de jarre en jarre sans
+   * jamais toucher le sol, et tant qu'on vole on survole les obstacles.
+   * Un coup donné au sol, lui, ne fait pas rebondir — il faut déjà être en
+   * l'air pour enchaîner, donc décider de sauter AVANT d'arriver sur la grappe.
+   */
+  rebond() {
+    this.vy = JUMP_SPEED * this.fighter.jump
+  }
+
+  get enAttaque() {
+    return this.attackT > 0
+  }
+
   /** Glisse au sol (renvoie la durée) ou plonge en l'air (renvoie 0). */
   slide(): number {
     if (this.onGround) {
@@ -129,6 +169,10 @@ export class Player {
   }
 
   update(dt: number) {
+    // La foulée. En l'air on fige le cycle : on ne pédale pas dans le vide.
+    this.tAnim += dt
+    animerCourse(this.racine, this.tAnim, this.onGround ? 1 : 0.25)
+
     // Glisse en douceur vers la ligne choisie
     const targetX = LANES[this.lane]
     const k = Math.min(1, dt * LANE_LERP * this.fighter.laneSpeed)
@@ -147,6 +191,13 @@ export class Player {
     this.sliding = Math.max(0, this.sliding - dt)
     const targetScale = this.sliding > 0 ? 0.45 : 1
     this.mesh.scale.y += (targetScale - this.mesh.scale.y) * Math.min(1, dt * 18)
+
+    // Le coup : le corps pivote vif à l'impact puis revient. Tout est encore en
+    // boîtes, donc l'inclinaison EST l'animation — c'est le seul signal qui dit
+    // « ton coup est parti » sans regarder le HUD.
+    this.attackT = Math.max(0, this.attackT - dt)
+    const penche = this.attackT > 0 ? Math.sin((this.attackT / ATTACK_TIME) * Math.PI) * 0.5 : 0
+    this.mesh.rotation.z += (penche - this.mesh.rotation.z) * Math.min(1, dt * 22)
   }
 
   /**

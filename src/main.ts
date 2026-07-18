@@ -54,6 +54,44 @@ const SPRINT_BOOST = 0.15 // +15 % de vitesse à jauge pleine
 const SPRINT_FULL_RATE = 8 // taps/s pour remplir la jauge — au-delà, plus rien
 const SPRINT_WINDOW = 0.6 // durée sur laquelle on mesure la cadence (s)
 
+/**
+ * ————— Le combat —————
+ * Frapper COÛTE de la vitesse ; c'est la CHAÎNE qui rembourse. Un coup isolé
+ * est à peu près neutre — taper au hasard ne fait pas gagner la course. Une
+ * chaîne de trois ou quatre jarres, elle, rapporte vraiment.
+ *
+ * L'étalon reste le trébuchement (on perd ~65 % de sa vitesse) : même une
+ * chaîne parfaite vaut moins que d'éviter une faute. On ajoute une compétence
+ * par-dessus la course, on ne la remplace pas.
+ *
+ * Et comme le rebond garde en l'air, enchaîner survole les obstacles : c'est
+ * la « route rapide » des bons joueurs, payée par le risque de rater un coup.
+ */
+const COUP_COUT = 0.06 // −6 % de vitesse à chaque coup porté
+const COUP_GAIN = 1.5 // m/s rendus, MULTIPLIÉS par le rang dans la chaîne
+const CHAINE_MAX = 5 // au-delà, le rang ne compte plus (anti-spam)
+const CHAINE_FENETRE = 1.4 // s sans toucher → la chaîne retombe
+
+/**
+ * Percuter une jarre au lieu de la frapper : on garde 72 % de sa vitesse.
+ * Bien moins qu'un obstacle (35 %) — c'est une poterie, pas un mur — mais
+ * assez pour qu'une grappe sur sa ligne ne s'ignore jamais.
+ */
+const JARRE_FREIN = 0.72
+
+/**
+ * ————— ⚔️ Le duel au corps à corps —————
+ * Frapper le rival, c'est la vraie raison d'être du combat. La portée doit
+ * rester égale à celle du serveur (RaceRoom) : c'est lui qui tranche, nous ne
+ * faisons qu'anticiper le geste pour que la lame ne soit pas molle.
+ *
+ * Encaisser coûte plus cher qu'une jarre (72 %) mais moins qu'un mur (35 %) :
+ * un coup du rival fait mal sans décider la course à lui seul — et le serveur
+ * laisse 1,5 s de répit à la victime, on ne matraque pas un joueur à terre.
+ */
+const PVP_PORTEE = 5 // ⚠️ à garder égal à PVP_PORTEE dans server/src/RaceRoom.ts
+const PVP_FREIN = 0.55
+
 // ————— La scène 3D —————
 const canvas = document.querySelector<HTMLCanvasElement>('#game')!
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true })
@@ -216,6 +254,8 @@ let sprintTaps: number[] = [] // instants des derniers taps → cadence
 let sprintCharge = 0 // la jauge de sprint, 0 → 1
 let sprintSeen = false // la bannière ne s'annonce qu'une fois
 let rankTimer = 0 // le classement se redessine 10 fois/s, pas 60
+let chaine = 0 // coups enchaînés sans toucher le sol de la chaîne
+let chaineT = 0 // temps restant pour enchaîner (sinon la chaîne retombe)
 
 // ————— Les rivaux d'entraînement —————
 // Le choix est gardé sur le téléphone : on reprend l'entraînement où on l'a
@@ -1464,6 +1504,125 @@ function updateMeLabel() {
 }
 
 /**
+ * Le combat n'existe qu'au 2ᵉ ACTE — le corps de la course.
+ * Ni pendant le départ canon, ni dans le sprint final : là, seul le
+ * martèlement compte. Chaque acte a sa compétence, aucun ne déborde.
+ */
+function combatActif() {
+  return state === 'course' && distance < COURSE_LENGTH - SPRINT_ZONE
+}
+
+/** Range un parchemin dans une main libre. Partagé par les rouleaux et les jarres dorées. */
+function gagneParchemin(kind: ParcheminKind) {
+  if (slots.length >= SLOTS_MAX) {
+    // Les deux mains sont pleines : il faut en lancer un pour reprendre
+    toast('✋ Mains pleines — lance un parchemin !')
+    return
+  }
+  slots.push(kind)
+  revealSlot(slots.length - 1, kind) // déroulé machine à sous
+  toast(`📜 ${PARCHEMINS[kind].icone} ${PARCHEMINS[kind].nom}`)
+}
+
+/**
+ * Tente de frapper sur la ligne `lane`. Renvoie true si le swipe a été
+ * consommé par une attaque — l'appelant n'exécute alors PAS le déplacement.
+ */
+/**
+ * Le rival est-il à portée de lame sur cette ligne ? On se fie à sa position
+ * ESTIMÉE (extrapolée), la seule honnête — mais le serveur revérifiera.
+ */
+function rivalAPortee(lane: number): boolean {
+  if (!online) return false
+  for (const r of rivals.values()) {
+    if (!r.opp.active || r.opp.laneNow !== lane || r.finished) continue
+    const ecart = r.opp.distanceNow - distance
+    if (ecart > -2 && ecart <= PVP_PORTEE) return true
+  }
+  return false
+}
+
+/**
+ * Le bot à portée de lame sur cette ligne — la cible du mode entraînement.
+ *
+ * Les bots SONT les rivaux du solo : les priver du corps à corps ferait de
+ * l'entraînement un mode où l'on ne peut pas répéter le geste qui décide les
+ * duels. Mêmes règles que contre un humain, sans le serveur (rien à valider :
+ * tout se passe sur cette machine).
+ */
+function botAPortee(lane: number): Bot | null {
+  if (online) return null
+  for (let i = 0; i < nbBots; i++) {
+    const b = bots[i]
+    if (!b.actif || b.ligne !== lane) continue
+    const ecart = b.distance - distance
+    if (ecart > -2 && ecart <= PVP_PORTEE) return b
+  }
+  return null
+}
+
+/**
+ * Un maillon de chaîne de plus, et le gain qui va avec.
+ * Une jarre ou un rival valent pareil : c'est le RANG qui paie.
+ */
+function encaisseGain() {
+  chaine = Math.min(CHAINE_MAX, chaine + 1)
+  chaineT = CHAINE_FENETRE
+  speed = Math.max(6, speed * (1 - COUP_COUT) + COUP_GAIN * chaine)
+}
+
+/**
+ * Tente de frapper sur la ligne `lane` — une jarre, ou le rival. Renvoie true
+ * si le swipe a été consommé par une attaque.
+ */
+function frappe(lane: number): boolean {
+  if (lane < 0 || lane > 2 || !combatActif()) return false
+
+  // La jarre passe en premier : c'est la cible posée là exprès par le niveau,
+  // alors qu'un rival peut dériver sur la ligne par hasard — perdre sa chaîne
+  // parce qu'un bot est passé au mauvais moment serait injuste.
+  const jarre = track.jarreDevant(lane)
+  const rival = rivalAPortee(lane)
+  const bot = botAPortee(lane)
+  if (!jarre && !rival && !bot) return false
+
+  // Un coup est déjà en cours : le swipe est avalé, mais rien ne part. C'est ce
+  // verrou qui empêche de gagner en martelant l'écran sans viser.
+  if (!player.attaquer()) return true
+
+  // Le rebond ne récompense QUE les coups donnés en vol. Il faut donc décider
+  // de sauter avant d'aborder la grappe : c'est ce choix, pris à l'avance, qui
+  // sépare celui qui casse une jarre au passage de celui qui enchaîne.
+  const enLAir = !player.onGround
+
+  if (jarre) {
+    const { touchee, parchemin } = track.casseJarre(lane)
+    if (!touchee) return true
+    encaisseGain()
+    if (enLAir) player.rebond() // relancé vers la jarre suivante
+    if (parchemin) gagneParchemin(parchemin)
+    else if (chaine >= 2) toast(`⚔️ Chaîne ×${chaine}`)
+    return true
+  }
+
+  // ⚔️ Un bot (entraînement) : tout est local, le coup porte immédiatement.
+  if (bot) {
+    bot.encaisseCoup(PVP_FREIN)
+    encaisseGain()
+    if (enLAir) player.rebond()
+    toast(chaine >= 2 ? `⚔️ ${bot.profil.nom} ! Chaîne ×${chaine}` : `⚔️ ${bot.profil.nom} touché !`)
+    return true
+  }
+
+  // ⚔️ Le rival en ligne : on joue le geste (et le rebond) TOUT DE SUITE, mais
+  // les dégâts sont tranchés par le serveur, qui rejuge le coup à l'instant où
+  // on l'a porté. Attendre sa réponse pour bouger rendrait la lame molle.
+  net.sendPvp(lane)
+  if (enLAir) player.rebond()
+  return true
+}
+
+/**
  * Quand les taps servent à MARTELER plutôt qu'à esquiver :
  * - le sprint final (les derniers mètres)
  * - le décompte 3-2-1 : le DÉPART CANON — plus tu martèles, plus tu pars vite
@@ -1532,6 +1691,8 @@ function startRace(seed: number) {
   sprintTaps = []
   sprintCharge = 0
   sprintSeen = false
+  chaine = 0
+  chaineT = 0
   slots = []
   ventFin = 0
   kusarigamaFin = 0
@@ -1758,6 +1919,31 @@ const net = new Net({
   onChat(from, name, text) {
     menu.addChatLine(name, text, from === net.id)
   },
+  onPvp(par, sur) {
+    if (state !== 'course') return
+    const victime = sur === net.id
+    if (victime) {
+      // Le serveur a tranché : on encaisse, sans discuter.
+      const attaquant = rivals.get(par)?.name || 'Un rival'
+      if (armure > 0) {
+        armure = Math.max(0, armure - ARMURE_COUT_PETIT)
+        stumble = 1
+        toast(`🛡️ L'armure encaisse le coup de ${attaquant} !`)
+      } else {
+        speed = Math.max(6, speed * PVP_FREIN)
+        stumble = 1.2
+        chaine = 0 // se faire toucher casse son propre enchaînement
+        flash()
+        toast(`⚔️ ${attaquant} t'a touché !`)
+        net.sendAction({ t: 'stumble', keep: PVP_FREIN })
+      }
+    } else if (par === net.id) {
+      // Notre coup a porté : le rival vaut un maillon, comme une jarre
+      const cible = rivals.get(sur)?.name || 'Un rival'
+      encaisseGain()
+      toast(chaine >= 2 ? `⚔️ ${cible} touché ! Chaîne ×${chaine}` : `⚔️ ${cible} touché !`)
+    }
+  },
   onLink(up) {
     // NOTRE connexion qui vacille — le SDK retente tout seul derrière
     toast(up ? '📡 Reconnecté !' : '📡 Connexion instable… reconnexion en cours')
@@ -1850,10 +2036,17 @@ menu.showTitle()
 // ————— Les contrôles —————
 // Chaque action est AUSSI envoyée au serveur en événement instantané : le
 // rival la voit ~50 ms plus tôt que si elle était fondue dans le flux 20 Hz.
+// Chaque swipe est CONTEXTUEL : s'il y a une cible dans cette direction, il
+// devient une attaque ; sinon c'est le déplacement habituel. Un seul geste,
+// deux sens — aucun bouton de plus à apprendre sur un écran de téléphone.
 new Input(document.body, {
+  // ⬅️➡️ : on SE FEND sur la cible — le coup part ET on va la chercher.
+  // Frapper une ligne où l'on ne se rend pas séparerait le corps de la lame ;
+  // et comme une jarre garantit une ligne sans obstacle, s'y jeter est sûr.
   left: () => {
     if (state !== 'course') return
     const de = player.currentLane
+    frappe(player.currentLane - 1)
     player.moveLeft()
     if (player.currentLane !== de && player.spark) flashSpark(LANES[de], LANES[player.currentLane])
     if (online) net.sendAction({ t: 'lane', lane: player.currentLane })
@@ -1861,12 +2054,14 @@ new Input(document.body, {
   right: () => {
     if (state !== 'course') return
     const de = player.currentLane
+    frappe(player.currentLane + 1)
     player.moveRight()
     if (player.currentLane !== de && player.spark) flashSpark(LANES[de], LANES[player.currentLane])
     if (online) net.sendAction({ t: 'lane', lane: player.currentLane })
   },
   jump: () => {
     if (state !== 'course') return
+    if (frappe(player.currentLane)) return // le coup d'en haut : il lance la chaîne
     const v = player.jump(time < grueFin)
     // ⚡ Le style de Sasuke crépite aussi au décollage, en plus petit
     if (v > 0 && player.spark) flashSparkSaut()
@@ -1874,6 +2069,7 @@ new Input(document.body, {
   },
   slide: () => {
     if (state !== 'course') return
+    if (frappe(player.currentLane)) return
     const d = player.slide()
     if (online && d > 0) net.sendAction({ t: 'slide', d })
   },
@@ -2184,16 +2380,11 @@ function tick(now?: number) {
 
     // 📜 Ramassage d'un rouleau — on découvre son contenu maintenant
     const trouve = track.ramasse(player.hitbox())
-    if (trouve) {
-      if (slots.length < SLOTS_MAX) {
-        slots.push(trouve)
-        revealSlot(slots.length - 1, trouve) // déroulé machine à sous
-        toast(`📜 ${PARCHEMINS[trouve].icone} ${PARCHEMINS[trouve].nom}`)
-      } else {
-        // Les deux mains sont pleines : il faut en lancer un pour reprendre
-        toast('✋ Mains pleines — lance un parchemin !')
-      }
-    }
+    if (trouve) gagneParchemin(trouve)
+
+    // ⚔️ La chaîne retombe si on laisse passer trop de temps entre deux coups
+    chaineT = Math.max(0, chaineT - dt)
+    if (chaineT <= 0) chaine = 0
 
     // Trébuchement : toucher un obstacle RALENTIT (on ne meurt pas, c'est une course)
     stumble = Math.max(0, stumble - dt)
@@ -2222,6 +2413,23 @@ function tick(now?: number) {
         if (online) net.sendAction({ t: 'stumble', keep: player.grip })
       }
     }
+    // 🏺 Percuter une jarre : la poterie éclate et on accuse le choc. En vol
+    // on passe au-dessus — une chaîne bien menée traverse la grappe sans
+    // jamais rien percuter, c'est là sa récompense.
+    if (stumble <= 0 && track.heurteJarre(player.hitbox())) {
+      if (armure > 0) {
+        armure = Math.max(0, armure - ARMURE_COUT_PETIT)
+        stumble = 0.6
+        toast(armure > 0 ? '🛡️ L\'armure encaisse la jarre' : '🛡️ L\'armure vole en éclats !')
+      } else {
+        speed = Math.max(6, speed * JARRE_FREIN)
+        stumble = 0.6 // on se reprend plus vite que d'un vrai trébuchement
+        chaine = 0 // le choc casse l'enchaînement en cours
+        toast('🏺 Jarre percutée !')
+        if (online) net.sendAction({ t: 'stumble', keep: JARRE_FREIN })
+      }
+    }
+
     // Le perso clignote tant qu'il se relève
     player.mesh.visible = stumble <= 0 || Math.floor(stumble * 12) % 2 === 0
 

@@ -235,6 +235,26 @@ export class Bot {
     return false
   }
 
+  /**
+   * ⚔️ Il encaisse un coup de lame du joueur.
+   *
+   * Son 🛡️ armure le protège, comme celle du joueur — c'est une protection
+   * physique. Sa 🪞 parade, elle, ne joue PAS : elle renvoie les sorts, pas
+   * l'acier. Choix délibéré, pour que chaque défense garde un rôle net.
+   *
+   * `garde` = la part de vitesse qu'il conserve (cf. PVP_FREIN côté joueur) :
+   * un coup fait mal sans décider la course à lui seul.
+   */
+  encaisseCoup(garde: number) {
+    if (this.armure > 0) {
+      this.armure = Math.max(0, this.armure - ARMURE_COUT_PETIT)
+      this.chute = 0.4 // il vacille, mais garde sa vitesse
+      return
+    }
+    this.speed = Math.max(6, this.speed * garde)
+    this.chute = 1.2
+  }
+
   /** Son adresse du moment : la fumée l'aveugle, la Grue l'assure. */
   private adresse(time: number) {
     let a = this.profil.adresse

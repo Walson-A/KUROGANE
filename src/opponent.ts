@@ -1,7 +1,7 @@
 import * as THREE from 'three'
 import { LANES } from './player'
 import { NameTag } from './nametag'
-import { buildFighter, clearFighter, cssColor, fighterById, type Fighter } from './roster'
+import { animerCourse, buildFighter, clearFighter, cssColor, fighterById, type Fighter } from './roster'
 import type { OppAction } from './net'
 
 /** Ce que le réseau nous apprend sur l'adversaire à chaque message */
@@ -52,6 +52,8 @@ export class Opponent {
   private stumbleT = 0 // il se relève d'un trébuchement (clignote)
 
   private fighter: Fighter = fighterById('kurokumo')
+  private racine?: THREE.Object3D // son corps articulé
+  private tAnim = 0 // l'horloge de SA foulée
 
   /** Son pseudo, qui flotte au-dessus de sa tête. Piloté par main.ts. */
   readonly tag: NameTag
@@ -85,7 +87,9 @@ export class Opponent {
 
   private build() {
     clearFighter(this.mesh)
-    this.mesh.add(...buildFighter(this.fighter, true)) // true = fantôme
+    const parts = buildFighter(this.fighter, true) // true = fantôme
+    this.racine = parts[0]
+    this.mesh.add(...parts)
   }
 
   /** Se met en place. `lane` : sa ligne sur la grille de départ. */
@@ -161,6 +165,11 @@ export class Opponent {
     if (this.netSpeed < 12) this.netSpeed = 12
   }
 
+  /** Sa ligne actuelle — pour savoir si on peut le frapper. */
+  get laneNow() {
+    return this.lane
+  }
+
   /**
    * Notre meilleure estimation de sa distance EN CE MOMENT.
    * C'est ELLE qu'il faut utiliser pour « qui est devant ? » (HUD, marqueur…),
@@ -183,6 +192,11 @@ export class Opponent {
       this.mesh.visible = false
       return
     }
+
+    // Sa foulée tourne avec SA propre horloge : sans ça, les deux coureurs
+    // seraient au pas cadencé comme des soldats.
+    this.tAnim += dt
+    animerCourse(this.racine, this.tAnim)
 
     // ————— L'extrapolation —————
     // L'âge du message : exact si horodaté (synchro d'horloge), sinon estimé

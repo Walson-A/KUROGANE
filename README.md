@@ -18,6 +18,8 @@ avec Claude Code comme développeur.
 - **Esquive** : barrières (saute !), barres hautes (glisse !), murs (change de ligne !)
 - Toucher un obstacle ne tue pas : tu **trébuches** et perds ta vitesse — le
   perdant est celui qui arrive 2ᵉ
+- **⚔️ Combat** : le même swipe sert à bouger ET à frapper — jarres et rivaux.
+  Frappe en l'air pour rebondir et enchaîner ([voir le combat](#-le-combat--le-2ᵉ-acte))
 - **🔥 Sprint final** : sur les 120 derniers mètres, martèle l'écran pour
   accélérer et voler la victoire sur le fil ([voir le calibrage](#-le-sprint-final--départager-sans-refaire-la-course))
 - **🚀 Départ canon** : martèle pendant le 3-2-1 — à fond, tu pars directement
@@ -166,10 +168,11 @@ en ligne) : **[docs/NETCODE.md](docs/NETCODE.md)**.
 
 ## 🥷 Le roster : un choix, pas un piège
 
-Quatre guerriers, choisis depuis l'écran-titre. **Yasuke est la référence** :
-tout est à 1 chez lui. Les trois autres ont **un bonus ET un malus** — sinon un
-seul perso serait le bon choix, et le menu ne serait qu'un piège à débutants.
-Yasuke, lui, n'a aucun point faible : c'est ça, son intérêt.
+Cinq guerriers, choisis depuis l'écran-titre — **Kurokumo, le champion
+invaincu, est jouable comme les autres** (il garde juste sa dégaine). **Yasuke
+est la référence** : tout est à 1 chez lui. Les autres ont **un bonus ET un
+malus** — sinon un seul perso serait le bon choix, et le menu ne serait qu'un
+piège à débutants. Yasuke, lui, n'a aucun point faible : c'est ça, son intérêt.
 
 | Guerrier | Saut | Esquive | Glissade | Vitesse gardée si on trébuche |
 |---|---|---|---|---|
@@ -177,6 +180,7 @@ Yasuke, lui, n'a aucun point faible : c'est ça, son intérêt.
 | 花 **Hana** — agile, fragile | **1,18** | **1,3** | 1 | *0,28* |
 | 鬼丸 **Oni-Maru** — lourd, tenace | *0,88* | *0,8* | 1 | **52 %** |
 | 玉恵 **Tamae** — rusée, glissante | *0,9* | **1,15** | **1,6** | 35 % |
+| 黒雲 **Kurokumo** — le champion | 1 | 1 | 1 | 35 % |
 
 ### 改 Le perso « + » : l'ornement décide du style
 
@@ -223,6 +227,28 @@ permet de le distinguer même si vous avez choisi le même perso.
 > serait la rendre strictement moins bonne que les autres. Elle a donc un passif
 > qui marche *maintenant* (la glissade), et héritera de l'autre le jour où les
 > sorts arriveront.
+
+### Le corps articulé
+
+Les guerriers ne sont plus deux boîtes empilées : `buildFighter()` construit
+un corps en Group imbriqués (bassin → torse → tête, deux bras, deux jambes),
+chacun pivotable. `animerCourse()` fait tourner tout ça en sinusoïdes — bras
+et jambes en opposition, rebond à chaque appui, buste penché — sans importer
+la moindre animation.
+
+Le **look** de chaque guerrier (silhouette, arme, ce qui traîne derrière) est
+décrit à part dans `LOOKS` (toujours `roster.ts`) : la fiche décrit le JEU
+(passifs, réglages), `LOOKS` décrit l'APPARENCE. On retouche l'un sans
+risquer de casser l'autre.
+
+Règle de lisibilité : on voit les coureurs **de dos**, à 20 m, de nuit — donc
+chacun doit se reconnaître à sa silhouette seule (la bannière de Yasuke, les
+cornes d'Oni-Maru, les queues de Tamae, la cape de Kurokumo), pas qu'à sa
+couleur, qui se noie dans la brume.
+
+Un guerrier qui tient une arme (katana, kanabō, tessen…) verrouille son bras
+droit contre le buste en courant — laissé libre, il balançait de 40° et
+promenait la lame dans les jambes.
 
 ## 🎌 Le menu & les réglages
 
@@ -281,6 +307,58 @@ On ne touche **surtout pas à la brume**, alors que la rapprocher ferait gagner
 des images/s : c'est elle qui décide à quelle distance on découvre les
 obstacles. Moins de brume = moins de temps pour réagir. Ce serait un réglage de
 **difficulté déguisé en réglage graphique** — et un désavantage en duel.
+
+## ⚔️ Le combat : le 2ᵉ acte
+
+La course tient en **trois actes**, chacun avec sa compétence — aucun ne
+déborde sur l'autre :
+
+| Acte | Ce qui compte |
+|---|---|
+| **1. Départ** | 🚀 Martèlement seul (départ canon) |
+| **2. Le corps de course** | ⚔️ Combat, jarres, enchaînements |
+| **3. Sprint final** | 🔥 Martèlement seul |
+
+**Le swipe est contextuel** : s'il y a une cible dans cette direction il
+frappe, sinon c'est le déplacement habituel. Un seul geste, deux sens — rien
+de plus à apprendre sur un téléphone. De côté, on **se fend** : le coup part
+et on va sur la ligne.
+
+**Le rebond ne récompense que les coups donnés en vol** — un vrai saut,
+automatique. Il faut donc décider de sauter *avant* d'aborder une grappe :
+c'est ce choix pris à l'avance qui sépare celui qui casse une jarre au
+passage de celui qui enchaîne. Un rebond, c'est 0,67 s en l'air ≈ 17 m,
+alors que les jarres d'une grappe sont espacées de 12 à 15 m.
+
+| Geste | Effet |
+|---|---|
+| Un coup | −6 % de vitesse |
+| Gain | 1,5 m/s **× le rang dans la chaîne** (plafonné à 5) |
+| Percuter une jarre | −28 % et la chaîne casse |
+| Encaisser un coup du rival | −45 % |
+| *Rappel : un trébuchement* | *−65 %* |
+
+Une chaîne parfaite vaut toujours **moins** qu'éviter une faute : le combat
+ajoute une compétence, il ne remplace pas la course. Et comme on survole les
+obstacles tant qu'on vole, une chaîne bien menée traverse la grappe sans rien
+percuter — c'est là sa vraie récompense.
+
+**Les jarres** naissent de la graine partagée, donc identiques chez les deux
+joueurs. Les **dorées** cachent un parchemin : on se bat pour l'objet, pas
+seulement contre le chrono. Elles arrivent en grappes de 2 à 4, jamais en
+tête (il faut avoir lancé la chaîne pour les cueillir), et jamais dans un
+obstacle — c'est cette garantie qui rend le swipe contextuel sûr.
+
+**Frapper le rival** est validé par le serveur, avec la lag compensation :
+`positionAt()` rejuge le coup à l'instant où il a été porté, pas à l'arrivée
+du message. L'horodatage est borné à 400 ms dans le passé (anti-triche), et
+la victime a 1,5 s de répit — on ne matraque pas un joueur à terre. En
+entraînement, les bots se frappent exactement pareil, mais en local.
+
+Les réglages sont en tête de [`src/main.ts`](src/main.ts) : `COUP_COUT`,
+`COUP_GAIN`, `CHAINE_FENETRE`, `JARRE_FREIN`, `PVP_PORTEE`, `PVP_FREIN`.
+⚠️ `PVP_PORTEE` doit rester égal à celui de
+[`RaceRoom.ts`](server/src/RaceRoom.ts).
 
 ## 🔥 Le sprint final : départager sans refaire la course
 

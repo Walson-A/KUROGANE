@@ -77,6 +77,8 @@ export interface NetCallbacks {
   onSpell(from: string, kind: string, distance: number): void
   /** Un rival vient de sauter / esquiver / trébucher */
   onAction(a: OppAction): void
+  /** ⚔️ Un coup a porté, tranché par le serveur. par = attaquant, sur = victime. */
+  onPvp(par: string, sur: string): void
   /** Message de chat (du lobby) */
   onChat(from: string, name: string, text: string): void
   /** La course est finie : le classement est dans la vue */
@@ -262,6 +264,12 @@ export class Net {
       this.cb.onChat(String(m?.from ?? ''), String(m?.name ?? ''), String(m?.text ?? ''))
     )
 
+    // ⚔️ Le verdict d'un coup. Le serveur a déjà tranché : on l'applique.
+    this.room.onMessage('pvp', (r: { par: string; sur: string }) => {
+      if (!this.room) return
+      this.cb.onPvp(r.par, r.sur)
+    })
+
     // Reconnexion automatique (écran verrouillé, wifi qui saute)
     this.room.onDrop(() => this.cb.onLink(false))
     this.room.onReconnect(() => this.cb.onLink(true))
@@ -382,6 +390,15 @@ export class Net {
   /** Envoie une action (saut, esquive, trébuchement) — relayée immédiatement */
   sendAction(a: { t: 'lane' | 'jump' | 'slide' | 'stumble'; [k: string]: any }) {
     this.room?.send('action', a)
+  }
+
+  /**
+   * ⚔️ Demande à porter un coup sur cette ligne. On HORODATE le coup : c'est
+   * cet instant que le serveur rejouera pour juger s'il touche (lag
+   * compensation). Le serveur décide, nous ne faisons que demander.
+   */
+  sendPvp(lane: number) {
+    this.room?.send('pvp', { lane, at: this.offsetReady ? this.serverNow() : Date.now() })
   }
 
   /**
