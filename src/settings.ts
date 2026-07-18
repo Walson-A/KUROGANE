@@ -25,6 +25,8 @@ export interface Settings {
   quality: Quality
   /** Volume de la musique, de 0 (coupée) à 1. On joue aussi en cours ou dans le bus. */
   volumeMusique: number
+  /** Volume des bruitages, séparé : on veut pouvoir garder les sons sans la musique. */
+  volumeSfx: number
 }
 
 /** Le volume par défaut : présent sans couvrir le reste. */
@@ -88,6 +90,12 @@ export function loadSettings(): Settings {
         : raw.musique === false
           ? 0
           : VOLUME_DEFAUT,
+    // Un peu plus fort que la musique : les bruitages doivent passer PAR-DESSUS
+    // elle, ce sont eux qui portent l'information de jeu.
+    volumeSfx:
+      typeof raw.volumeSfx === 'number' && raw.volumeSfx >= 0 && raw.volumeSfx <= 1
+        ? raw.volumeSfx
+        : 0.7,
   }
 }
 

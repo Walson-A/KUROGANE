@@ -26,7 +26,7 @@ import {
   type ParcheminKind,
 } from './parchemin'
 import { Menu, escapeHtml } from './menu'
-import { souffleDeVent } from './sfx'
+import { souffleDeVent, jouerBruit, setVolumeSfx } from './sfx'
 import type { Quality } from './settings'
 import { Musique } from './audio'
 
@@ -255,6 +255,7 @@ let sprintTaps: number[] = [] // instants des derniers taps → cadence
 let sprintCharge = 0 // la jauge de sprint, 0 → 1
 let sprintSeen = false // la bannière ne s'annonce qu'une fois
 let rankTimer = 0 // le classement se redessine 10 fois/s, pas 60
+let dernierChiffre = -1 // le dernier chiffre du décompte annoncé (pour ne biper qu'une fois)
 let chaine = 0 // coups enchaînés sans toucher le sol de la chaîne
 let chaineT = 0 // temps restant pour enchaîner (sinon la chaîne retombe)
 
@@ -1521,6 +1522,7 @@ function gagneParchemin(kind: ParcheminKind) {
     return
   }
   slots.push(kind)
+  jouerBruit('parchemin')
   revealSlot(slots.length - 1, kind) // déroulé machine à sous
   toast(`📜 ${PARCHEMINS[kind].icone} ${PARCHEMINS[kind].nom}`)
 }
@@ -1599,6 +1601,8 @@ function frappe(lane: number): boolean {
   if (jarre) {
     const { touchee, parchemin } = track.casseJarre(lane)
     if (!touchee) return true
+    // La dorée sonne autrement : on sait ce qu'on a cassé avant de lire le HUD
+    jouerBruit(parchemin ? 'jarreDoree' : 'jarre')
     encaisseGain()
     if (enLAir) player.rebond() // relancé vers la jarre suivante
     if (parchemin) gagneParchemin(parchemin)
@@ -1609,6 +1613,7 @@ function frappe(lane: number): boolean {
   // ⚔️ Un bot (entraînement) : tout est local, le coup porte immédiatement.
   if (bot) {
     bot.encaisseCoup(PVP_FREIN)
+    jouerBruit('coup')
     encaisseGain()
     if (enLAir) player.rebond()
     toast(chaine >= 2 ? `⚔️ ${bot.profil.nom} ! Chaîne ×${chaine}` : `⚔️ ${bot.profil.nom} touché !`)
@@ -1619,6 +1624,7 @@ function frappe(lane: number): boolean {
   // les dégâts sont tranchés par le serveur, qui rejuge le coup à l'instant où
   // on l'a porté. Attendre sa réponse pour bouger rendrait la lame molle.
   net.sendPvp(lane)
+  jouerBruit('coup') // le geste s'entend tout de suite ; le serveur tranche les dégâts
   if (enLAir) player.rebond()
   return true
 }
@@ -1698,6 +1704,7 @@ function startRace(seed: number) {
   sprintSeen = false
   chaine = 0
   chaineT = 0
+  dernierChiffre = -1
   slots = []
   ventFin = 0
   kusarigamaFin = 0
@@ -1850,6 +1857,9 @@ function crossFinishLine() {
   } else {
     bestLine = `Record à battre : ${best.toFixed(2)} s`
   }
+  // En solo on est toujours « arrivé » : c'est la place devant les rivaux qui
+  // décide du son, pas le simple fait d'avoir fini.
+  jouerBruit(bots.some((b) => b.actif && b.distance >= COURSE_LENGTH) ? 'defaite' : 'victoire')
   backToMenu(`⛩️ Torii sacré franchi en <b>${t} s</b> !<br>${classement()}<br>${bestLine}`)
 }
 
@@ -1870,6 +1880,7 @@ function showResults(view: LobbyView) {
       : rang > 0
         ? `Tu finis <b>${rang}ᵉ</b> sur ${total}.`
         : '☁️ Tu n\'as pas fini la course…'
+  jouerBruit(rang === 1 ? 'victoire' : 'defaite')
 
   const lignes = ranked
     .map((p, i) => {
@@ -1939,6 +1950,7 @@ const net = new Net({
         speed = Math.max(6, speed * PVP_FREIN)
         stumble = 1.2
         chaine = 0 // se faire toucher casse son propre enchaînement
+        jouerBruit('chute')
         flash()
         toast(`⚔️ ${attaquant} t'a touché !`)
         net.sendAction({ t: 'stumble', keep: PVP_FREIN })
@@ -2027,6 +2039,10 @@ const menu = new Menu({
   onMusique(volume) {
     musique.setVolume(volume)
   },
+  onSfx(volume) {
+    setVolumeSfx(volume)
+    jouerBruit('clic') // on entend tout de suite ce qu'on règle
+  },
   onCancel() {
     net.leave()
     backToMenu()
@@ -2040,6 +2056,14 @@ btnGo.addEventListener('click', () => {
 
 // Créée APRÈS le menu : c'est lui qui détient le réglage sauvegardé.
 const musique = new Musique(menu.settings.volumeMusique)
+setVolumeSfx(menu.settings.volumeSfx)
+
+// Le clic des menus : un seul écouteur délégué sur l'overlay plutôt qu'un par
+// bouton — les écrans se fabriquent en cours de route (roster, salons, lobby),
+// et il n'y aurait aucun moyen fiable de tous les attraper à la main.
+document.getElementById('overlay')?.addEventListener('click', (e) => {
+  if ((e.target as HTMLElement).closest('button')) jouerBruit('clic')
+})
 
 applyQuality(menu.settings.quality)
 updateMeLabel()
@@ -2081,12 +2105,14 @@ new Input(document.body, {
     const v = player.jump(time < grueFin)
     // ⚡ Le style de Sasuke crépite aussi au décollage, en plus petit
     if (v > 0 && player.spark) flashSparkSaut()
+    if (v > 0) jouerBruit('saut')
     if (online && v > 0) net.sendAction({ t: 'jump', v })
   },
   slide: () => {
     if (state !== 'course') return
     if (frappe(player.currentLane)) return
     const d = player.slide()
+    if (d > 0) jouerBruit('glissade')
     if (online && d > 0) net.sendAction({ t: 'slide', d })
   },
   spell: () => state === 'course' && lancerParchemin(),
@@ -2116,7 +2142,16 @@ function tick(now?: number) {
       countdown -= dt // solo, ou horloge pas encore synchronisée
     }
     // Le décompte peut durer 10 s (salon) ou 3 s (solo) : on affiche le vrai chiffre.
-    countEl.textContent = countdown > 0 ? `${Math.min(10, Math.ceil(countdown))}` : 'GO !'
+    const chiffre = countdown > 0 ? Math.min(10, Math.ceil(countdown)) : 0
+    countEl.textContent = countdown > 0 ? `${chiffre}` : 'GO !'
+
+    // Un bip par seconde égrenée, mais seulement dans les 3 dernières : sur un
+    // décompte de salon (10 s), biper dès le début serait harassant.
+    if (chiffre !== dernierChiffre) {
+      if (chiffre > 0 && chiffre <= 3) jouerBruit('bip')
+      else if (chiffre === 0) jouerBruit('go')
+      dernierChiffre = chiffre
+    }
 
     // ————— Le DÉPART CANON : marteler dans les 3 dernières secondes —————
     // Pas plus tôt : sur un décompte de 10 s, marteler dès le début serait
@@ -2423,6 +2458,7 @@ function tick(now?: number) {
         stumble = 1.2 // brève invincibilité le temps de se relever
         flash()
         boom(new THREE.Vector3(player.mesh.position.x, 0.9, player.mesh.position.z)) // 💥
+        jouerBruit('chute')
         toast('💥 Trébuché !')
         // Le rival doit le voir TOUT DE SUITE : sa version de nous ralentit
         // immédiatement (au lieu que son extrapolation nous fasse dépasser à tort)
@@ -2441,6 +2477,8 @@ function tick(now?: number) {
         speed = Math.max(6, speed * JARRE_FREIN)
         stumble = 0.6 // on se reprend plus vite que d'un vrai trébuchement
         chaine = 0 // le choc casse l'enchaînement en cours
+        jouerBruit('jarre') // la poterie éclate quand même
+        jouerBruit('chute')
         toast('🏺 Jarre percutée !')
         if (online) net.sendAction({ t: 'stumble', keep: JARRE_FREIN })
       }

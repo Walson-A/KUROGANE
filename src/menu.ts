@@ -35,6 +35,8 @@ export interface MenuCallbacks {
   onQuality(q: Quality): void
   /** Le joueur a réglé le volume de la musique (0 → 1) */
   onMusique(volume: number): void
+  /** Le joueur a réglé le volume des bruitages (0 → 1) */
+  onSfx(volume: number): void
   /** Le joueur annule la recherche d'adversaire */
   onCancel(): void
   // ————— Les salons en ligne —————
@@ -110,6 +112,8 @@ export class Menu {
     optQuality: document.getElementById('optQuality')!,
     optVolume: document.getElementById('optVolume') as HTMLInputElement,
     optVolumeVal: document.getElementById('optVolumeVal')!,
+    optSfx: document.getElementById('optSfx') as HTMLInputElement,
+    optSfxVal: document.getElementById('optSfxVal')!,
     // ————— Salon —————
     joinCode: document.getElementById('joinCode') as HTMLInputElement,
     salonList: document.getElementById('salonList')!,
@@ -561,6 +565,18 @@ export class Menu {
     this.el.optVolume.addEventListener('change', () => saveSettings(this.settings))
     this.el.optVolume.value = String(Math.round(this.settings.volumeMusique * 100))
     this.markVolume()
+
+    // Le volume des bruitages, même principe. Le callback JOUE un son au
+    // passage : c'est le seul moyen d'entendre ce qu'on règle, un bruitage
+    // ne tournant pas en boucle comme la musique.
+    this.el.optSfx.addEventListener('input', () => {
+      this.settings.volumeSfx = Number(this.el.optSfx.value) / 100
+      this.markSfx()
+      this.cb.onSfx(this.settings.volumeSfx)
+    })
+    this.el.optSfx.addEventListener('change', () => saveSettings(this.settings))
+    this.el.optSfx.value = String(Math.round(this.settings.volumeSfx * 100))
+    this.markSfx()
   }
 
   private markQuality() {
@@ -572,5 +588,10 @@ export class Menu {
   private markVolume() {
     const pct = Math.round(this.settings.volumeMusique * 100)
     this.el.optVolumeVal.textContent = pct === 0 ? '🔇 coupée' : `${pct} %`
+  }
+
+  private markSfx() {
+    const pct = Math.round(this.settings.volumeSfx * 100)
+    this.el.optSfxVal.textContent = pct === 0 ? '🔇 coupés' : `${pct} %`
   }
 }
