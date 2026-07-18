@@ -602,6 +602,70 @@ par les fautes est d'ailleurs mesuré et **linéaire** : ≈ 30 × (1 − `adres
 secondes. Sa graine est dérivée de celle de la course : même course rejouée =
 mêmes esquives et mêmes fautes, on peut donc retravailler une course ratée.
 
+## 💰 Les comptes & les deux monnaies
+
+| Monnaie | Comment on l'obtient |
+|---|---|
+| 文 **Mon** | En courant. Le *mon* est la vraie pièce percée d'un trou carré de l'ère Sengoku — elle existe déjà dans l'univers du jeu. |
+| 翡翠 **Hisui** | Le jade. Elle s'achète. |
+
+> ⚠️ **On ne vend QUE de l'apparence.** Jamais un passif, jamais un parchemin,
+> jamais un réglage de course. Les guerriers sont équilibrés bonus/malus, la
+> hitbox est identique pour tous et le sprint final se court à armes égales —
+> vendre de la puissance ferait s'effondrer tout ça, et le duel deviendrait une
+> question de portefeuille. La contrainte est inscrite dans la base : la table
+> `articles` n'accepte que des catégories cosmétiques.
+
+### L'architecture : le navigateur ne voit jamais la base
+
+Le jeu parle **au serveur**, et le serveur seul ouvre une connexion à Postgres.
+Aucune clé, aucune adresse de base ne part dans le navigateur.
+
+```
+navigateur  ──websocket + HTTP──▶  serveur Colyseus  ──▶  Postgres
+  (jeu)                            (Railway)              (Railway)
+```
+
+**L'identité** appartient à [Better Auth](https://better-auth.com) — une
+*bibliothèque*, pas un service : elle tourne sur notre serveur et range ses
+utilisateurs dans **notre** base. On lui délègue ce qu'il ne faut jamais écrire
+soi-même : hachage des mots de passe, sessions, limitation des tentatives.
+
+**Le parcours du joueur** : il arrive → un compte **anonyme** est créé, il joue
+tout de suite, sans inscription ni donnée personnelle (les joueurs sont souvent
+mineurs). Le jour où il veut jouer sur un autre appareil ou acheter de l'hisui,
+il attache un email à *son* compte — et ne perd rien de ce qu'il a gagné.
+
+Le schéma est partagé : Better Auth gère `user`, `session`, `account`,
+`verification` ; nous gérons `profils`, `articles`, `deblocages`, `mouvements`
+([migration 001](server/migrations/001_comptes_et_monnaies.sql)).
+
+### Ce qui protège les soldes
+
+1. **Le solde ne vient jamais du client.** Le jeu ne fait que l'afficher
+   (`GET /api/profil`, authentifié). Un client modifié peut mentir sur tout ce
+   qu'il envoie — s'il pouvait annoncer son propre solde, la boutique serait
+   gratuite.
+2. **C'est la base qui refuse**, pas un `if`. La dépense s'écrit
+   `update … set mon = mon - $1 where joueur = $2 and mon >= $1` : deux achats
+   lancés en même temps (double-tap) ne peuvent pas passer tous les deux.
+   *Vérifié* : deux dépenses simultanées de 60 sur un solde de 70 → **une seule
+   passe**, solde final 10, une seule ligne au journal.
+3. **`check (mon >= 0)`** dans le schéma : même avec un bug côté serveur, un
+   solde négatif est impossible.
+4. **Chaque mouvement est journalisé** (`mouvements`) : c'est ce qui permet
+   d'expliquer un solde qui semble faux, et de repérer après coup un joueur qui
+   gagnerait trop vite.
+
+### Le serveur HTTP partagé
+
+Les courses (websocket) et les comptes (HTTP) tiennent sur **un seul port**,
+donc un seul service à déployer. Piège rencontré : Colyseus installe ses
+propres routes HTTP sur le même serveur, et Node appelle tous les écouteurs à la
+suite **sans attendre** un gestionnaire asynchrone — Colyseus répondait 404
+pendant que Better Auth interrogeait encore la base. D'où l'aiguilleur unique
+installé après le `listen()` dans [server/src/index.ts](server/src/index.ts).
+
 ## 🗺️ Roadmap
 
 - [x] Course solo 1 920 m : obstacles, trébuchement, chrono, record

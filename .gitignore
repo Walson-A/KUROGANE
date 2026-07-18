@@ -26,3 +26,11 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# ————— SECRETS —————
+# Chaine de connexion a la base, cles d'API. Le depot est PUBLIC :
+# ce qui passe ici est visible par tout le monde, pour toujours.
+# (un secret commite reste dans l'historique git meme apres suppression)
+.env
+.env.*
+!.env.example

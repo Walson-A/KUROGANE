@@ -91,9 +91,10 @@ export interface NetCallbacks {
 
 /**
  * L'adresse du serveur de jeu EN PRODUCTION (Railway).
- * ⚠️ À remplir après la mise en ligne du serveur — ex : 'wss://kurogane.up.railway.app'
+ * ⚠️ `wss://` et non `ws://` : le jeu est servi en https, un navigateur refuse
+ * d'ouvrir une connexion non chiffrée depuis une page sécurisée.
  */
-const PROD_SERVER_URL = ''
+const PROD_SERVER_URL = 'wss://kurogane-production.up.railway.app'
 
 const WS_URL: string =
   import.meta.env.VITE_SERVER_URL ??
