@@ -50,6 +50,8 @@ body {
   gap: 8px;
 }
 .slot {
+  position: relative; /* pour le z-index de la case gagnante et la bande */
+  overflow: hidden; /* la fenêtre de la « machine à sous » */
   width: 42px;
   height: 42px;
   display: grid;
@@ -73,6 +75,45 @@ body {
 @keyframes slotpop {
   50% {
     transform: scale(1.25);
+  }
+}
+
+/* ——— Le déroulé « machine à sous » du ramassage ——— */
+/* La bande d'icônes qui défile dans la case (créée en JS) */
+.slot .reel {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  display: flex;
+  flex-direction: column;
+  will-change: transform;
+}
+.slot .reel span {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+}
+/* L'objet gagné : il grossit et brille 1,5 s (cf. WON_MS dans main.ts) */
+.slot.won {
+  z-index: 6;
+  border-color: #d6ac5a;
+  color: #f0e8d8;
+  animation: slotgagne 1.5s ease-out;
+}
+@keyframes slotgagne {
+  0% {
+    transform: scale(1.5);
+    box-shadow: 0 0 22px 6px rgba(214, 172, 90, 0.95);
+  }
+  70% {
+    transform: scale(1.42);
+    box-shadow: 0 0 16px 4px rgba(214, 172, 90, 0.8);
+  }
+  100% {
+    transform: scale(1);
+    box-shadow: 0 0 0 rgba(214, 172, 90, 0);
   }
 }
 

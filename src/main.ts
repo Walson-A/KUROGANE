@@ -8,6 +8,7 @@ import { Net, type RemotePlayer, type LobbyView } from './net'
 import { Bot, PROFILS, BOTS_MAX, construireRangees } from './bot'
 import {
   PARCHEMINS,
+  TIRAGE,
   SLOTS_MAX,
   VENT_BOOST,
   VENT_DUREE,
@@ -303,9 +304,26 @@ scene.add(lueurJoueur, lueurRival)
 let lueurFin = 0 // les deux lueurs brillent jusqu'à cet instant
 let lueurCible: THREE.Object3D | null = null // le corps de l'échangé
 
+// ————— Le rouleau-machine à sous —————
+// À chaque ramassage, la case fait défiler les icônes façon machine de casino
+// et s'arrête PILE sur l'objet gagné, qui grossit et brille 1,5 s.
+const REEL_MS = 1000 // durée du déroulé
+const WON_MS = 1500 // durée « grossi + brillance »
+const reelTimers: (ReturnType<typeof setTimeout>[])[] = [[], []]
+
+/** Coupe un déroulé en cours sur une case (avant de la redessiner proprement). */
+function clearReel(i: number) {
+  for (const t of reelTimers[i]) clearTimeout(t)
+  reelTimers[i] = []
+  const el = slotEls[i]
+  el.classList.remove('won', 'rolling')
+  el.querySelector('.reel')?.remove()
+}
+
 /** Redessine les 2 slots. Le 1er est mis en avant : c'est le prochain lancé. */
 function drawSlots(pop = -1) {
   slotEls.forEach((el, i) => {
+    clearReel(i) // un déroulé en cours est annulé : on repart d'un état net
     const k = slots[i]
     el.textContent = k ? PARCHEMINS[k].icone : '—'
     el.classList.toggle('actif', i === 0 && !!k)
@@ -315,6 +333,54 @@ function drawSlots(pop = -1) {
       el.classList.add('plein')
     }
   })
+}
+
+/**
+ * Le déroulé « machine à sous » d'un ramassage sur la case `i` : les icônes
+ * défilent et ralentissent, s'arrêtent pile sur `kind`, puis la case grossit et
+ * brille 1,5 s. Purement visuel — le vrai contenu est déjà dans `slots`, et le
+ * toast a annoncé l'objet, donc on peut jouer même pendant le déroulé.
+ */
+function revealSlot(i: number, kind: ParcheminKind) {
+  clearReel(i)
+  const el = slotEls[i]
+  el.classList.remove('actif', 'plein')
+  el.textContent = ''
+  const H = el.clientHeight || 42
+
+  // La bande : des icônes au hasard, et l'objet GAGNÉ tout en bas.
+  const N = 18
+  const cells: string[] = []
+  for (let k = 0; k < N - 1; k++) {
+    cells.push(PARCHEMINS[TIRAGE[Math.floor(Math.random() * TIRAGE.length)]].icone)
+  }
+  cells.push(PARCHEMINS[kind].icone)
+
+  const reel = document.createElement('div')
+  reel.className = 'reel'
+  reel.innerHTML = cells
+    .map((ic) => `<span style="height:${H}px">${ic}</span>`)
+    .join('')
+  reel.style.transition = `transform ${REEL_MS}ms cubic-bezier(0.13, 0.75, 0.2, 1)`
+  el.classList.add('rolling')
+  el.appendChild(reel)
+
+  // On force un reflow, puis on lance le défilé jusqu'à la dernière case (gagnée)
+  void reel.offsetWidth
+  reel.style.transform = `translateY(${-(N - 1) * H}px)`
+
+  reelTimers[i].push(
+    setTimeout(() => {
+      // Arrêt pile sur l'objet : on retire la bande, on fige l'icône, on brille
+      reel.remove()
+      el.classList.remove('rolling')
+      el.textContent = PARCHEMINS[kind].icone
+      el.classList.toggle('actif', i === 0)
+      void el.offsetWidth
+      el.classList.add('won')
+      reelTimers[i].push(setTimeout(() => el.classList.remove('won'), WON_MS))
+    }, REEL_MS)
+  )
 }
 
 /** Le sélecteur 1-2-3-4 du menu : boutons + qui on va affronter. */
@@ -1118,7 +1184,7 @@ function tick(now?: number) {
     if (trouve) {
       if (slots.length < SLOTS_MAX) {
         slots.push(trouve)
-        drawSlots(slots.length - 1)
+        revealSlot(slots.length - 1, trouve) // déroulé machine à sous
         toast(`📜 ${PARCHEMINS[trouve].icone} ${PARCHEMINS[trouve].nom}`)
       } else {
         // Les deux mains sont pleines : il faut en lancer un pour reprendre
