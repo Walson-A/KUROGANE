@@ -43,13 +43,17 @@
     <div class="panneau" id="guerriers"></div>
     <div class="panneau" id="aide">
       <kbd>o</kbd> / <kbd>i</kbd> action · <kbd>p</kbd> / <kbd>m</kbd> guerrier<br />
-      <kbd>espace</kbd> rejouer · <kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd> geste superposé
+      <kbd>espace</kbd> rejouer · <kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd> geste superposé<br />
+      <kbd>w</kbd> côté du mur (action « mur »)
     </div>
 
     <script type="module">
       import * as THREE from 'three'
       import { ROSTER, buildFighter, clearFighter } from '/src/roster.ts'
       import { Anim, animerGuerrier, aUnClip } from '/src/anims.ts'
+      // Les mesures du mur viennent du JEU, jamais recopiées : sinon le banc
+      // d'essai montrerait une pose que personne ne verra en course.
+      import { MUR_HAUTEUR, MUR_PENCHE } from '/src/player.ts'
 
       // ————— La scène : juste ce qu'il faut pour REGARDER un mouvement —————
       // On ne charge pas le jeu : pas de piste, pas de course, pas de menu. Une
@@ -84,7 +88,7 @@
 
       // ————— L'état —————
       const ACTIONS = ['course', 'courseRapide', 'courseGenee', 'saut', 'glissade',
-        'chute', 'lancer', 'virageG', 'virageD', 'impact', 'attaque']
+        'chute', 'lancer', 'virageG', 'virageD', 'impact', 'attaque', 'mur']
       const GESTES = ['lancer', 'attaque', 'impact']
       const jouables = ROSTER.filter((f) => f.pickable)
 
@@ -94,12 +98,43 @@
       let racine
       const groupe = new THREE.Group()
       scene.add(groupe)
+      // Le corps a son propre groupe : au mur, c'est LUI qui monte et bascule,
+      // pas la paroi.
+      const corps = new THREE.Group()
+      groupe.add(corps)
+
+      /* ————— 🧱 Le décor de la course sur mur —————
+       *
+       * Sans paroi ni inclinaison, le clip se jugerait dans le vide : on
+       * verrait un corps penché sans savoir contre QUOI. Or c'est justement
+       * la somme des deux — l'inclinaison du clip PLUS celle du jeu — qui
+       * décide si la pose tient debout.
+       *
+       * On reproduit donc les vraies mesures de la course : le mur fait 0,5 m
+       * d'épaisseur sur 3 m de haut (makeMurMesh), il est CENTRÉ sur la même
+       * abscisse que le coureur, qui y monte à MUR_HAUTEUR.
+       */
+      const mur = new THREE.Mesh(
+        new THREE.BoxGeometry(0.5, 3, 6),
+        new THREE.MeshStandardMaterial({ color: 0x2b3145, roughness: 0.95 })
+      )
+      const liser = new THREE.Mesh(
+        new THREE.BoxGeometry(0.56, 0.18, 6),
+        new THREE.MeshStandardMaterial({ color: 0xc33a2c, emissive: 0x3a0f0a })
+      )
+      liser.position.y = 1.45
+      mur.add(liser)
+      mur.visible = false
+      groupe.add(mur)
+
+      /** De quel côté est la paroi : -1 gauche, +1 droite. Touche W. */
+      let murCote = 1
 
       function habiller() {
-        clearFighter(groupe)
+        clearFighter(corps)
         const parts = buildFighter(jouables[iGuerrier])
         racine = parts[0]
-        groupe.add(...parts)
+        corps.add(...parts)
         anim = new Anim() // on repart d'un mouvement propre à chaque changement
       }
 
@@ -130,6 +165,7 @@
         else if (k === 'p') { iGuerrier = (iGuerrier + 1) % jouables.length; habiller() }
         else if (k === 'm') { iGuerrier = (iGuerrier - 1 + jouables.length) % jouables.length; habiller() }
         else if (k === ' ') anim.jouer(ACTIONS[iAction], true) // rejoue depuis le début
+        else if (k === 'w') murCote = -murCote // le côté de la paroi
         else if (['1', '2', '3'].includes(k)) { anim.declencher(GESTES[+k - 1]); return }
         else return
         dessiner()
@@ -143,6 +179,22 @@
         const dt = Math.min(horloge.getDelta(), 0.05)
         t += dt
         animerGuerrier(racine, jouables[iGuerrier], anim, ACTIONS[iAction], dt, t)
+
+        /* 🧱 Sur la paroi, on rejoue EXACTEMENT ce que fait player.update :
+         * le corps monte à MUR_HAUTEUR et bascule de MUR_PENCHE. La constante
+         * est importée du jeu, jamais recopiée — sinon le banc d'essai
+         * montrerait une pose que personne ne verra jamais en course. */
+        const auMur = ACTIONS[iAction] === 'mur'
+        mur.visible = auMur
+        /* En course, le mur et le coureur partagent la MÊME abscisse : le mur
+         * est posé à `cote * MUR_X` (spawnMur) et le joueur y vient exactement
+         * (player.update). On les laisse donc tous deux à l'origine du banc —
+         * les décaler mentirait sur ce qu'on voit vraiment en jeu.
+         * Le mur reste planté au sol : son centre est à 1,5 pour 3 m de haut. */
+        mur.position.y = 1.5
+        corps.position.y = auMur ? MUR_HAUTEUR : 0
+        corps.rotation.z += ((auMur ? murCote * MUR_PENCHE : 0) - corps.rotation.z) * Math.min(1, dt * 14)
+
         // Le corps tourne lentement : un mouvement se juge de tous les côtés
         groupe.rotation.y = Math.sin(t * 0.25) * 0.8
         renderer.render(scene, camera)

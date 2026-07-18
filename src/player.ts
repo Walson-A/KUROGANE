@@ -39,7 +39,8 @@ const ATTACK_TIME = 0.26 // durée d'un coup : on ne peut pas réenchaîner avan
 /** Combien de temps on tient sur une paroi (secondes). Exporté : le rival
  *  rejoue la même durée chez nous (cf. opponent.ts). */
 export const MUR_DUREE = 0.95
-const MUR_HAUTEUR = 1.6 // à quelle hauteur on y court
+/** À quelle hauteur on court sur la paroi. Exporté pour le banc d'essai. */
+export const MUR_HAUTEUR = 1.6
 /**
  * Le RESTE d'inclinaison qu'ajoute le jeu par-dessus le clip de course sur mur.
  * Exporté : le rival penche pareil chez nous (cf. opponent.ts).
