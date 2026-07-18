@@ -821,15 +821,18 @@ menu.showTitle()
 // devient une attaque ; sinon c'est le déplacement habituel. Un seul geste,
 // deux sens — aucun bouton de plus à apprendre sur un écran de téléphone.
 new Input(document.body, {
+  // ⬅️➡️ : on SE FEND sur la cible — le coup part ET on va la chercher.
+  // Frapper une ligne où l'on ne se rend pas séparerait le corps de la lame ;
+  // et comme une jarre garantit une ligne sans obstacle, s'y jeter est sûr.
   left: () => {
     if (state !== 'course') return
-    if (frappe(player.currentLane - 1)) return // on se fend sur la jarre
+    frappe(player.currentLane - 1)
     player.moveLeft()
     if (online) net.sendAction({ t: 'lane', lane: player.currentLane })
   },
   right: () => {
     if (state !== 'course') return
-    if (frappe(player.currentLane + 1)) return
+    frappe(player.currentLane + 1)
     player.moveRight()
     if (online) net.sendAction({ t: 'lane', lane: player.currentLane })
   },
