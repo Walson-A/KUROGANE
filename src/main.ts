@@ -2465,6 +2465,26 @@ const menu = new Menu({
     })
   },
 
+  // ————— Le compte —————
+  onGoogle() {
+    toast('🔗 Redirection vers Google…')
+    void connexionGoogle().then((r) => {
+      // Si ça marche, on quitte la page : ce message n'apparaît qu'en cas d'échec.
+      if (!r.ok) toast(r.raison === 'hors-ligne' ? '📡 Hors ligne' : '⚠️ Connexion indisponible')
+    })
+  },
+
+  onDeconnexion() {
+    void deconnecter().then(async () => {
+      toast('👋 Déconnecté')
+      // On repart d'un compte anonyme neuf, sinon le jeu resterait sans bourse
+      await connecter()
+      majAffichageBourse()
+      majCompte()
+      menu.setCouleursDebloquees(couleursDebloquees())
+    })
+  },
+
   onAcheter(code) {
     void acheterArticle(code).then((r) => {
       if (r.ok) {
@@ -2503,6 +2523,16 @@ function majAffichageBourse() {
 async function majBourse() {
   await rafraichirProfil()
   majAffichageBourse()
+}
+
+/** Reflète l'état du compte dans son écran. */
+function majCompte() {
+  menu.setCompte({
+    anonyme: estAnonyme(),
+    email: monEmail(),
+    googleDispo: googleActif(),
+    connecte: monProfil() !== null,
+  })
 }
 
 /**
@@ -2732,6 +2762,17 @@ function tick(now?: number) {
     speed += (cruise - speed) * Math.min(1, dt * 1.2)
 
     distance += speed * dt
+
+    /*
+     * ————— Le sol sous les pieds —————
+     * À interroger AVANT player.update, sinon la gravité de cette image
+     * s'appliquerait encore vers l'ancien sol : on traverserait le plateau d'un
+     * cheveu à chaque atterrissage.
+     *
+     * Sur la paroi on est hors de la piste : aucune plateforme ne nous porte.
+     */
+    const support = track.supportSous(player.mesh.position.x, player.mesh.position.y)
+    player.sol = player.surMur === 0 ? support.sol : 0
     player.update(dt)
     for (const r of rivals.values()) {
       // Chacun entre dans le sprint a SA distance, pas a la notre
@@ -3053,7 +3094,18 @@ function tick(now?: number) {
     // Trébuchement : toucher un obstacle RALENTIT (on ne meurt pas, c'est une course)
     // Sur la paroi on est hors de la piste : rien ne peut nous faucher.
     stumble = Math.max(0, stumble - dt)
-    const touche = player.surMur === 0 ? track.hits(player.hitbox()) : null
+    /*
+     * 🚃 Percuter le FLANC d'une plateforme : on a raté le saut.
+     *
+     * C'est la contrepartie du raccourci — monter dessus met à l'abri de tout
+     * ce qui traîne au sol, mais s'y prendre trop tard coûte comme un mur. On
+     * l'assimile donc à `mur` : même sanction, et l'Armure de Fer y laisse une
+     * plaque entière, puisque c'est bien une masse pleine qu'on vient d'emboutir.
+     */
+    const flanc =
+      player.surMur === 0 &&
+      track.supportSous(player.mesh.position.x, player.mesh.position.y).heurte
+    const touche = player.surMur === 0 ? (flanc ? 'mur' : track.hits(player.hitbox())) : null
     if (stumble <= 0 && touche) {
       if (armure > 0) {
         // 🛡️ L'armure avale le choc : on garde toute sa vitesse. Mais un mur

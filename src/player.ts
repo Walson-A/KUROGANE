@@ -150,8 +150,19 @@ export class Player {
     this.mesh.rotation.z = 0
   }
 
+  /**
+   * La hauteur du sol SOUS le joueur : 0 sur la piste, le dessus d'une
+   * plateforme quand on court dessus.
+   *
+   * C'est main.ts qui la pose à chaque image, en interrogeant la piste. Le
+   * joueur ne connaît pas les plateformes — il ne connaît qu'un sol, qui se
+   * trouve parfois être à 1,6 m. Toute la mécanique « courir sur le train »
+   * tient dans cette seule valeur.
+   */
+  sol = 0
+
   get onGround() {
-    return this.mesh.position.y <= 0.001
+    return this.mesh.position.y <= this.sol + 0.001
   }
 
   /** Infos qu'on envoie au serveur pour que l'adversaire nous voie */
@@ -319,12 +330,12 @@ export class Player {
     const k = Math.min(1, dt * LANE_LERP * this.fighter.laneSpeed)
     this.mesh.position.x += (targetX - this.mesh.position.x) * k
 
-    // Gravité + saut
+    // Gravité + saut — vers `sol`, qui n'est pas toujours la piste
     this.mesh.position.y += this.vy * dt
-    if (this.mesh.position.y > 0) {
+    if (this.mesh.position.y > this.sol) {
       this.vy -= GRAVITY * dt
     } else {
-      this.mesh.position.y = 0
+      this.mesh.position.y = this.sol
       this.vy = 0
     }
 

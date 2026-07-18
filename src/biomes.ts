@@ -52,6 +52,16 @@ export interface Biome {
   ligne: number
 
   /**
+   * Le corps des pans de mur qu'on longe.
+   *
+   * ⚠️ Leur liseré, lui, reste vermillon dans TOUS les biomes — il n'est pas
+   * décoratif : c'est le signal « ici tu peux t'accrocher ». Un repère d'action
+   * doit rester identique d'un bout à l'autre de la course, sinon le joueur doit
+   * réapprendre à le lire à chaque changement de décor. Seule la matière change.
+   */
+  murCorps: number
+
+  /**
    * Un élément de bordure (massif, masure, rocher…). Appelé avec le tirage à
    * graine : deux joueurs voient EXACTEMENT le même décor, comme le reste.
    */
@@ -69,6 +79,16 @@ export interface Biome {
    * L'origine du groupe est AU SOL.
    */
   fabriqueObstacle?: (kind: Kind, rng: () => number) => THREE.Group
+
+  /**
+   * L'habillage d'une plateforme (le « train » sur lequel on court).
+   *
+   * ⚠️ Le maillage doit être bâti sur 1 m de long, CENTRÉ en z, et sera étiré à
+   * la longueur voulue. Tout ce qui s'étire mal en Z est donc à proscrire : on
+   * privilégie les formes qui courent le long de la plateforme (des perches),
+   * puisque les allonger est justement ce qu'on veut.
+   */
+  fabriquePlateforme?: (hauteur: number) => THREE.Group
 }
 
 /**
@@ -249,6 +269,7 @@ const BAMBOUS: Biome = {
   brumeFar: 88,
   sol: 0x24301f,
   ligne: 0x40573f,
+  murCorps: 0x2c3a23, // une palissade de bambou serré, sombre
   ecartDecor: 12,
   fabriqueDecor: (rng) => {
     const corps: Piece[] = []
@@ -441,16 +462,19 @@ const BAMBOUS: Biome = {
       for (let i = 0; i < n; i++) {
         const x = -0.75 + (1.5 / (n - 1)) * i
         const h = 2.4 - rng() * 0.18 // des hauteurs inégales : c'est bâti à la main
+        // Du bambou vieilli, presque noir : dans une forêt verte, une palissade
+        // bleu-ardoise jurait. C'est la VALEUR (très sombre) qui dit
+        // « infranchissable », pas la teinte — on peut donc rester dans le bois.
         p.push({
           geo: GEO.tige.clone().scale(0.12, h, 0.12),
-          couleur: teinte(0x3f4a58, 0x232a35, rng()),
+          couleur: teinte(0x36432a, 0x1b2416, rng()),
           x, y: h / 2, z: 0,
           rz: (rng() - 0.5) * 0.05,
         })
         // Une pointe taillée en haut de chaque pieu
         p.push({
           geo: GEO.sapin.clone().scale(0.13, 0.26, 0.13),
-          couleur: 0x2b3340,
+          couleur: 0x222c1b,
           x, y: h + 0.11, z: 0,
         })
       }
@@ -464,6 +488,60 @@ const BAMBOUS: Biome = {
         })
       }
     }
+
+    return groupe(assemble(p, MAT_SOLIDE))
+  },
+
+  /*
+   * ————— Le radeau de bambou —————
+   *
+   * L'équivalent forestier du wagon : un train de perches liées, qu'on
+   * charriait sur les chemins. La forme est choisie pour l'étirement — ce sont
+   * des perches COUCHÉES DANS LE SENS DE LA LONGUEUR, donc les rallonger est
+   * exactement ce qu'on veut quand la plateforme s'étire. Un tonneau ou une
+   * caisse se seraient déformés en bouillie.
+   *
+   * Le liseré vermillon du dessus reprend celui des pans de mur : c'est devenu
+   * le langage des surfaces qu'on UTILISE, par opposition aux obstacles qu'on
+   * subit.
+   */
+  fabriquePlateforme: (hauteur) => {
+    const p: Piece[] = []
+
+    // Le corps : quatre perches côte à côte, couchées en long.
+    for (let i = 0; i < 4; i++) {
+      const x = -0.62 + 0.41 * i
+      p.push({
+        geo: GEO.tige.clone().scale(0.22, 1, 0.22),
+        couleur: i % 2 ? 0x4d5c30 : 0x3e4b27,
+        x, y: hauteur - 0.55, z: 0,
+        rx: Math.PI / 2, // couchée le long de la plateforme
+      })
+    }
+
+    // Le tablier du dessus, sur lequel on court.
+    p.push({
+      geo: GEO.bloc.clone().scale(1.7, 0.22, 1),
+      couleur: 0x6b7d3f,
+      x: 0, y: hauteur - 0.11, z: 0,
+    })
+
+    // Les montants sous le tablier, jusqu'au sol : la plateforme doit avoir
+    // l'air posée sur quelque chose, pas de léviter.
+    for (const x of [-0.7, 0.7]) {
+      p.push({
+        geo: GEO.bloc.clone().scale(0.16, hauteur - 0.66, 1),
+        couleur: 0x2b3320,
+        x, y: (hauteur - 0.66) / 2, z: 0,
+      })
+    }
+
+    // Le liseré vermillon : « on peut monter là-dessus ».
+    p.push({
+      geo: GEO.bloc.clone().scale(1.76, 0.1, 1),
+      couleur: 0xc33a2c,
+      x: 0, y: hauteur, z: 0,
+    })
 
     return groupe(assemble(p, MAT_SOLIDE))
   },
@@ -489,6 +567,7 @@ const VILLAGE: Biome = {
   brumeFar: 72,
   sol: 0x36251a,
   ligne: 0x6b3a20,
+  murCorps: 0x241610, // un mur de torchis noirci par le feu
   ecartDecor: 15,
   fabriqueDecor: (rng) => {
     const corps: Piece[] = []
@@ -582,6 +661,7 @@ const PONT: Biome = {
   brumeFar: 92,
   sol: 0x272d3f,
   ligne: 0x3d4560,
+  murCorps: 0x2b3145, // la rambarde d'ardoise du pont — la teinte d'origine
   ecartDecor: 8,
   fabriqueDecor: (rng) => {
     const corps: Piece[] = []
@@ -646,6 +726,7 @@ const FUJI: Biome = {
   brumeFar: 105,
   sol: 0xc9d4e0,
   ligne: 0x9aa9bd,
+  murCorps: 0x5a6478, // une congère tassée, sombre pour trancher sur la neige
   ecartDecor: 13,
   fabriqueDecor: (rng) => {
     const corps: Piece[] = []

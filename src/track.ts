@@ -122,6 +122,54 @@ interface Mur {
 }
 
 /**
+ * ————— Les plateformes : les « trains » —————
+ *
+ * De longues structures sur lesquelles on ATTERRIT et on court, à la manière
+ * des wagons de Subway Surfers. C'est le seul élément de la piste qui change la
+ * hauteur du sol.
+ *
+ * Elles répondent à la question que les obstacles ne posaient pas : jusqu'ici
+ * sauter servait uniquement à ÉVITER. Ici sauter sert à ALLER quelque part —
+ * en hauteur on est à l'abri de tout ce qui traîne au sol, et une seconde
+ * plateforme plus haute peut prolonger la route en l'air.
+ *
+ * Le marché, tel que décidé : c'est un RACCOURCI RISQUÉ. On y gagne un passage
+ * sûr ; on y perd si l'on rate le saut, puisqu'on percute alors le flanc.
+ */
+export interface PlannedPlateforme {
+  d: number // où elle commence (le bord qu'on atteint en premier)
+  longueur: number
+  lane: number
+  hauteur: number
+}
+
+interface Plateforme {
+  mesh: THREE.Object3D
+  plan: PlannedPlateforme
+  biome: number
+  active: boolean
+}
+
+/** Largeur d'une plateforme : une ligne, exactement comme un obstacle. */
+export const PLATEFORME_LARG = 1.7
+/**
+ * Le premier niveau, à 1,6 m.
+ *
+ * Calibré sur le saut : à JUMP_SPEED = 13,2 et g = 42, l'apex est à
+ * 13,2² / 84 = 2,07 m. On monte donc dessus sans effort particulier, mais il
+ * FAUT sauter — on ne l'escalade pas par inadvertance.
+ */
+export const PLATEFORME_H1 = 1.6
+/**
+ * Le second niveau, à 2,8 m — le début du chemin en l'air.
+ *
+ * Inatteignable depuis la piste (2,07 m d'apex) : il faut être déjà sur le
+ * premier niveau, d'où l'on culmine à 1,6 + 2,07 = 3,67 m. C'est ce qui en fait
+ * une vraie route à part, et pas un obstacle plus haut.
+ */
+export const PLATEFORME_H2 = 2.8
+
+/**
  * Un élément de bordure (touffe de bambous, masure en flammes, rocher…).
  * Il ne touche à RIEN : pas de collision, pas de réseau. C'est du paysage pur —
  * ce qui veut dire qu'on peut en mettre beaucoup sans rien risquer.
@@ -174,6 +222,15 @@ export class Track {
   private murs: Mur[] = []
   private murPlan: PlannedMur[] = []
   private murIdx = 0
+  private plateformes: Plateforme[] = []
+  private plateformePlan: PlannedPlateforme[] = []
+  private plateformeIdx = 0
+  /**
+   * Ce que LISENT les bots : les obstacles, plus les plateformes converties en
+   * murs fictifs. Un bot n'a pas de boîte de collision — sans ça, il traverserait
+   * un wagon de part en part sous les yeux du joueur.
+   */
+  private planBots: PlannedObstacle[] = []
   private courseLength = 0
 
   // ————— Les biomes —————
@@ -285,11 +342,31 @@ export class Track {
     this.finish.position.z = -length
     this.plan = buildPlan(length, seed)
     this.planIdx = 0
+
+    /*
+     * Les plateformes viennent juste après les obstacles, et AVANT tout le
+     * reste : elles occupent une ligne entière sur 15 à 25 m, donc tout ce qui
+     * se pose ensuite doit les éviter. Un rouleau ou une jarre enfermé dans un
+     * wagon serait inatteignable.
+     *
+     * On les traduit en obstacles fictifs (`commeObstacles`) pour réutiliser
+     * telles quelles les recherches de ligne libre déjà éprouvées des jarres et
+     * des rouleaux, plutôt que d'en écrire une seconde version.
+     */
+    this.plateformePlan = buildPlateformePlan(length, seed, this.plan)
+    this.plateformeIdx = 0
+    const occupe = [...this.plan, ...commeObstacles(this.plateformePlan)]
+    this.planBots = occupe
+
     // Les rouleaux sont places APRES les obstacles : ils doivent s'en ecarter
-    this.parcheminPlan = buildParcheminPlan(length, seed, this.plan)
+    this.parcheminPlan = buildParcheminPlan(length, seed, occupe)
     this.parcheminIdx = 0
-    this.jarrePlan = buildJarrePlan(length, seed, this.plan)
+    this.jarrePlan = buildJarrePlan(length, seed, occupe)
     this.jarreIdx = 0
+    for (const p of this.plateformes) {
+      p.active = false
+      p.mesh.visible = false
+    }
     for (const m of this.murs) {
       m.active = false
       m.mesh.visible = false
@@ -325,7 +402,47 @@ export class Track {
    * voient pas la piste, ils la connaissent — comme un pilote son circuit.
    */
   obstaclesPrevus(): readonly PlannedObstacle[] {
-    return this.plan
+    return this.planBots
+  }
+
+  /** Le plan des plateformes — pour les tests et le débogage. */
+  plateformesPrevues(): readonly PlannedPlateforme[] {
+    return this.plateformePlan
+  }
+
+  /**
+   * Que trouve-t-on sous le joueur ? Renvoie la hauteur du sol et, le cas
+   * échéant, le fait qu'on soit en train de PERCUTER un flanc.
+   *
+   * Toute la mécanique du « train » tient ici :
+   *  · les pieds au-dessus du plateau (à 30 cm près) → il nous porte ;
+   *  · les pieds en dessous → on lui rentre dedans, et c'est un trébuchement.
+   *
+   * Les 30 cm de tolérance ne sont pas de la générosité gratuite : sans eux, on
+   * heurterait le flanc pour un pixel de retard alors qu'on est visiblement en
+   * train d'atterrir dessus. Ils sont pris SOUS le plateau, donc ils ne
+   * permettent jamais de monter sans sauter — 1,6 m reste 1,6 m.
+   */
+  supportSous(x: number, pieds: number): { sol: number; heurte: boolean } {
+    let sol = 0
+    let heurte = false
+    for (const p of this.plateformes) {
+      if (!p.active) continue
+      // Le joueur est en z = 0 ; la plateforme s'étend de son bord avant
+      // (mesh.userData.zAvant) sur `longueur` mètres vers l'avant.
+      const zAvant = p.mesh.userData.zAvant as number
+      if (zAvant < -0.2 || zAvant > p.plan.longueur + 0.2) continue
+      if (Math.abs(x - LANES[p.plan.lane]) > PLATEFORME_LARG / 2) continue
+
+      if (pieds >= p.plan.hauteur - 0.3) {
+        // On garde la PLUS HAUTE : deux niveaux peuvent se chevaucher au moment
+        // où l'on passe de l'un à l'autre.
+        sol = Math.max(sol, p.plan.hauteur)
+      } else {
+        heurte = true
+      }
+    }
+    return { sol, heurte }
   }
 
   /**
@@ -422,6 +539,19 @@ export class Track {
       if (m.mesh.position.z > DESPAWN_Z + 60) {
         m.active = false
         m.mesh.visible = false
+      }
+    }
+
+    // Les plateformes. On tient à jour `zAvant` — la position de leur bord
+    // avant — parce que le maillage, lui, est centré : c'est le bord qui dit si
+    // le joueur est dessus.
+    for (const p of this.plateformes) {
+      if (!p.active) continue
+      p.mesh.position.z += dz
+      p.mesh.userData.zAvant = (p.mesh.userData.zAvant as number) + dz
+      if (p.mesh.userData.zAvant > DESPAWN_Z + p.plan.longueur) {
+        p.active = false
+        p.mesh.visible = false
       }
     }
 
@@ -538,6 +668,17 @@ export class Track {
         this.jarreIdx++
       }
 
+      // Les plateformes se voient d'aussi loin que les murs : il faut décider
+      // de sauter AVANT d'arriver au bord.
+      while (
+        this.plateformeIdx < this.plateformePlan.length &&
+        this.plateformePlan[this.plateformeIdx].d <= distance + LOOKAHEAD + 40
+      ) {
+        const p = this.plateformePlan[this.plateformeIdx]
+        this.spawnPlateforme(p, -(p.d - distance))
+        this.plateformeIdx++
+      }
+
       // Les murs se voient de plus loin que le reste : ils sont longs, et il
       // faut les repérer assez tôt pour décider de sauter AVANT d'arriver.
       while (
@@ -586,6 +727,34 @@ export class Track {
     dec.active = true
   }
 
+  private spawnPlateforme(p: PlannedPlateforme, z: number) {
+    const biome = indexBiome(p.d, this.courseLength)
+    // On recycle par biome ET par hauteur : un plateau bas et un plateau haut
+    // n'ont pas la même silhouette.
+    let pf = this.plateformes.find(
+      (q) => !q.active && q.biome === biome && q.plan.hauteur === p.hauteur
+    )
+    if (!pf) {
+      const habille = BIOMES[biome].fabriquePlateforme
+      pf = {
+        mesh: habille ? habille(p.hauteur) : makePlateformeMesh(p.hauteur),
+        plan: p,
+        biome,
+        active: false,
+      }
+      this.plateformes.push(pf)
+      this.scene.add(pf.mesh)
+    }
+    pf.plan = p
+    // Le maillage est bâti sur 1 m de long, centré : on l'étire et on le recule
+    // d'une demi-longueur pour que son bord avant tombe pile sur `z`.
+    pf.mesh.scale.z = p.longueur
+    pf.mesh.position.set(LANES[p.lane], 0, z - p.longueur / 2)
+    pf.mesh.userData.zAvant = z
+    pf.mesh.visible = true
+    pf.active = true
+  }
+
   private spawnMur(p: PlannedMur, z: number) {
     let m = this.murs.find((m) => !m.active)
     if (!m) {
@@ -597,6 +766,11 @@ export class Track {
     // au centre, d'où le décalage d'une demi-longueur.
     m.mesh.scale.z = p.longueur
     m.mesh.position.set(p.cote * MUR_X, 1.5, z - p.longueur / 2)
+    // Il prend la matière du biome qu'il traverse — pas celle où l'on court :
+    // un mur long de 40 m peut chevaucher une frontière.
+    ;(m.mesh.material as THREE.MeshStandardMaterial).color.setHex(
+      BIOMES[indexBiome(p.d, this.courseLength)].murCorps
+    )
     m.mesh.visible = true
     m.active = true
   }
@@ -946,6 +1120,122 @@ export function buildJarrePlan(
 }
 
 /**
+ * Traduit des plateformes en obstacles fictifs, pour réutiliser les recherches
+ * de ligne libre existantes (jarres, rouleaux) et le pilotage des bots.
+ *
+ * On en sème un tous les 5 m sur toute la longueur : les recherches travaillent
+ * par fenêtre de quelques mètres autour d'un point, un seul marqueur au début
+ * laisserait poser une jarre au milieu du wagon.
+ */
+function commeObstacles(plateformes: PlannedPlateforme[]): PlannedObstacle[] {
+  const out: PlannedObstacle[] = []
+  for (const p of plateformes) {
+    for (let d = p.d; d <= p.d + p.longueur; d += 5) {
+      out.push({ d, lane: p.lane, kind: 'mur' })
+    }
+  }
+  return out
+}
+
+/**
+ * Place les plateformes : une tous les 150 à 260 m, longue de 15 à 25 m.
+ *
+ * Assez rares pour rester un événement qu'on guette (une toutes les ~8 s de
+ * course), assez longues pour qu'on ait le temps de SENTIR qu'on court dessus —
+ * environ 0,6 à 1 s en hauteur.
+ *
+ * Une fois sur trois, une seconde plateforme plus haute suit à 6-11 m : c'est le
+ * chemin en l'air. L'écart est calculé pour être franchissable — depuis 1,6 m on
+ * culmine à 3,67 m, et à 26 m/s on couvre 8 m avant de retomber au niveau de
+ * départ. Trop court, on ne peut pas sauter ; trop long, on tombe.
+ *
+ * Graine décalée (`^`) : sans ça les plateformes tomberaient sur les mêmes
+ * points que tout le reste.
+ */
+export function buildPlateformePlan(
+  length: number,
+  seed: number,
+  obstacles: PlannedObstacle[]
+): PlannedPlateforme[] {
+  const rng = mulberry32(seed ^ 0x3fa17c05)
+  const plan: PlannedPlateforme[] = []
+
+  let d = 200 // le temps d'avoir compris la course avant d'en changer les règles
+  while (d < length - SPRINT_ZONE - 40) {
+    const longueur = 15 + rng() * 10
+    /*
+     * On décide de la paire AVANT de chercher la ligne, et on réserve alors
+     * l'espace des deux niveaux d'un coup.
+     *
+     * L'ordre compte. En posant d'abord le niveau 1 puis en cherchant la place
+     * du niveau 2, la ligne se trouvait déjà bloquée neuf fois sur dix : il faut
+     * ~44 m de libre, or les obstacles tombent tous les 10 à 17 m. Deux courses
+     * sur trois n'avaient aucun chemin en l'air. En réservant l'ensemble dès le
+     * départ, la recherche de ligne libre travaille sur le vrai besoin.
+     */
+    const veutPaire = rng() < 0.45
+    const ecart = 6 + rng() * 5
+    const l2 = 12 + rng() * 8
+    const portee = veutPaire ? longueur + ecart + l2 : longueur
+
+    // Une ligne libre sur TOUTE la portée : une plateforme coupée par une
+    // barrière serait un piège, pas un choix — et en l'air on ne peut plus
+    // changer de voie pour l'éviter.
+    let lane = -1
+    for (let essai = 0; essai < 12; essai++) {
+      const occupees = new Set(
+        obstacles.filter((o) => o.d > d - 12 && o.d < d + portee + 12).map((o) => o.lane)
+      )
+      const libres = [0, 1, 2].filter((l) => !occupees.has(l))
+      if (libres.length > 0) {
+        lane = libres[Math.floor(rng() * libres.length)]
+        break
+      }
+      d += 8 // ce tronçon est bouché : on décale
+    }
+
+    // Tout doit tenir hors de la zone de sprint, où l'on ne peut plus swiper
+    // pour sauter.
+    if (d + portee >= length - SPRINT_ZONE) break
+
+    if (lane >= 0) {
+      plan.push({ d, longueur, lane, hauteur: PLATEFORME_H1 })
+      // Le second niveau : la route en l'air. Même ligne, sinon il faudrait
+      // sauter ET changer de voie en un seul geste.
+      if (veutPaire) {
+        plan.push({ d: d + longueur + ecart, longueur: l2, lane, hauteur: PLATEFORME_H2 })
+      }
+    }
+    d += 150 + rng() * 110
+  }
+  return plan
+}
+
+/**
+ * Le visuel GÉNÉRIQUE d'une plateforme : un plateau bâti sur 1 m de long et
+ * centré, qu'on étire en Z à l'apparition.
+ *
+ * Le liseré du dessus est vermillon, comme celui des pans de mur — et pour la
+ * même raison. Le vermillon est devenu le langage des SURFACES QU'ON UTILISE
+ * (on s'y accroche, on court dessus), par opposition aux obstacles qu'on subit.
+ */
+function makePlateformeMesh(hauteur: number): THREE.Object3D {
+  const g = new THREE.Group()
+  const corps = new THREE.Mesh(
+    new THREE.BoxGeometry(PLATEFORME_LARG, hauteur, 1),
+    new THREE.MeshStandardMaterial({ color: 0x3a4258, roughness: 0.9 })
+  )
+  corps.position.y = hauteur / 2
+  const liser = new THREE.Mesh(
+    new THREE.BoxGeometry(PLATEFORME_LARG + 0.06, 0.14, 1),
+    new THREE.MeshStandardMaterial({ color: 0xc33a2c, emissive: 0x3a0f0a })
+  )
+  liser.position.y = hauteur
+  g.add(corps, liser)
+  return g
+}
+
+/**
  * Place les pans de mur : un tous les 160 à 280 m, de 26 à 42 m de long.
  *
  * Assez rares pour rester un événement qu'on guette, assez longs pour valoir
@@ -972,15 +1262,22 @@ export function buildMurPlan(length: number, seed: number): PlannedMur[] {
 }
 
 /**
- * Le visuel d'un pan de mur : une paroi d'ardoise sombre, veinée de vermillon
- * en haut pour qu'on la repère dans la brume. Étirée en Z au spawn.
+ * Le visuel d'un pan de mur, étiré en Z au spawn.
+ *
+ * Son corps prend la matière du biome (`murCorps`) : une paroi d'ardoise au
+ * milieu d'une bambouseraie jurait. Chaque pan a donc SON matériau, recoloré à
+ * l'apparition — un matériau partagé aurait teinté d'un coup tous les murs à
+ * l'écran, y compris ceux du biome précédent encore visibles.
+ *
+ * ⚠️ Le liseré du haut reste vermillon PARTOUT. Ce n'est pas de la décoration :
+ * c'est le signal « ici tu peux t'accrocher ». Un repère d'action doit se lire
+ * pareil d'un bout à l'autre de la course.
  */
 function makeMurMesh(): THREE.Mesh {
   const mur = new THREE.Mesh(
     new THREE.BoxGeometry(0.5, 3, 1), // 1 m de long : mis à l'échelle au spawn
-    new THREE.MeshStandardMaterial({ color: 0x2b3145, roughness: 0.95 })
+    new THREE.MeshStandardMaterial({ color: BIOMES[0].murCorps, roughness: 0.95 })
   )
-  // Le liseré du haut : c'est lui qu'on voit arriver de loin
   const liser = new THREE.Mesh(
     new THREE.BoxGeometry(0.56, 0.18, 1),
     new THREE.MeshStandardMaterial({ color: 0xc33a2c, emissive: 0x3a0f0a })
