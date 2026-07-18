@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>KUROGANE — banc d'essai des bruitages</title>
+    <style>
+      body {
+        margin: 0;
+        padding: 24px;
+        background: #151a2c;
+        color: #f0e8d8;
+        font-family: system-ui, sans-serif;
+      }
+      h1 {
+        font-size: 1.3rem;
+        letter-spacing: 0.1em;
+      }
+      p {
+        color: #9aa4c0;
+        max-width: 60ch;
+        line-height: 1.6;
+      }
+      .grille {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+        gap: 10px;
+        margin-top: 18px;
+        max-width: 860px;
+      }
+      button {
+        font: inherit;
+        text-align: left;
+        padding: 14px 16px;
+        border: 1px solid #3d4560;
+        border-radius: 10px;
+        background: rgba(61, 69, 96, 0.3);
+        color: #f0e8d8;
+        cursor: pointer;
+      }
+      button:hover {
+        border-color: #d6ac5a;
+      }
+      button:active {
+        transform: scale(0.97);
+      }
+      button b {
+        display: block;
+        font-size: 1.05rem;
+      }
+      button small {
+        color: #9aa4c0;
+      }
+      .rafale {
+        margin-top: 16px;
+        background: #e24b3a;
+        border-color: #e24b3a;
+        color: #fff;
+      }
+      .vol {
+        margin-top: 22px;
+        max-width: 380px;
+      }
+      input[type='range'] {
+        width: 100%;
+        accent-color: #e24b3a;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>⛩️ BANC D'ESSAI — BRUITAGES</h1>
+    <p>
+      Tout est synthétisé en direct : aucun fichier. Clique pour écouter.
+      Rejoue plusieurs fois le même son — il change légèrement à chaque
+      fois, c'est voulu (sinon dix jarres d'affilée sonnent comme une
+      mitraillette).
+    </p>
+
+    <div class="grille" id="grille"></div>
+
+    <button class="rafale" id="rafale">
+      <b>🏺 Rafale de 5 jarres</b>
+      <small>pour juger la répétition — le vrai test</small>
+    </button>
+
+    <div class="vol">
+      <label>Volume <span id="volVal">60 %</span></label>
+      <input id="vol" type="range" min="0" max="100" step="5" value="60" />
+    </div>
+
+    <script type="module" src="/src/sfx-lab.ts"></script>
+  </body>
+</html>
