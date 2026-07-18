@@ -257,35 +257,155 @@ portailMesh.visible = false
 scene.add(portailMesh)
 
 /**
- * ————— 🎯 Le kunai en vol —————
- * Un simple rectangle : ici tout est encore en boîtes, Yasuke le premier.
+ * ————— Les projectiles : un sabotage, ça VOLE jusqu'à sa victime —————
  *
- * Il est PUREMENT décoratif. Le sort a déjà frappé quand la lame part : sa
- * durée de vol ne doit rien coûter à personne, sinon on toucherait au 0,53 s
- * calibré du Kunai. C'est un traceur, pas un projectile.
+ * Une seule mécanique pour toutes les armes du jeu, avec une silhouette par
+ * sort. Sans ça, on encaissait des sorts sans jamais RIEN voir venir — juste un
+ * message et une vitesse qui s'effondre.
  *
- * Sans lui, le Kunai était le seul sabotage qu'on encaissait sans jamais RIEN
- * voir — juste un toast et une vitesse qui s'effondre.
+ * Ils sont PUREMENT décoratifs : le sort a déjà frappé quand le projectile
+ * part. Sa durée de vol ne doit rien coûter à personne, sinon on toucherait au
+ * calibrage des parchemins (cf. README). C'est un traceur, pas un projectile.
+ *
+ * Le VOL EST FIXE (0,28 s) quelle que soit la distance : une lame qui met deux
+ * secondes à traverser 60 m se lirait comme un ralenti, pas comme un jet.
  */
-const KUNAI_VOL = 0.28 // secondes de vol, quelle que soit la distance
-const kunaiMesh = new THREE.Mesh(
-  new THREE.BoxGeometry(0.16, 0.16, 1),
-  new THREE.MeshStandardMaterial({ color: 0xd8dfec, emissive: 0xe24b3a, emissiveIntensity: 0.35 })
-)
-kunaiMesh.visible = false
-scene.add(kunaiMesh)
+const PROJET_VOL = 0.28
 
-/** Le vol en cours, ou null. Un seul maillage : il n'y en a jamais deux. */
-let kunaiVol: { fin: number; de: THREE.Vector3; a: THREE.Vector3 } | null = null
+/** La dégaine d'un sort : ce qu'on voit filer, et s'il tournoie. */
+interface StyleProjet {
+  geo: () => THREE.BufferGeometry
+  couleur: number
+  emissive: number
+  /** Une lame tournoie ; une aiguille file droit, sinon elle ne pique plus. */
+  tournoie: boolean
+}
+const STYLES_PROJET: Partial<Record<ParcheminKind, StyleProjet>> = {
+  kunai: {
+    geo: () => new THREE.BoxGeometry(0.16, 0.16, 1),
+    couleur: 0xd8dfec,
+    emissive: 0xe24b3a,
+    tournoie: true,
+  },
+  senbon: {
+    // Longue et fine : une aiguille se reconnaît à sa silhouette, pas à sa taille
+    geo: () => new THREE.BoxGeometry(0.05, 0.05, 1.2),
+    couleur: 0xd9c8ff,
+    emissive: 0x9b5cff,
+    tournoie: false,
+  },
+  kusarigama: {
+    // Le poids au bout de la chaîne : compact et lourd
+    geo: () => new THREE.SphereGeometry(0.2, 10, 8),
+    couleur: 0x8a97ab,
+    emissive: 0x3d4560,
+    tournoie: true,
+  },
+}
 
-function lancerKunaiVisuel(de: THREE.Vector3, a: THREE.Vector3) {
-  // On part de positions AU SOL : on relève la lame à hauteur de poitrine une
-  // bonne fois, ici, plutôt qu'à chaque image — sinon la 1re s'affiche dans
-  // les pieds, le temps que la boucle corrige.
+interface Projet {
+  mesh: THREE.Mesh
+  kind: ParcheminKind
+  de: THREE.Vector3
+  a: THREE.Vector3
+  /** Le corps visé : c'est LUI qu'on marquera d'une aura à l'arrivée. */
+  cible: THREE.Object3D | null
+  fin: number
+  actif: boolean
+}
+const projets: Projet[] = []
+
+/**
+ * Envoie le projectile de `kind` de `de` vers `a`. `cible` (facultatif) est le
+ * corps visé : à l'arrivée, c'est lui qui reçoit l'aura du sort.
+ */
+function lancerProjet(
+  kind: ParcheminKind,
+  de: THREE.Vector3,
+  a: THREE.Vector3,
+  cible: THREE.Object3D | null = null
+) {
+  const style = STYLES_PROJET[kind]
+  if (!style) return
+  let p = projets.find((x) => !x.actif && x.kind === kind)
+  if (!p) {
+    const mesh = new THREE.Mesh(
+      style.geo(),
+      new THREE.MeshStandardMaterial({
+        color: style.couleur,
+        emissive: style.emissive,
+        emissiveIntensity: 0.45,
+      })
+    )
+    mesh.visible = false
+    scene.add(mesh)
+    p = { mesh, kind, de: new THREE.Vector3(), a: new THREE.Vector3(), cible: null, fin: 0, actif: false }
+    projets.push(p)
+  }
+  // On part de positions AU SOL : on relève le tir à hauteur de poitrine une
+  // bonne fois ici, sinon la 1re image s'affiche dans les pieds.
   const poitrine = new THREE.Vector3(0, 0.6, 0)
-  kunaiVol = { fin: time + KUNAI_VOL, de: de.clone().add(poitrine), a: a.clone().add(poitrine) }
-  kunaiMesh.position.copy(kunaiVol.de)
-  kunaiMesh.visible = true
+  p.de.copy(de).add(poitrine)
+  p.a.copy(a).add(poitrine)
+  p.cible = cible
+  p.fin = time + PROJET_VOL
+  p.actif = true
+  p.mesh.position.copy(p.de)
+  p.mesh.visible = true
+}
+
+/**
+ * ————— Les auras : « ce sort agit, sur LUI, encore maintenant » —————
+ *
+ * Une bulle colorée collée à un coureur, pour toute la durée du sort. C'est la
+ * même règle que le nuage de fumée : une aura n'est pas un décor, c'est la
+ * JAUGE de l'effet — tant qu'elle brille, l'effet court.
+ *
+ * Elle sert aux deux camps : sur soi pour les sorts qu'on s'applique, sur la
+ * victime pour les sabotages. Une couleur par sort, toujours la même.
+ */
+const AURA_VENT = 0x8fe6ff
+const AURA_GRUE = 0xdfe8ff
+const AURA_MIROIR = 0xc9d4e8
+const AURA_THE = 0x8fce7a
+const AURA_SENBON = 0x9b5cff // le violet du poison
+const AURA_KUSARIGAMA = 0x7a8ba0
+
+interface Aura {
+  mesh: THREE.Mesh
+  cible: THREE.Object3D
+  duree: number
+  fin: number
+  actif: boolean
+}
+const auras: Aura[] = []
+
+/** Enveloppe `cible` de `couleur` pendant `duree` secondes. */
+function poserAura(cible: THREE.Object3D, couleur: number, duree: number) {
+  let a = auras.find((x) => !x.actif)
+  if (!a) {
+    const mesh = new THREE.Mesh(
+      new THREE.SphereGeometry(1.05, 16, 12),
+      new THREE.MeshBasicMaterial({
+        color: couleur,
+        transparent: true,
+        opacity: 0,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+      })
+    )
+    mesh.visible = false
+    scene.add(mesh)
+    a = { mesh, cible, duree, fin: 0, actif: false }
+    auras.push(a)
+  }
+  ;(a.mesh.material as THREE.MeshBasicMaterial).color.setHex(couleur)
+  a.cible = cible
+  a.duree = duree
+  a.fin = time + duree
+  a.actif = true
+  a.mesh.visible = true
+  a.mesh.position.copy(cible.position).setY(0.85)
 }
 
 /**
@@ -1053,15 +1173,18 @@ function subirSort(
     return true
   }
 
+  // D'où vient le tir : le bot qui l'a lancé, le rival en ligne, ou la brume
+  // si on l'ignore. Calculé pour tous les sabotages, pas seulement le kunai.
+  const lanceur =
+    deBot?.mesh.position ?? srcMesh?.position ?? new THREE.Vector3(player.mesh.position.x, 1.2, -22)
+
   if (kind === 'kusarigama') {
     kusarigamaFin = time + KUSARIGAMA_DUREE
+    lancerProjet('kusarigama', lanceur, player.mesh.position, player.mesh) // ⛓️
     toast('⛓️ Kusarigama ! Tu es entravé…')
   } else if (kind === 'kunai') {
-    // La lame arrive du lanceur : le bot qui l'a jetée, le rival en ligne, ou
-    // la brume si on ne sait pas d'où. Avant le test d'armure : on doit voir
-    // le kunai même quand il éclate dessus.
-    const lanceur = deBot?.mesh.position ?? srcMesh?.position ?? null
-    lancerKunaiVisuel(lanceur ?? new THREE.Vector3(player.mesh.position.x, 1.2, -22), player.mesh.position)
+    // Avant le test d'armure : on doit voir la lame même quand elle éclate dessus.
+    lancerProjet('kunai', lanceur, player.mesh.position, player.mesh)
 
     // Le seul sort qui fait trébucher sec. L'armure peut encore l'avaler.
     if (armure > 0) {
@@ -1079,6 +1202,8 @@ function subirSort(
     toast('💨 Tu ne vois plus rien !')
   } else if (kind === 'senbon') {
     senbonFin = time + SENBON_DUREE
+    // ☠️ L'aiguille file jusqu'à toi, et te laisse son aura violette
+    lancerProjet('senbon', lanceur, player.mesh.position, player.mesh)
     toast('☠️ Poison — tout tangue…')
   } else if (kind === 'onmyoji') {
     return false // l'échange est traité par l'appelant : il connaît les 2 places
@@ -1128,15 +1253,33 @@ function lancerParchemin() {
   toast(p.cri)
 
   // ————— Sur soi —————
-  if (kind === 'vent') ventFin = time + VENT_DUREE
-  else if (kind === 'grue') grueFin = time + GRUE_DUREE
-  else if (kind === 'armure') armure = ARMURE_SOLIDITE
-  else if (kind === 'miroir') miroirFin = time + MIROIR_DUREE
-  else if (kind === 'the') {
+  // Chacun pose son aura pour SA durée : tant qu'elle brille, le sort court.
+  // L'armure fait exception — son dôme facetté joue déjà ce rôle, en mieux.
+  if (kind === 'vent') {
+    ventFin = time + VENT_DUREE
+    poserAura(player.mesh, AURA_VENT, VENT_DUREE)
+  } else if (kind === 'grue') {
+    grueFin = time + GRUE_DUREE
+    poserAura(player.mesh, AURA_GRUE, GRUE_DUREE)
+  } else if (kind === 'armure') armure = ARMURE_SOLIDITE
+  else if (kind === 'miroir') {
+    miroirFin = time + MIROIR_DUREE
+    poserAura(player.mesh, AURA_MIROIR, MIROIR_DUREE)
+  } else if (kind === 'the') {
     // 🍵 Le thé lave TOUT d'un coup — y compris ce qu'on vient d'encaisser
     kusarigamaFin = 0
     fumigeneFin = 0
     senbonFin = 0
+    // Les auras des afflictions s'éteignent avec elles : sinon on croirait
+    // encore empoisonné alors qu'on vient justement de se purifier.
+    for (const a of auras) {
+      const c = (a.mesh.material as THREE.MeshBasicMaterial).color.getHex()
+      if (c === AURA_SENBON || c === AURA_KUSARIGAMA) {
+        a.actif = false
+        a.mesh.visible = false
+      }
+    }
+    poserAura(player.mesh, AURA_THE, 0.9) // une bouffée verte, courte : c'est instantané
   }
   // ————— 🔮 Le portail : il part, il ne vise pas —————
   else if (kind === 'onmyoji') {
@@ -1156,7 +1299,7 @@ function lancerParchemin() {
         drawSlots()
         return
       }
-      if (kind === 'kunai') lancerKunaiVisuel(player.mesh.position, cible.opp.mesh.position)
+      lancerProjet(kind, player.mesh.position, cible.opp.mesh.position, cible.opp.mesh)
       if (kind === 'fumigene') spawnFumeeZone(cible.opp.mesh)
       net.sendSpell(kind, cible.id)
       toast(`${p.icone} sur ${cible.name} !`)
@@ -1170,7 +1313,7 @@ function lancerParchemin() {
     // 🎯 La lame part vers sa victime. Si elle nous revient dans les dents,
     // `subirSort` rejouera le vol dans l'autre sens : c'est le même maillage,
     // donc le retour écrase l'aller — on ne voit que le trajet qui compte.
-    if (kind === 'kunai') lancerKunaiVisuel(player.mesh.position, cible.mesh.position)
+    lancerProjet(kind, player.mesh.position, cible.mesh.position, cible.mesh)
     if (kind === 'fumigene') spawnFumeeZone(cible.mesh)
 
     // Sa parade peut nous le renvoyer dans les dents : on l'a bien cherché
@@ -1215,8 +1358,14 @@ function backToMenu(banner?: string) {
   }
   for (const m of botMarks) m.classList.add('hidden')
   // Une lame encore en l'air à l'arrivée resterait plantée dans le menu
-  kunaiVol = null
-  kunaiMesh.visible = false
+  for (const p of projets) {
+    p.actif = false
+    p.mesh.visible = false
+  }
+  for (const a of auras) {
+    a.actif = false
+    a.mesh.visible = false
+  }
   hideSpark()
   oppmarkEl.classList.add('hidden')
   rankEl.classList.add('hidden')
@@ -1259,8 +1408,14 @@ function startRace(seed: number) {
   senbonFin = 0
   portail = null
   portailMesh.visible = false
-  kunaiVol = null
-  kunaiMesh.visible = false
+  for (const p of projets) {
+    p.actif = false
+    p.mesh.visible = false
+  }
+  for (const a of auras) {
+    a.actif = false
+    a.mesh.visible = false
+  }
   lueurFin = 0
   lueurCible = null
   lueurJoueur.visible = false
@@ -1772,17 +1927,47 @@ function tick(now?: number) {
       }
     }
 
-    // 🎯 Le kunai file vers sa victime en tournoyant, puis s'évanouit
-    if (kunaiVol) {
-      const reste = kunaiVol.fin - time
-      if (reste <= 0) {
-        boom(kunaiVol.a) // 💥 la lame éclate en atteignant sa cible
-        kunaiVol = null
-        kunaiMesh.visible = false
-      } else {
-        kunaiMesh.position.lerpVectors(kunaiVol.de, kunaiVol.a, 1 - reste / KUNAI_VOL)
-        kunaiMesh.rotation.x += dt * 26 // il tournoie bout par-dessus bout
+    // Les projectiles filent vers leur victime, puis délivrent leur effet
+    for (const p of projets) {
+      if (!p.actif) continue
+      const reste = p.fin - time
+      if (reste > 0) {
+        p.mesh.position.lerpVectors(p.de, p.a, 1 - reste / PROJET_VOL)
+        if (STYLES_PROJET[p.kind]?.tournoie) p.mesh.rotation.x += dt * 26
+        else p.mesh.lookAt(p.a) // l'aiguille reste pointée sur sa cible
+        continue
       }
+      // ————— L'arrivée : à chaque sort sa signature —————
+      p.actif = false
+      p.mesh.visible = false
+      if (p.kind === 'kunai') {
+        boom(p.a) // 💥 la lame éclate
+      } else if (p.cible) {
+        // ☠️ et ⛓️ marquent leur victime d'une aura, le temps de leur effet.
+        // On retire le vol de la durée : l'aura doit s'éteindre AVEC le sort,
+        // pas 0,28 s après — c'est une jauge, elle ne doit pas mentir.
+        if (p.kind === 'senbon') poserAura(p.cible, AURA_SENBON, SENBON_DUREE - PROJET_VOL)
+        else if (p.kind === 'kusarigama') {
+          poserAura(p.cible, AURA_KUSARIGAMA, KUSARIGAMA_DUREE - PROJET_VOL)
+        }
+      }
+    }
+
+    // Les auras collent à leur porteur et battent doucement jusqu'à l'extinction
+    for (const a of auras) {
+      if (!a.actif) continue
+      const reste = a.fin - time
+      if (reste <= 0) {
+        a.actif = false
+        a.mesh.visible = false
+        continue
+      }
+      a.mesh.position.copy(a.cible.position).setY(0.85)
+      const k = reste / a.duree // 1 → 0
+      const battement = 1 + Math.sin(time * 9) * 0.05
+      a.mesh.scale.setScalar(battement)
+      // Franche à l'apparition, elle s'efface sur la fin : on voit le sort mourir
+      ;(a.mesh.material as THREE.MeshBasicMaterial).opacity = 0.16 + Math.min(1, k * 2.2) * 0.16
     }
 
     // 💨💥 Le rideau de vitesse : monte avec le martèlement du sprint final,
