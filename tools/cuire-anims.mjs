@@ -334,10 +334,27 @@ const journal = []
 const fichiers = parcourir(SOURCE)
 
 /*
- * Un même fichier rangé dans PLUSIEURS dossiers de personnage ne dit rien de
- * personne : c'est un mouvement commun, recopié. On le repère à son empreinte
- * et on le propose aussi en repli pour ceux qui n'ont rien — sinon Yasuke et
- * Oni-Maru, qui n'ont pas de course à eux, resteraient sans course du tout.
+ * ————— LA RÈGLE DES DOSSIERS, sans exception —————
+ *
+ * Un dossier au nom d'un guerrier ne contient QUE ses mouvements à lui. À la
+ * racine, c'est pour tout le monde. Rien ne circule d'un dossier à l'autre.
+ *
+ * On a essayé plus malin : quand un fichier était identique dans plusieurs
+ * dossiers, on le promouvait en commun pour que Yasuke et Oni-Maru — dont les
+ * dossiers n'ont pas de course — ne restent pas sans. Résultat : ils couraient
+ * avec le fichier de Hana. Un dossier vide doit se voir, pas se combler en
+ * douce avec le bien d'un autre.
+ *
+ * Ce qui manque retombe donc sur la foulée calculée, et la liste de couverture
+ * affichée en fin de cuisson dit exactement quel dossier réclame quoi.
+ */
+
+/**
+ * Un fichier PROPRE à ce guerrier, ou une copie qu'on retrouve ailleurs ?
+ *
+ * Quand un dossier offre les deux pour un même rôle, on garde le fichier
+ * unique : c'est lui qui dit quelque chose du personnage. Une copie présente
+ * dans quatre dossiers ne caractérise personne.
  */
 const empreintes = new Map()
 for (const f of fichiers) {
@@ -345,10 +362,9 @@ for (const f of fichiers) {
   if (!empreintes.has(h)) empreintes.set(h, [])
   empreintes.get(h).push(f)
 }
-const partages = new Set()
+const recopie = new Set()
 for (const [, liste] of empreintes) {
-  const dossiers = new Set(liste.map((f) => persoDe(f)))
-  if (dossiers.size >= 2) for (const f of liste) partages.add(f)
+  if (new Set(liste.map((f) => persoDe(f))).size >= 2) for (const f of liste) recopie.add(f)
 }
 
 for (const fichier of fichiers) {
@@ -373,21 +389,24 @@ for (const fichier of fichiers) {
     vraieAction = cuit.mesures.derive > 0 ? 'virageG' : 'virageD'
   }
 
-  const cles = [`${persoDe(fichier)}/${vraieAction}`]
-  if (partages.has(fichier)) cles.push(`tous/${vraieAction}`)
-  for (const cle of cles) {
-    if (!candidats.has(cle)) candidats.set(cle, [])
-    candidats.get(cle).push({ fichier, cuit })
-  }
+  const cle = `${persoDe(fichier)}/${vraieAction}`
+  if (!candidats.has(cle)) candidats.set(cle, [])
+  candidats.get(cle).push({ fichier, cuit, unique: !recopie.has(fichier) })
 }
 
 const clips = {}
 const boucles = new Set(['course', 'courseGenee', 'mur'])
 
 for (const [cle, liste] of [...candidats].sort()) {
-  liste.sort((a, b) => note(cle.split('/')[1], a.cuit.mesures) - note(cle.split('/')[1], b.cuit.mesures))
-  const [gagnant, ...perdants] = liste
   const action = cle.split('/')[1]
+  // Le fichier PROPRE au guerrier passe devant la copie ; à égalité de
+  // propriété, on départage sur ce que le mouvement fait vraiment.
+  liste.sort(
+    (a, b) =>
+      Number(b.unique) - Number(a.unique) ||
+      note(action, a.cuit.mesures) - note(action, b.cuit.mesures)
+  )
+  const [gagnant, ...perdants] = liste
   const m = gagnant.cuit.mesures
 
   // Une course qui ne boucle pas saccaderait à chaque reprise : mieux vaut
@@ -411,3 +430,45 @@ const ko = (fs.statSync(SORTIE).size / 1024).toFixed(0)
 
 console.log(journal.join('\n'))
 console.log(`\n${Object.keys(clips).length} clips → ${SORTIE} (${ko} Ko)`)
+
+/*
+ * ————— La couverture, guerrier par guerrier —————
+ *
+ * C'est le tableau qui manquait : il dit d'un coup d'œil ce que chaque dossier
+ * fournit, ce qu'il emprunte à la racine, et ce qui retombe encore sur la
+ * foulée calculée. Sans lui, un dossier vide passait inaperçu — et on comblait
+ * le trou en douce avec le fichier d'un autre.
+ */
+const ROLES = ['course', 'courseGenee', 'saut', 'glissade', 'virageG', 'virageD']
+const GUERRIERS = [
+  ['yasuke', 'yasuke'],
+  ['hana', 'hana'],
+  ['oni', 'onimaru'],
+  ['tamea', 'tamae'],
+  ['perso/aucun', 'perso-rien'],
+  ['perso/Nouveau dossier', 'perso-oreilles'],
+  ['perso/oni2', 'perso-cornes'],
+]
+
+console.log('\n————— Couverture —————')
+console.log('  à lui · de la racine (tous) · MANQUE = foulée calculée\n')
+console.log(`  ${''.padEnd(22)}${ROLES.map((r) => r.slice(0, 6).padEnd(8)).join('')}`)
+
+const manquants = []
+for (const [dossier, id] of GUERRIERS) {
+  const cases = ROLES.map((r) => {
+    if (clips[`${id}/${r}`]) return 'à lui'.padEnd(8)
+    // Le perso « + » passe par son fonds commun avant la racine
+    if (id.startsWith('perso-') && clips[`perso/${r}`]) return 'perso'.padEnd(8)
+    if (clips[`tous/${r}`]) return 'racine'.padEnd(8)
+    manquants.push(`${dossier}/ → ${r}`)
+    return '—'.padEnd(8)
+  })
+  console.log(`  ${dossier.padEnd(22)}${cases.join('')}`)
+}
+
+if (manquants.length) {
+  console.log('\n  ⚠️ Rien nulle part, donc foulée calculée :')
+  for (const m of manquants) console.log(`     ${m}`)
+  console.log('     → déposer un .fbx dans le dossier, ou à la racine pour tous.')
+}

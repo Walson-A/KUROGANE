@@ -135,14 +135,38 @@ npm run anims        # recuit animation/*.fbx → src/anims-cuites.json
 npm run anims:test   # contrôle anatomique (à lancer après toute recuisson)
 ```
 
-### La règle des dossiers
+### La règle des dossiers, sans exception
 
-`animation/hana/` n'anime que Hana ; à la **racine**, ça sert à tout le monde.
-Le perso « + » cherche d'abord son ornement (`perso/aucun`, `perso/kitsu`,
-`perso/oni2`), puis le fonds commun `perso/`, puis la racine.
+`animation/hana/` n'anime **que** Hana ; à la **racine**, ça sert à tout le
+monde. **Rien ne circule d'un dossier à l'autre.** Le perso « + » cherche
+d'abord son ornement (`perso/aucun`, `perso/kitsu`, `perso/oni2`), puis le
+fonds commun `perso/`, puis la racine.
 
-Personne ne peut se retrouver figé : quand un mouvement manque — le perso « + »
-n'a pas de saut — le guerrier **retombe sur l'ancienne foulée calculée**.
+> On a essayé plus malin, et c'était une erreur : quand un fichier était
+> identique dans plusieurs dossiers, on le promouvait en commun pour que
+> Yasuke et Oni-Maru — dont les dossiers n'ont pas de course — ne restent pas
+> sans. Résultat, **ils couraient avec le fichier de Hana**. Un dossier vide
+> doit se voir, pas se combler en douce avec le bien d'un autre.
+
+Quand un dossier offre à la fois un fichier **unique** et une **copie** qu'on
+retrouve ailleurs, on garde l'unique : c'est lui qui dit quelque chose du
+personnage. C'est ainsi que Hana court avec **son** `Run.fbx` et boite avec
+**son** `Injured Run.fbx`, plutôt qu'avec le `Fast Run.fbx` présent dans quatre
+dossiers.
+
+Personne ne peut se retrouver figé : quand un mouvement manque, le guerrier
+**retombe sur l'ancienne foulée calculée** — qui suit elle aussi la cadence,
+donc il s'emballe quand même sous le vent et dans le sprint.
+
+`npm run anims` termine par un **tableau de couverture** qui dit, pour chaque
+dossier, ce qu'il fournit, ce qu'il emprunte à la racine, et ce qui retombe sur
+la foulée calculée. C'est lui qui manquait : un dossier vide passait inaperçu.
+
+> ⚠️ **En l'état, `yasuke/` et `oni/` n'ont pas de course**, et la racine n'en a
+> pas d'utilisable (`Running.fbx` est une roulade, cf. plus bas). Ces deux-là
+> courent donc avec la foulée calculée. Déposer un `.fbx` de course qui boucle
+> dans leur dossier — ou un seul à la racine pour tout le monde — suffit à les
+> rattraper.
 
 > Les **bots d'entraînement** (`bot.ts`) gardent leur maillage simple : ils n'ont
 > pas de corps articulé, donc rien à animer. Seuls le joueur et les rivaux en

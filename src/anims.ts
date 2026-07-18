@@ -224,6 +224,8 @@ export class Anim {
   /** Le mouvement qu'on quitte, gardé le temps du fondu */
   private avant: { clip: Clip; action: Action; t: number } | null = null
   private fondu = 0
+  /** Horloge de la foulee calculee : monotone et sensible a la cadence */
+  private tSecours = 0
 
   /**
    * `phase` décale le point de départ dans le cycle. Sans elle, tous les
@@ -271,6 +273,17 @@ export class Anim {
   appliquer(f: Fighter, g: Corps, dt: number, intensite = 1): boolean {
     const clip = clipDe(f, this.action)
     this.clipCourant = clip
+
+    /*
+     * L'horloge de secours avance MÊME sans clip, et à la même cadence.
+     *
+     * Sans elle, un guerrier dont le dossier n'a pas de course — Yasuke,
+     * Oni-Maru — gardait exactement la même foulée sous le Souffle de Vent et
+     * dans le sprint final : la foulée calculée ne connaît pas la cadence.
+     * Elle est monotone, jamais remise à zéro : la repartir de zéro à chaque
+     * changement d'action ferait sauter la jambe d'un coup.
+     */
+    this.tSecours += dt * (CADENCE[this.action] ?? 1)
     if (!clip) return false
 
     this.t += dt * (CADENCE[this.action] ?? 1)
@@ -347,6 +360,14 @@ export class Anim {
   /** Un geste est-il en train de se jouer ? */
   get gesteEnCours() {
     return this.geste !== null
+  }
+
+  /**
+   * L'horloge de la foulée calculée : monotone, et accélérée comme les clips.
+   * C'est elle que joue un guerrier dont le dossier ne fournit pas le mouvement.
+   */
+  get horloge() {
+    return this.tSecours
   }
 
   /** Où en est le mouvement, de 0 à 1. Utile pour savoir s'il est fini. */
@@ -457,7 +478,9 @@ export function animerGuerrier(
   if (!g) return
   anim.jouer(action)
   if (!anim.appliquer(f, g, dt, intensite)) {
-    animerCourse(racine, tSecours, intensite)
+    // Son horloge à lui, pas celle de l'appelant : elle suit la cadence, donc
+    // ce guerrier s'emballe aussi sous le vent et dans le sprint.
+    animerCourse(racine, anim.horloge, intensite)
     return
   }
   finitions(g, tSecours, intensite, anim.gesteEnCours)
