@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no" />
+    <meta name="theme-color" content="#151a2c" />
+    <title>KUROGANE — banc d'essai des sorts</title>
+    <style>
+      /* Le sélecteur, en bas à gauche : le classement occupe le haut-gauche et
+         la jauge de sprint le bas-centre. */
+      #essai {
+        position: fixed;
+        left: 12px;
+        bottom: 12px;
+        z-index: 30;
+        width: 190px;
+        padding: 8px;
+        border-radius: 10px;
+        background: rgba(13, 16, 28, 0.82);
+        border: 1px solid #3d4560;
+        font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+        font-size: 0.78rem;
+        color: #9aa4c0;
+        user-select: none;
+      }
+      #essai .titre {
+        font-size: 0.62rem;
+        letter-spacing: 0.16em;
+        text-transform: uppercase;
+        color: #6b7594;
+        margin-bottom: 6px;
+      }
+      #essai .sort {
+        display: flex;
+        align-items: center;
+        gap: 7px;
+        padding: 3px 6px;
+        border-radius: 6px;
+        line-height: 1.5;
+      }
+      /* Le sort tenu : on doit le repérer d'un coup d'œil pendant la course */
+      #essai .sort.on {
+        background: rgba(226, 75, 58, 0.26);
+        color: #f0e8d8;
+        font-weight: 700;
+      }
+      #essai .aide {
+        margin-top: 7px;
+        padding-top: 6px;
+        border-top: 1px dashed #3d4560;
+        font-size: 0.7rem;
+        line-height: 1.6;
+        color: #6b7594;
+      }
+      #essai kbd {
+        background: #3d4560;
+        color: #f0e8d8;
+        border-radius: 4px;
+        padding: 0 5px;
+        font-family: inherit;
+        font-size: 0.72rem;
+      }
+    </style>
+  </head>
+  <body>
+    <script type="module">
+      // On CHARGE le vrai index.html plutôt que d'en recopier le balisage : une
+      // copie finirait par mentir le jour où l'interface bouge.
+      const html = await (await fetch('/index.html')).text()
+      const doc = new DOMParser().parseFromString(html, 'text/html')
+      document.body.insertAdjacentHTML('afterbegin', doc.body.innerHTML)
+
+      // Les <script> insérés par innerHTML ne s'exécutent pas : c'est nous qui
+      // démarrons le jeu, une seule fois, juste ici.
+      const { PARCHEMINS, TIRAGE } = await import('/src/parchemin.ts')
+      await import('/src/main.ts')
+
+      const guichet = window.__sorts
+      if (!guichet) throw new Error('Le guichet de test est absent (build de production ?)')
+
+      const panneau = document.createElement('div')
+      panneau.id = 'essai'
+      document.body.appendChild(panneau)
+
+      let idx = 0
+
+      function dessiner() {
+        const lignes = TIRAGE.map((k, i) => {
+          const p = PARCHEMINS[k]
+          const cible = p.cible === 'adversaire' ? '⚔' : '•'
+          return `<div class="sort${i === idx ? ' on' : ''}">${p.icone} ${p.nom} <span style="margin-left:auto;opacity:.5">${cible}</span></div>`
+        }).join('')
+        panneau.innerHTML =
+          `<div class="titre">Banc d'essai des sorts</div>${lignes}` +
+          `<div class="aide"><kbd>o</kbd> / <kbd>i</kbd> changer · <kbd>e</kbd> lancer<br />` +
+          `⚔ = il lui faut une cible devant</div>`
+      }
+
+      /** Choisit un sort ET le met en main, pour pouvoir le lancer aussitôt. */
+      function choisir(n) {
+        idx = (n + TIRAGE.length) % TIRAGE.length
+        guichet.donner(TIRAGE[idx])
+        dessiner()
+      }
+
+      addEventListener('keydown', (e) => {
+        if (e.repeat) return
+        if (e.key === 'o' || e.key === 'O') choisir(idx + 1)
+        else if (e.key === 'i' || e.key === 'I') choisir(idx - 1)
+      })
+
+      // On redonne le sort tenu à chaque nouvelle course : `startRace` vide les
+      // slots, et sans ça on repartirait les mains vides sans comprendre.
+      const btnGo = document.getElementById('btnGo')
+      if (btnGo) btnGo.addEventListener('click', () => setTimeout(() => choisir(idx), 0))
+
+      dessiner()
+      guichet.donner(TIRAGE[idx])
+    </script>
+  </body>
+</html>
