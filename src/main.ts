@@ -293,47 +293,16 @@ let senbonFin = 0 // ☠️ l'écran ondule
  * tourne, et des arcs qui se redessinent À CHAQUE IMAGE. C'est ce redessin
  * permanent qui fait l'électricité — des éclairs figés ne crépitent pas.
  *
- * La COULEUR appartient au portail et se propage à tout le reste : le halo,
- * les arcs, et la trace laissée sur le mur. Elle est donc un paramètre et non
- * une constante — un portail vert laissera une brûlure verte.
+ * Le portail est BLEU, comme la foudre : c'est la couleur qu'on lit
+ * instantanément comme « électrique », et elle le distingue de tout le reste du
+ * jeu (le rouge du trébuchement, l'or du torii, l'orange de l'explosion).
+ *
+ * Elle reste portée par le portail plutôt que codée en dur dans chaque
+ * maillage : le halo, les arcs et la brûlure laissée sur le mur la lisent tous
+ * depuis lui. Le jour où un rival lancera son propre portail, lui donner une
+ * autre teinte tiendra en une ligne — et sa brûlure suivra toute seule.
  */
 const PORTAIL_BLEU = 0x4db8ff
-const PORTAIL_VERT = 0x5ef08a
-const PORTAIL_ORANGE = 0xffa23a
-
-/**
- * La couleur du portail suit le BANDEAU de celui qui le lance : ton portail
- * est le tien, et la brûlure sur le mur dit qui s'y est cassé.
- *
- * On ramène la teinte du bandeau à la plus proche des trois couleurs
- * électriques plutôt que de la prendre telle quelle : un portail « ivoire » ou
- * « acier noir » ne se lirait pas comme de la foudre. Et comme c'est calculé
- * depuis la teinte, le skin perso hérite de la règle sans une ligne de plus.
- */
-function couleurPortail(bandeau: number): number {
-  const hsl = { h: 0, s: 0, l: 0 }
-  new THREE.Color(bandeau).getHSL(hsl)
-  // Teintes de référence : orange ≈ 0,08, vert ≈ 0,35, bleu ≈ 0,55
-  const cibles: [number, number][] = [
-    [0.08, PORTAIL_ORANGE],
-    [0.35, PORTAIL_VERT],
-    [0.55, PORTAIL_BLEU],
-  ]
-  // Un bandeau très pâle (ivoire, blanc cassé) n'a pas de teinte fiable : bleu
-  // par défaut, la couleur du portail « de base ».
-  if (hsl.s < 0.18) return PORTAIL_BLEU
-  let best = PORTAIL_BLEU
-  let dist = Infinity
-  for (const [h, c] of cibles) {
-    // La teinte est un cercle : 0,95 et 0,02 sont voisines, pas opposées
-    const d = Math.min(Math.abs(hsl.h - h), 1 - Math.abs(hsl.h - h))
-    if (d < dist) {
-      dist = d
-      best = c
-    }
-  }
-  return best
-}
 
 /** 🔮 Le portail en vol : il file tout droit dans SA ligne jusqu'au 1er mur. */
 let portail: { d: number; lane: number; couleur: number } | null = null
@@ -1112,7 +1081,9 @@ function briserBouclier(nb: number, force: number) {
     const dx = Math.sin(ph) * Math.cos(th)
     const dy = Math.cos(ph)
     const dz = Math.sin(ph) * Math.sin(th)
-    e.mesh.position.set(p.x + dx * BOUCLIER_R, 0.85 + dy * BOUCLIER_R, p.z + dz * BOUCLIER_R)
+    // p.y : les éclats naissent sur la coque, donc à SA hauteur du moment —
+    // une armure qui vole en morceaux au sol pendant qu'on saute serait absurde.
+    e.mesh.position.set(p.x + dx * BOUCLIER_R, p.y + 0.85 + dy * BOUCLIER_R, p.z + dz * BOUCLIER_R)
     e.vx = dx * force
     e.vy = dy * force + 1.2 // un rien vers le haut : ça retombe joliment
     e.vz = dz * force
@@ -1130,7 +1101,9 @@ function briserBouclier(nb: number, force: number) {
 function armureEncaisse(brisee: boolean) {
   if (brisee) {
     briserBouclier(20, 5.5) // toute la coque explose…
-    boom(new THREE.Vector3(player.mesh.position.x, 0.85, player.mesh.position.z)) // …dans un souffle
+    // Le souffle part de la coque elle-même, saut compris
+    const p = player.mesh.position
+    boom(new THREE.Vector3(p.x, p.y + 0.85, p.z)) // …dans un souffle
   } else {
     boucFlash = time + BOUC_CLAQUE // le dôme claque et tient bon
     briserBouclier(7, 2.6)
@@ -1336,7 +1309,9 @@ function updateEffets(dt: number, dz: number) {
   boucLignes.visible = bouclierOn
   if (bouclierOn) {
     const p = player.mesh.position
-    boucFill.position.set(p.x, 0.85, p.z)
+    // p.y : le dôme SUIT le saut. Resté au sol pendant qu'on vole, il dirait
+    // qu'on a laissé sa protection en bas — or c'est en l'air qu'on percute.
+    boucFill.position.set(p.x, p.y + 0.85, p.z)
     boucLignes.position.copy(boucFill.position)
     boucLignes.rotation.y += dt * 0.5
     boucFill.rotation.y = boucLignes.rotation.y
@@ -1693,9 +1668,9 @@ function lancerParchemin() {
   }
   // ————— 🔮 Le portail : il part, il ne vise pas —————
   else if (kind === 'onmyoji') {
-    // Ta couleur vient de ton bandeau, et elle voyage avec le portail jusqu'à
-    // la brûlure qu'il laissera sur le mur.
-    const couleur = couleurPortail(menu.fighter.band)
+    // La couleur voyage AVEC le portail jusqu'à la brûlure qu'il laissera sur
+    // le mur : c'est lui qui la porte, pas les maillages.
+    const couleur = PORTAIL_BLEU
     portail = { d: distance, lane: player.currentLane, couleur }
     player.geste('lancer') // 🔥 le bras jette le portail devant lui
     for (const m of [portailHalo, portailAnneau]) {
