@@ -2247,6 +2247,9 @@ const menu = new Menu({
     // Le guerrier qui court derrière le menu change tout de suite : on voit son
     // choix avant même de lancer la course.
     player.setFighter(f)
+    // Et si on est dans un salon, on prévient les autres : sans ça, changer de
+    // guerrier depuis le lobby ne se verrait que chez soi.
+    if (online) net.sendIdentity(identity())
   },
   onQuality(q) {
     applyQuality(q)

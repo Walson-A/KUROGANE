@@ -245,8 +245,10 @@
         <header class="head">
           <button class="back" id="btnLeaveLobby" aria-label="Quitter le salon">‹</button>
           <h2>Salon <span id="lobbyCode" class="code"></span></h2>
-          <!-- L'aide depuis le salon : on y revient en refermant, on ne quitte
-               pas la partie pour aller lire une fiche. -->
+          <!-- Le vestiaire et l'aide depuis le salon : on y revient en
+               refermant, on ne quitte pas la partie pour changer de guerrier
+               ou lire une fiche. -->
+          <button id="btnLobbyRoster" class="ghost aidebtn" aria-label="Changer de guerrier">🥷</button>
           <button id="btnLobbyHelp" class="ghost aidebtn" aria-label="Voir les sorts">📜</button>
         </header>
         <div id="lobbyHint" class="lobbyhint"></div>

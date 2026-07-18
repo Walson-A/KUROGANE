@@ -172,6 +172,15 @@ export class Menu {
       this.show('help')
     })
 
+    // 🥷 Le vestiaire depuis le salon. On attend souvent plusieurs minutes qu'un
+    // salon se remplisse : c'est LE moment où l'on veut changer de guerrier ou
+    // retoucher son skin. Le faire imposait de quitter le salon — donc de perdre
+    // sa place et son code. Même mécanique de retour que l'aide.
+    document.getElementById('btnLobbyRoster')?.addEventListener('click', () => {
+      this.retourAide = 'lobby'
+      this.show('roster')
+    })
+
     this.buildAideSorts()
 
     this.buildRoster()
@@ -329,11 +338,18 @@ export class Menu {
   // ————— Les écrans —————
 
   private show(name: ScreenName) {
-    // La provenance de l'aide ne vaut QUE pour la visite en cours. Sans cette
-    // remise à zéro, quitter le salon autrement que par « retour » laisserait
-    // le repère en place, et un retour plus tard — depuis les options, par
-    // exemple — renverrait vers un salon qu'on a déjà quitté.
-    if (name !== 'help') this.retourAide = null
+    /*
+     * Le repère de retour ne s'efface qu'en SORTANT vraiment du salon.
+     *
+     * On ne peut pas l'effacer à chaque écran : l'aide et le vestiaire le
+     * posent juste avant d'appeler show(), et il serait balayé dans la foulée.
+     * On ne peut pas non plus ne jamais l'effacer : quitter le salon autrement
+     * que par « retour » le laisserait traîner, et un retour plus tard —
+     * depuis les options — renverrait vers un salon déjà quitté.
+     *
+     * Le titre et la liste des salons sont les deux seules portes de sortie.
+     */
+    if (name === 'title' || name === 'salon') this.retourAide = null
     this.current = name
     for (const [key, el] of Object.entries(this.screens)) {
       el.classList.toggle('hidden', key !== name)

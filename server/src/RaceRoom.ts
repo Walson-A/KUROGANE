@@ -189,6 +189,25 @@ export class RaceRoom extends Room<{ state: RaceState }> {
       this.broadcast('chat', { from: client.sessionId, name: p.name, text })
     })
 
+    /**
+     * Changement de guerrier depuis le salon.
+     *
+     * Sans ça, le bouton « vestiaire » du lobby mentirait : le joueur se
+     * verrait changer, les autres continueraient à voir son ancien guerrier —
+     * et la course partirait avec le mauvais.
+     *
+     * Refusé HORS salon : on ne change pas d'armure au milieu d'une course.
+     * Et on repasse par les mêmes validations qu'à l'arrivée, parce qu'un
+     * message vient toujours d'un client auquel on ne fait pas confiance.
+     */
+    this.onMessage('identity', (client, data: any) => {
+      if (this.state.phase !== 'lobby') return
+      const p = this.state.players.get(client.sessionId)
+      if (!p) return
+      p.fighter = cleanFighter(data?.fighter)
+      p.name = cleanName(data?.name)
+    })
+
     // Retour au salon après une course, pour rejouer ensemble (hôte seul).
     this.onMessage('tolobby', (client) => {
       if (client.sessionId !== this.state.hostId || this.state.phase !== 'results') return

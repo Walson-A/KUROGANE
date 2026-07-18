@@ -366,6 +366,15 @@ export class Net {
     this.room?.send('ready', ready)
   }
 
+  /**
+   * Le joueur a changé de guerrier (ou de pseudo) depuis le salon.
+   * Le serveur ne l'accepte que tant qu'on n'a pas démarré : on ne change pas
+   * d'armure en pleine course.
+   */
+  sendIdentity(identity: { name: string; fighter: string }) {
+    this.room?.send('identity', identity)
+  }
+
   /** L'hôte lance la partie */
   sendStart() {
     this.room?.send('start')
