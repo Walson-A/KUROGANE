@@ -58,6 +58,11 @@ export class Player {
     return this.fighter.grip
   }
 
+  /** Le passif de Sasuke : laisse-t-il une traînée d'éclair en changeant de ligne ? */
+  get spark() {
+    return this.fighter.spark ?? false
+  }
+
   /** Se met en place. `lane` : sa ligne sur la grille de départ (duel). */
   reset(lane = 1) {
     this.lane = lane

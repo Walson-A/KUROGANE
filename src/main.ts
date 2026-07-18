@@ -304,6 +304,36 @@ scene.add(lueurJoueur, lueurRival)
 let lueurFin = 0 // les deux lueurs brillent jusqu'à cet instant
 let lueurCible: THREE.Object3D | null = null // le corps de l'échangé
 
+/**
+ * ⚡ L'éclair du Sharingan — le passif de Sasuke.
+ * Une traînée cyan qui gicle entre l'ancienne et la nouvelle ligne à chaque
+ * changement de voie, quand le guerrier a le style de Sasuke (`player.spark`).
+ * Additive + scintillement : ça se lit comme de l'électricité.
+ */
+const sparkMesh = new THREE.Mesh(
+  new THREE.PlaneGeometry(1, 0.85),
+  new THREE.MeshBasicMaterial({
+    color: 0x9fe8ff,
+    transparent: true,
+    opacity: 0,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+  })
+)
+sparkMesh.visible = false
+scene.add(sparkMesh)
+const SPARK_DUREE = 0.24 // secondes
+let sparkFin = 0
+
+/** Déclenche la traînée d'éclair entre deux positions X (centres de ligne). */
+function flashSpark(fromX: number, toX: number) {
+  const mid = (fromX + toX) / 2
+  sparkMesh.position.set(mid, 0.95, player.mesh.position.z + 0.15)
+  sparkMesh.scale.set(Math.abs(toX - fromX) + 1.1, 1, 1)
+  sparkMesh.visible = true
+  sparkFin = time + SPARK_DUREE
+}
+
 // ————— Le rouleau-machine à sous —————
 // À chaque ramassage, la case fait défiler les icônes façon machine de casino
 // et s'arrête PILE sur l'objet gagné, qui grossit et brille 1,5 s.
@@ -648,6 +678,7 @@ function backToMenu(banner?: string) {
   // Une lame encore en l'air à l'arrivée resterait plantée dans le menu
   kunaiVol = null
   kunaiMesh.visible = false
+  sparkMesh.visible = false
   oppmarkEl.classList.add('hidden')
   rankEl.classList.add('hidden')
   gapEl.classList.add('hidden')
@@ -658,8 +689,13 @@ function backToMenu(banner?: string) {
 
 /** Lance une course. En ligne, la graine vient du serveur : même piste pour les deux ! */
 function startRace(seed: number) {
-  // En duel : la grille de départ du serveur. En solo : au centre.
-  player.reset(online ? net.myStartLane : 1)
+  // ————— La grille de départ —————
+  // On aligne joueur + bots sur la MÊME ligne, répartis de gauche à droite sur
+  // les 3 voies (le joueur à gauche, les bots vers la droite). En duel, c'est le
+  // serveur qui donne la place ; ici on ne gère que la grille solo.
+  const nbCoureurs = 1 + nbBots
+  const voieDe = (k: number) => (nbCoureurs === 1 ? 1 : Math.round((k / (nbCoureurs - 1)) * 2))
+  player.reset(online ? net.myStartLane : voieDe(0))
   // Les avatars des rivaux sont (re)placés par syncRivals dès la 1re position
   // reçue ; ici on repart d'une table propre en solo, et on garde les rivaux
   // déjà connus du lobby en ligne.
@@ -690,6 +726,7 @@ function startRace(seed: number) {
   lueurCible = null
   lueurJoueur.visible = false
   lueurRival.visible = false
+  sparkMesh.visible = false
   fumeeEl.classList.remove('show')
   canvas.classList.remove('poison')
   drawSlots()
@@ -702,7 +739,8 @@ function startRace(seed: number) {
     b.actif = !online && i < nbBots
     // Graine dérivée : chaque rival tire ses fautes ailleurs dans la suite,
     // sinon les 4 rateraient exactement les mêmes obstacles au même endroit.
-    b.reset(rangees, rouleaux, (seed ^ ((i + 1) * 0x9e3779b1)) | 0)
+    // Le joueur est l'indice 0 de la grille, les bots suivent (voie répartie).
+    b.reset(rangees, rouleaux, (seed ^ ((i + 1) * 0x9e3779b1)) | 0, voieDe(i + 1))
     botMarks[i].classList.toggle('hidden', !b.actif)
     botMarks[i].style.left = '0%'
   })
@@ -955,12 +993,16 @@ menu.showTitle()
 new Input(document.body, {
   left: () => {
     if (state !== 'course') return
+    const de = player.currentLane
     player.moveLeft()
+    if (player.currentLane !== de && player.spark) flashSpark(LANES[de], LANES[player.currentLane])
     if (online) net.sendAction({ t: 'lane', lane: player.currentLane })
   },
   right: () => {
     if (state !== 'course') return
+    const de = player.currentLane
     player.moveRight()
+    if (player.currentLane !== de && player.spark) flashSpark(LANES[de], LANES[player.currentLane])
     if (online) net.sendAction({ t: 'lane', lane: player.currentLane })
   },
   jump: () => {
@@ -1223,6 +1265,18 @@ function tick(now?: number) {
     // 💨 la fumée aveugle, ☠️ le poison fait tanguer la scène
     fumeeEl.classList.toggle('show', time < fumigeneFin)
     canvas.classList.toggle('poison', time < senbonFin)
+
+    // ⚡ La traînée d'éclair de Sasuke s'éteint en scintillant
+    if (sparkMesh.visible) {
+      const reste = sparkFin - time
+      if (reste <= 0) {
+        sparkMesh.visible = false
+      } else {
+        const k = reste / SPARK_DUREE // 1 → 0
+        ;(sparkMesh.material as THREE.MeshBasicMaterial).opacity = k * (0.55 + Math.random() * 0.45)
+        sparkMesh.position.y = 0.95 + (Math.random() - 0.5) * 0.18 // frémissement électrique
+      }
+    }
 
     // 🔮 Les deux lueurs de l'échange : elles battent et s'éteignent en douceur
     const lueurOn = time < lueurFin

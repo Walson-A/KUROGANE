@@ -184,7 +184,7 @@ export class Bot {
    * graine = mêmes esquives et mêmes fautes. On peut donc rejouer une course
    * ratée à l'identique pour la travailler.
    */
-  reset(rangees: Rangee[], rouleaux: readonly PlannedParchemin[], seed: number) {
+  reset(rangees: Rangee[], rouleaux: readonly PlannedParchemin[], seed: number, startLane = 1) {
     this.rangees = rangees
     this.rouleaux = rouleaux
     this.rIdx = 0
@@ -193,7 +193,7 @@ export class Bot {
     this.distance = 0
     this.speed = 12 // la vitesse au GO, comme le joueur
     this.tempsArrivee = -1
-    this.lane = 1
+    this.lane = startLane // sa place sur la grille de départ (répartie, cf. startRace)
     this.vy = 0
     this.glissade = 0
     this.chute = 0
@@ -206,7 +206,7 @@ export class Bot {
     this.armure = 0
     this.prochainSort = 0
     this.rng = mulberry32(seed)
-    this.mesh.position.set(LANES[1], 0, -2)
+    this.mesh.position.set(LANES[startLane], 0, -2)
     this.mesh.scale.y = 1
     this.mesh.visible = false
   }

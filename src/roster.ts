@@ -53,6 +53,8 @@ export interface Fighter {
   slide: number
   /** Part de la vitesse GARDÉE quand on trébuche. 0,35 = la référence. */
   grip: number
+  /** Le passif de Sasuke : une traînée d'éclair à chaque changement de ligne. */
+  spark?: boolean
 }
 
 export const ROSTER: Fighter[] = [
@@ -144,6 +146,7 @@ export const ROSTER: Fighter[] = [
     laneSpeed: 1.4, // l'esquive la plus vive — sa signature
     slide: 1,
     grip: 0.25, // …payée par le grip le plus faible : un choc le sonne
+    spark: true, // l'éclair du Sharingan à chaque changement de ligne
   },
   {
     id: 'kurokumo',
@@ -241,6 +244,7 @@ export function customFighter(skin: CustomSkin): Fighter {
     laneSpeed: style.laneSpeed,
     slide: style.slide,
     grip: style.grip,
+    spark: style.spark, // l'éclair de Sasuke suit son style (sans ornement)
   }
 }
 
