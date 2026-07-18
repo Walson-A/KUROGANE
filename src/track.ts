@@ -1,5 +1,5 @@
 import * as THREE from 'three'
-import { LANES } from './player'
+import { LANES, MUR_X } from './player'
 import { tirerParchemin, TIRAGE, type ParcheminKind } from './parchemin'
 
 /**
@@ -78,6 +78,29 @@ interface Jarre {
 const PORTEE_FRAPPE = 5.5
 
 /**
+ * ————— Les murs qu'on longe —————
+ * Des pans de mur bordent la piste par tronçons. On s'y accroche depuis la
+ * voie extérieure, on y court quelques instants à l'abri des obstacles, et on
+ * en repart avec un saut réarmé.
+ *
+ * C'est une ROUTE, pas un raccourci : on n'y gagne pas de vitesse, on y gagne
+ * un passage sûr et un tremplin. Le prix, c'est de devoir se coller au bord —
+ * donc renoncer aux jarres et aux sillages du centre.
+ */
+export interface PlannedMur {
+  d: number // où il commence
+  longueur: number
+  /** -1 = à gauche de la piste, +1 = à droite */
+  cote: -1 | 1
+}
+
+interface Mur {
+  mesh: THREE.Mesh
+  active: boolean
+}
+
+
+/**
  * Générateur de nombres pseudo-aléatoires AVEC GRAINE (algorithme mulberry32).
  * Même graine → même suite de nombres → même piste pour les deux joueurs.
  * C'est LA clé du multijoueur équitable !
@@ -111,6 +134,9 @@ export class Track {
   private jarres: Jarre[] = []
   private jarrePlan: PlannedJarre[] = []
   private jarreIdx = 0
+  private murs: Mur[] = []
+  private murPlan: PlannedMur[] = []
+  private murIdx = 0
   private courseLength = 0
 
   constructor(scene: THREE.Scene) {
@@ -177,6 +203,24 @@ export class Track {
     this.parcheminIdx = 0
     this.jarrePlan = buildJarrePlan(length, seed, this.plan)
     this.jarreIdx = 0
+    for (const m of this.murs) {
+      m.active = false
+      m.mesh.visible = false
+    }
+    this.murPlan = buildMurPlan(length, seed)
+    this.murIdx = 0
+  }
+
+  /**
+   * Le pan de mur qui borde la piste ICI, de ce côté — ou null.
+   * Sert à savoir si l'on peut s'y accrocher, et quand il se termine.
+   */
+  murA(distance: number, cote: number): PlannedMur | null {
+    for (const m of this.murPlan) {
+      if (m.cote !== cote) continue
+      if (distance >= m.d && distance < m.d + m.longueur) return m
+    }
+    return null
   }
 
   /**
@@ -267,6 +311,16 @@ export class Track {
       }
     }
 
+    // Les pans de mur défilent comme le reste du décor
+    for (const m of this.murs) {
+      if (!m.active) continue
+      m.mesh.position.z += dz
+      if (m.mesh.position.z > DESPAWN_Z + 60) {
+        m.active = false
+        m.mesh.visible = false
+      }
+    }
+
     if (distance >= 0) {
       // La ligne d'arrivée est TOUJOURS placée d'après la distance parcourue :
       // impossible qu'elle se désynchronise.
@@ -301,7 +355,33 @@ export class Track {
         this.spawnJarre(p, -(p.d - distance))
         this.jarreIdx++
       }
+
+      // Les murs se voient de plus loin que le reste : ils sont longs, et il
+      // faut les repérer assez tôt pour décider de sauter AVANT d'arriver.
+      while (
+        this.murIdx < this.murPlan.length &&
+        this.murPlan[this.murIdx].d <= distance + LOOKAHEAD + 40
+      ) {
+        const p = this.murPlan[this.murIdx]
+        this.spawnMur(p, -(p.d - distance))
+        this.murIdx++
+      }
     }
+  }
+
+  private spawnMur(p: PlannedMur, z: number) {
+    let m = this.murs.find((m) => !m.active)
+    if (!m) {
+      m = { mesh: makeMurMesh(), active: false }
+      this.murs.push(m)
+      this.scene.add(m.mesh)
+    }
+    // Un seul maillage recyclé : on l'étire à la longueur voulue. Le pivot est
+    // au centre, d'où le décalage d'une demi-longueur.
+    m.mesh.scale.z = p.longueur
+    m.mesh.position.set(p.cote * MUR_X, 1.5, z - p.longueur / 2)
+    m.mesh.visible = true
+    m.active = true
   }
 
   private spawnJarre(p: PlannedJarre, z: number) {
@@ -586,6 +666,51 @@ export function buildJarrePlan(
     d += 90 + rng() * 60
   }
   return plan
+}
+
+/**
+ * Place les pans de mur : un tous les 160 à 280 m, de 26 à 42 m de long.
+ *
+ * Assez rares pour rester un événement qu'on guette, assez longs pour valoir
+ * la manœuvre (il faut sauter AVANT d'arriver). Le côté est tiré au sort :
+ * on ne peut pas apprendre la piste par cœur, il faut regarder.
+ *
+ * Graine décalée (`^`) : sans ça les murs tomberaient sur les mêmes points
+ * que les obstacles, les rouleaux et les jarres.
+ */
+export function buildMurPlan(length: number, seed: number): PlannedMur[] {
+  const rng = mulberry32(seed ^ 0x7d3e5b19)
+  const plan: PlannedMur[] = []
+
+  let d = 140 // le temps d'avoir pris sa vitesse et compris la course
+  while (d < length - SPRINT_ZONE - 50) {
+    plan.push({
+      d,
+      longueur: 26 + rng() * 16,
+      cote: rng() < 0.5 ? -1 : 1,
+    })
+    d += 160 + rng() * 120
+  }
+  return plan
+}
+
+/**
+ * Le visuel d'un pan de mur : une paroi d'ardoise sombre, veinée de vermillon
+ * en haut pour qu'on la repère dans la brume. Étirée en Z au spawn.
+ */
+function makeMurMesh(): THREE.Mesh {
+  const mur = new THREE.Mesh(
+    new THREE.BoxGeometry(0.5, 3, 1), // 1 m de long : mis à l'échelle au spawn
+    new THREE.MeshStandardMaterial({ color: 0x2b3145, roughness: 0.95 })
+  )
+  // Le liseré du haut : c'est lui qu'on voit arriver de loin
+  const liser = new THREE.Mesh(
+    new THREE.BoxGeometry(0.56, 0.18, 1),
+    new THREE.MeshStandardMaterial({ color: 0xc33a2c, emissive: 0x3a0f0a })
+  )
+  liser.position.y = 1.45
+  mur.add(liser)
+  return mur
 }
 
 /**

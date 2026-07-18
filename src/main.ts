@@ -1635,6 +1635,25 @@ function rivalAPortee(lane: number): boolean {
  * duels. Mêmes règles que contre un humain, sans le serveur (rien à valider :
  * tout se passe sur cette machine).
  */
+/**
+ * Tente de s'accrocher à la paroi de ce côté (-1 gauche, +1 droite).
+ *
+ * Trois conditions : être EN VOL (le mur est une manœuvre aérienne, pas un
+ * raccourci qu'on prend au sol — il faut donc avoir sauté avant d'arriver),
+ * être sur la voie extérieure de ce côté, et qu'un pan de mur borde la piste
+ * ici. Renvoie true si le swipe a servi à ça.
+ */
+function tenteMur(cote: -1 | 1): boolean {
+  if (!acte2() || player.onGround || player.surMur !== 0) return false
+  // La voie extérieure du bon côté : 0 à gauche, 2 à droite
+  if (player.currentLane !== (cote === -1 ? 0 : 2)) return false
+  if (!track.murA(distance, cote)) return false
+  if (!player.accrocheMur(cote)) return false
+  jouerBruit('glissade')
+  toast('🧱 Au mur !')
+  return true
+}
+
 function botAPortee(lane: number): Bot | null {
   if (online) return null
   for (let i = 0; i < nbBots; i++) {
@@ -2170,6 +2189,9 @@ new Input(document.body, {
   // et comme une jarre garantit une ligne sans obstacle, s'y jeter est sûr.
   left: () => {
     if (state !== 'course') return
+    // Sur la paroi de droite, swiper à gauche = s'en détacher (elle nous relance)
+    if (player.surMur === 1) return player.lacheMur()
+    if (tenteMur(-1)) return
     const de = player.currentLane
     frappe(player.currentLane - 1)
     player.moveLeft()
@@ -2181,6 +2203,8 @@ new Input(document.body, {
   },
   right: () => {
     if (state !== 'course') return
+    if (player.surMur === -1) return player.lacheMur()
+    if (tenteMur(1)) return
     const de = player.currentLane
     frappe(player.currentLane + 1)
     player.moveRight()
@@ -2192,6 +2216,8 @@ new Input(document.body, {
   },
   jump: () => {
     if (state !== 'course') return
+    // Sur la paroi, sauter c'est s'en détacher — elle nous relance en l'air
+    if (player.surMur !== 0) return player.lacheMur()
     if (frappe(player.currentLane)) return // le coup d'en haut : il lance la chaîne
     const v = player.jump(time < grueFin)
     // ⚡ Le style de Sasuke crépite aussi au décollage, en plus petit
@@ -2201,6 +2227,7 @@ new Input(document.body, {
   },
   slide: () => {
     if (state !== 'course') return
+    if (player.surMur !== 0) return // on ne s'accroupit pas sur une paroi
     if (frappe(player.currentLane)) return
     const d = player.slide()
     if (d > 0) jouerBruit('glissade')
@@ -2546,9 +2573,14 @@ function tick(now?: number) {
     chaineT = Math.max(0, chaineT - dt)
     if (chaineT <= 0) chaine = 0
 
+    // Le pan de mur s'achève : il nous relance en l'air, même si l'on aurait
+    // pu tenir plus longtemps. On ne court pas sur du vide.
+    if (player.surMur !== 0 && !track.murA(distance, player.surMur)) player.lacheMur()
+
     // Trébuchement : toucher un obstacle RALENTIT (on ne meurt pas, c'est une course)
+    // Sur la paroi on est hors de la piste : rien ne peut nous faucher.
     stumble = Math.max(0, stumble - dt)
-    const touche = track.hits(player.hitbox())
+    const touche = player.surMur === 0 ? track.hits(player.hitbox()) : null
     if (stumble <= 0 && touche) {
       if (armure > 0) {
         // 🛡️ L'armure avale le choc : on garde toute sa vitesse. Mais un mur
@@ -2577,7 +2609,7 @@ function tick(now?: number) {
     // 🏺 Percuter une jarre : la poterie éclate et on accuse le choc. En vol
     // on passe au-dessus — une chaîne bien menée traverse la grappe sans
     // jamais rien percuter, c'est là sa récompense.
-    if (stumble <= 0 && track.heurteJarre(player.hitbox())) {
+    if (stumble <= 0 && player.surMur === 0 && track.heurteJarre(player.hitbox())) {
       if (armure > 0) {
         armure = Math.max(0, armure - ARMURE_COUT_PETIT)
         stumble = 0.6

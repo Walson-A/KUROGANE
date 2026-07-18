@@ -23,6 +23,8 @@ avec Claude Code comme développeur.
 - **🏃 Ligne droite & aspiration** : tenir sa voie fait monter la vitesse, et
   se glisser dans le sillage d'un rival tire vers l'avant
   ([voir le calibrage](#-les-deux-vitesses-du-2ᵉ-acte))
+- **🧱 Les murs** : saute, colle-toi au bord, et longe la paroi à l'abri des
+  obstacles — elle te renvoie en l'air ([voir les murs](#-les-murs-quon-longe))
 - **🔥 Sprint final** : sur les 120 derniers mètres, martèle l'écran pour
   accélérer et voler la victoire sur le fil ([voir le calibrage](#-le-sprint-final--départager-sans-refaire-la-course))
 - **🚀 Départ canon** : martèle pendant le 3-2-1 — à fond, tu pars directement
@@ -362,6 +364,32 @@ Les réglages sont en tête de [`src/main.ts`](src/main.ts) : `COUP_COUT`,
 `COUP_GAIN`, `CHAINE_FENETRE`, `JARRE_FREIN`, `PVP_PORTEE`, `PVP_FREIN`.
 ⚠️ `PVP_PORTEE` doit rester égal à celui de
 [`RaceRoom.ts`](server/src/RaceRoom.ts).
+
+## 🧱 Les murs qu'on longe
+
+Des pans de mur bordent la piste par tronçons (un tous les 160 à 280 m, longs
+de 26 à 42 m). S'y accrocher demande **trois conditions réunies** :
+
+1. **être en l'air** — le mur est une manœuvre aérienne, pas un raccourci
+   qu'on prend au sol : il faut décider de sauter *avant* d'arriver ;
+2. être sur la **voie extérieure** de ce côté ;
+3. swiper **vers le mur**.
+
+Ce dernier geste était jusqu'ici **mort** : swiper à gauche quand on est déjà
+tout à gauche ne faisait rien. Il n'y a donc aucun contrôle nouveau à
+apprendre — juste un geste inutile devenu utile.
+
+Pendant qu'on longe la paroi (0,95 s max, ou jusqu'à la fin du tronçon), on
+est **hors de la piste** : plus rien ne peut nous faucher. Puis le mur nous
+**renvoie en l'air** avant de nous rendre à notre voie — et c'est là tout
+l'intérêt : on ressort *en vol*, donc encore capable de frapper une jarre et
+d'enchaîner. Un swipe vers l'intérieur (ou un saut) permet de s'en détacher
+plus tôt.
+
+Le mur ne donne **aucune vitesse** : c'est une route, pas un raccourci. On y
+gagne un passage sûr et un tremplin ; on y perd les jarres et les sillages du
+centre. Tout est dans [`track.ts`](src/track.ts) (génération) et
+[`player.ts`](src/player.ts) (`accrocheMur`, `lacheMur`, `MUR_DUREE`).
 
 ## 🏃 Les deux vitesses du 2ᵉ acte
 

@@ -5,6 +5,13 @@ import { ROSTER, animerCourse, buildFighter, clearFighter, cssColor, type Fighte
 /** Les 3 lignes de course (positions X dans le monde 3D) */
 export const LANES = [-2.2, 0, 2.2]
 
+/**
+ * À quelle distance du centre courent les parois latérales.
+ * Défini ICI et pas dans track.ts : track importe déjà de player, l'inverse
+ * créerait une dépendance circulaire entre les deux modules.
+ */
+export const MUR_X = 3.5
+
 /*
  * Les valeurs de RÉFÉRENCE — celles de Yasuke.
  * Chaque guerrier les multiplie par ses propres réglages (cf. roster.ts).
@@ -12,6 +19,8 @@ export const LANES = [-2.2, 0, 2.2]
 const GRAVITY = 42 // force qui te ramène au sol
 const JUMP_SPEED = 14 // impulsion du saut
 const ATTACK_TIME = 0.26 // durée d'un coup : on ne peut pas réenchaîner avant
+const MUR_DUREE = 0.95 // combien de temps on tient sur une paroi (secondes)
+const MUR_HAUTEUR = 1.6 // à quelle hauteur on y court
 const SLIDE_TIME = 0.55 // durée d'une glissade (secondes)
 const LANE_LERP = 12 // vitesse de glissement vers la ligne visée
 
@@ -29,6 +38,9 @@ export class Player {
   private vy = 0 // vitesse verticale
   private sliding = 0 // temps de glissade restant
   private attackT = 0 // temps restant du coup en cours (0 = libre de frapper)
+  /** 0 = au sol ou en vol ; -1 / +1 = accroché à la paroi de ce côté */
+  private mur: -1 | 0 | 1 = 0
+  private murT = 0 // temps restant sur la paroi
   private rabSaut = 0 // 🕊️ sauts en réserve pour le vol (Saut de la Grue)
   private racine?: THREE.Object3D // le corps articulé, cf. roster.buildFighter
   private tAnim = 0 // l'horloge de la foulée
@@ -76,6 +88,8 @@ export class Player {
     this.sliding = 0
     this.rabSaut = 0
     this.attackT = 0
+    this.mur = 0
+    this.murT = 0
     this.mesh.position.set(LANES[lane], 0, 0)
     this.mesh.scale.y = 1
     this.mesh.rotation.z = 0
@@ -158,6 +172,37 @@ export class Player {
     return this.attackT > 0
   }
 
+  /** Est-on en train de longer une paroi ? (0 = non) */
+  get surMur() {
+    return this.mur
+  }
+
+  /**
+   * ————— S'accrocher à la paroi —————
+   * Uniquement EN VOL : le mur est une manœuvre aérienne, pas un raccourci
+   * qu'on prend au sol. Il faut donc décider de sauter avant d'y arriver.
+   */
+  accrocheMur(cote: -1 | 1): boolean {
+    if (this.mur !== 0 || this.onGround) return false
+    this.mur = cote
+    this.murT = MUR_DUREE
+    this.vy = 0 // on se colle : plus de gravité tant qu'on tient
+    this.sliding = 0
+    return true
+  }
+
+  /**
+   * On quitte la paroi — et elle nous RENVOIE EN L'AIR. C'est tout l'intérêt :
+   * on ressort en vol, donc encore capable de frapper une jarre et d'enchaîner.
+   * Le corps retombe ensuite sur sa voie tout seul, par la gravité.
+   */
+  lacheMur() {
+    if (this.mur === 0) return
+    this.mur = 0
+    this.murT = 0
+    this.vy = JUMP_SPEED * this.fighter.jump
+  }
+
   /** Glisse au sol (renvoie la durée) ou plonge en l'air (renvoie 0). */
   slide(): number {
     if (this.onGround) {
@@ -171,7 +216,24 @@ export class Player {
   update(dt: number) {
     // La foulée. En l'air on fige le cycle : on ne pédale pas dans le vide.
     this.tAnim += dt
-    animerCourse(this.racine, this.tAnim, this.onGround ? 1 : 0.25)
+    animerCourse(this.racine, this.tAnim, this.onGround || this.mur !== 0 ? 1 : 0.25)
+
+    // ————— Accroché à la paroi —————
+    // La gravité ne s'applique plus : on court à l'horizontale, collé au mur.
+    // Quand le temps est écoulé, la paroi nous relance en l'air (lacheMur).
+    if (this.mur !== 0) {
+      this.murT -= dt
+      if (this.murT > 0) {
+        const k = Math.min(1, dt * 14)
+        this.mesh.position.x += (this.mur * MUR_X - this.mesh.position.x) * k
+        this.mesh.position.y += (MUR_HAUTEUR - this.mesh.position.y) * Math.min(1, dt * 12)
+        // Le corps bascule vers la paroi : c'est ce qui fait « tenir » au mur
+        this.mesh.rotation.z += (this.mur * 0.55 - this.mesh.rotation.z) * k
+        this.sliding = 0
+        return // ni voie, ni gravité, ni glissade tant qu'on tient
+      }
+      this.lacheMur()
+    }
 
     // Glisse en douceur vers la ligne choisie
     const targetX = LANES[this.lane]
