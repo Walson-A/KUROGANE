@@ -348,21 +348,23 @@ export class Track {
     }
     this.courseLength = length
     this.finish.position.z = -length
-    this.plan = buildPlan(length, seed)
-    this.planIdx = 0
-
     /*
-     * Les plateformes viennent juste après les obstacles, et AVANT tout le
-     * reste : elles occupent une ligne entière sur 15 à 25 m, donc tout ce qui
-     * se pose ensuite doit les éviter. Un rouleau ou une jarre enfermé dans un
-     * wagon serait inatteignable.
+     * ⚠️ LES PLATEFORMES D'ABORD. L'ordre est le cœur du réglage.
      *
-     * On les traduit en obstacles fictifs (`commeObstacles`) pour réutiliser
-     * telles quelles les recherches de ligne libre déjà éprouvées des jarres et
-     * des rouleaux, plutôt que d'en écrire une seconde version.
+     * Elles occupent une ligne entière sur 15 à 25 m ; les obstacles, eux, se
+     * faufilent partout. Générer les obstacles en premier ne laissait jamais
+     * assez de place, et plafonnait la densité à 7 plateformes par course quoi
+     * qu'on demande. En les posant d'abord, ce sont les obstacles qui se rangent
+     * autour — et buildPlan garantit qu'il reste toujours une ligne libre.
+     *
+     * Tout le reste (jarres, rouleaux) vient ensuite et les évite : on les
+     * traduit en obstacles fictifs (`commeObstacles`) pour réutiliser telles
+     * quelles les recherches de ligne libre déjà éprouvées.
      */
-    this.plateformePlan = buildPlateformePlan(length, seed, this.plan)
+    this.plateformePlan = buildPlateformePlan(length, seed)
     this.plateformeIdx = 0
+    this.plan = buildPlan(length, seed, this.plateformePlan)
+    this.planIdx = 0
     const occupe = [...this.plan, ...commeObstacles(this.plateformePlan)]
     this.planBots = occupe
 
@@ -740,7 +742,19 @@ export class Track {
       this.decors.push(dec)
       this.scene.add(dec.mesh)
     }
-    dec.mesh.position.set(cote * (7 + this.graineDecor() * 2.5), 0, z)
+    /*
+     * ⚠️ 4,8 m du centre, pas 7.
+     *
+     * Le décor commençait au BORD du sol (7 m). Or les lignes vont jusqu'à
+     * 2,2 m et les murs qu'on longe sont à 3,5 m : il restait une bande de sol
+     * nu de trois mètres et demi tout du long, juste là où l'œil se pose. La
+     * forêt avait beau être dense, elle démarrait trop loin pour se lire comme
+     * une forêt.
+     *
+     * 4,8 m laisse un mètre franc après les murs — assez pour qu'aucune tige ne
+     * masque jamais un obstacle, ce qui reste la règle absolue.
+     */
+    dec.mesh.position.set(cote * (4.8 + this.graineDecor() * 1.4), 0, z)
     /*
      * Les décors sont dessinés d'un seul côté (x local croissant = vers
      * l'extérieur). Pour le bord gauche, on fait DEMI-TOUR.
@@ -978,17 +992,40 @@ export class Track {
  * 1 ou 2 obstacles par rangée, jamais 3 : il y a toujours un passage !
  * La zone de sprint final est dégagée.
  */
-export function buildPlan(length: number, seed: number): PlannedObstacle[] {
+export function buildPlan(
+  length: number,
+  seed: number,
+  plateformes: PlannedPlateforme[] = []
+): PlannedObstacle[] {
   const rng = mulberry32(seed)
   const kinds: Kind[] = ['saut', 'glissade', 'mur']
   const plan: PlannedObstacle[] = []
 
   let d = 45 // premiers mètres tranquilles pour se chauffer
   while (d < length - SPRINT_ZONE) {
-    const lanes = [0, 1, 2].sort(() => rng() - 0.5)
-    const count = rng() < 0.6 ? 1 : 2
-    for (let i = 0; i < count; i++) {
-      plan.push({ d, lane: lanes[i], kind: kinds[Math.floor(rng() * kinds.length)] })
+    /*
+     * ⚠️ Les PLATEFORMES sont posées en premier, et les obstacles se rangent
+     * autour. L'ordre inverse — obstacles d'abord, plateformes dans les trous —
+     * plafonnait à 7 plateformes par course quoi qu'on demande : les obstacles
+     * tombent tous les 10 à 17 m et ne laissaient jamais 50 m de ligne libre.
+     *
+     * L'INVARIANT à tenir : il reste TOUJOURS au moins une ligne sans rien —
+     * ni plateforme, ni obstacle. Sans lui, une rangée pourrait n'offrir qu'un
+     * plateau sans rampe pour seul passage, et donc imposer une seconde de
+     * pénalité sans aucune alternative. C'est le seul cas vraiment injuste que
+     * cette piste puisse produire.
+     */
+    const prises = new Set(
+      plateformes
+        .filter((p) => d > p.d - p.rampe - 5 && d < p.d + p.longueur + 5)
+        .map((p) => p.lane)
+    )
+    const libres = [0, 1, 2].filter((l) => !prises.has(l))
+    // On en garde une entièrement libre, d'où le -1.
+    const combien = Math.min(Math.max(0, libres.length - 1), rng() < 0.6 ? 1 : 2)
+    const melangees = libres.sort(() => rng() - 0.5)
+    for (let i = 0; i < combien; i++) {
+      plan.push({ d, lane: melangees[i], kind: kinds[Math.floor(rng() * kinds.length)] })
     }
     d += 10 + rng() * 7
   }
@@ -1192,11 +1229,7 @@ function commeObstacles(plateformes: PlannedPlateforme[]): PlannedObstacle[] {
  * Graine décalée (`^`) : sans ça les plateformes tomberaient sur les mêmes
  * points que tout le reste.
  */
-export function buildPlateformePlan(
-  length: number,
-  seed: number,
-  obstacles: PlannedObstacle[]
-): PlannedPlateforme[] {
+export function buildPlateformePlan(length: number, seed: number): PlannedPlateforme[] {
   const rng = mulberry32(seed ^ 0x3fa17c05)
   const plan: PlannedPlateforme[] = []
 
@@ -1253,20 +1286,21 @@ export function buildPlateformePlan(
     const rampe = rng() < 0.5 ? 5 + rng() * 3 : 0
     const besoin = portee + rampe
 
-    let lane = -1
-    for (let essai = 0; essai < 12; essai++) {
-      const occupees = new Set(
-        obstacles
-          .filter((o) => o.d > d - rampe - 12 && o.d < d + portee + 12)
-          .map((o) => o.lane)
-      )
-      const libres = [0, 1, 2].filter((l) => !occupees.has(l))
-      if (libres.length > 0) {
-        lane = libres[Math.floor(rng() * libres.length)]
-        break
-      }
-      d += 8 // ce tronçon est bouché : on décale
-    }
+    /*
+     * La seule contrainte : ne pas empiler deux convois sur la même ligne. Les
+     * obstacles, eux, viendront APRÈS se ranger autour (cf. buildPlan) — c'est
+     * ce qui permet enfin une vraie densité.
+     *
+     * On laisse toujours une ligne de côté pour que le sol reste praticable.
+     */
+    const prises = new Set(
+      plan
+        .filter((p) => p.d < d + portee + 5 && p.d + p.longueur > d - rampe - 5)
+        .map((p) => p.lane)
+    )
+    const dispo = [0, 1, 2].filter((l) => !prises.has(l))
+    // Jamais les trois lignes barrées d'un coup : on en garde une au sol.
+    const lane = dispo.length > 1 ? dispo[Math.floor(rng() * dispo.length)] : -1
 
     // Tout doit tenir hors de la zone de sprint, où l'on ne peut plus swiper.
     if (d + portee >= length - SPRINT_ZONE) break
@@ -1286,9 +1320,16 @@ export function buildPlateformePlan(
         dd += longs[i] + (trous[i] ?? 0)
       }
     }
-    // On repart APRÈS le convoi qu'on vient de poser (`besoin`), plus un
-    // intervalle : une plateforme toutes les ~9 s de course.
-    d += 105 + rng() * 75 + besoin
+    /*
+     * On repart APRÈS le convoi qu'on vient de poser (`besoin`), plus un
+     * intervalle court : ~40 à 80 m, soit un convoi toutes les 2 à 3 s.
+     *
+     * C'est la densité de Subway Surfers, et c'est ce qui change la nature du
+     * jeu : une plateforme tous les 300 m était une curiosité qu'on croisait ;
+     * une toutes les deux secondes devient un ITINÉRAIRE. On ne se demande plus
+     * « tiens, un wagon », on choisit en permanence entre le sol et les hauteurs.
+     */
+    d += 40 + rng() * 40 + besoin
   }
 
   /*
@@ -1303,22 +1344,13 @@ export function buildPlateformePlan(
    * Même filet que pour la jarre dorée, et pour la même raison.
    */
   if (plan.length === 0) {
-    for (let d2 = 250; d2 < length - SPRINT_ZONE - 60; d2 += 10) {
-      const occupees = new Set(
-        obstacles.filter((o) => o.d > d2 - 20 && o.d < d2 + 40).map((o) => o.lane)
-      )
-      const libres = [0, 1, 2].filter((l) => !occupees.has(l))
-      if (libres.length > 0) {
-        plan.push({
-          d: d2,
-          longueur: 16,
-          lane: libres[0],
-          hauteur: PLATEFORME_H,
-          rampe: 6, // avec rampe : la course de secours ne doit pas punir
-        })
-        break
-      }
-    }
+    plan.push({
+      d: 250,
+      longueur: 16,
+      lane: 1,
+      hauteur: PLATEFORME_H,
+      rampe: 6, // avec rampe : la course de secours ne doit pas punir
+    })
   }
   return plan
 }

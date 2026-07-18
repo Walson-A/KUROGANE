@@ -196,6 +196,18 @@ function assemble(pieces: Piece[], materiau: THREE.Material): THREE.Mesh | null 
 const GEO = {
   tige: new THREE.CylinderGeometry(0.8, 1, 1, 6),
   anneau: new THREE.CylinderGeometry(1, 1, 1, 6),
+  /*
+   * La même tige, mais SANS ses deux bouchons.
+   *
+   * Un cylindre à 6 pans coûte 12 triangles de paroi et 12 de bouchons : la
+   * moitié du prix part dans des disques qu'on ne voit jamais, puisqu'une tige
+   * de bambou est plantée dans le sol et se perd dans la brume. Sur les
+   * cinquante tiges d'un massif, l'économie est franche.
+   *
+   * ⚠️ Réservée au DÉCOR. Les troncs couchés en travers d'une ligne, eux,
+   * montrent leur section au joueur — ouverts, ils paraîtraient creux.
+   */
+  tigeCreuse: new THREE.CylinderGeometry(0.8, 1, 1, 6, 1, true),
   bloc: new THREE.BoxGeometry(1, 1, 1),
   cone: new THREE.ConeGeometry(1, 1, 4),
   sapin: new THREE.ConeGeometry(1, 1, 6),
@@ -283,13 +295,13 @@ const BAMBOUS: Biome = {
    * nombre de massifs — d'où le choix de charger chacun plutôt que d'en
    * multiplier.
    */
-  ecartDecor: 9,
+  ecartDecor: 6,
   fabriqueDecor: (rng) => {
     const corps: Piece[] = []
     const feuilles: Piece[] = []
 
     // ————— Plan rapproché : les tiges qu'on voit vraiment —————
-    const proches = 9 + Math.floor(rng() * 7)
+    const proches = 16 + Math.floor(rng() * 10)
     for (let i = 0; i < proches; i++) {
       const h = 7 + rng() * 6
       const r = 0.085 + rng() * 0.05
@@ -304,7 +316,7 @@ const BAMBOUS: Biome = {
       // ⚠️ Les géométries de base font 1 m et `assemble` ne gère pas l'échelle :
       // c'est la géométrie clonée qui porte la taille.
       corps.push({
-        geo: GEO.tige.clone().scale(r, h, r),
+        geo: GEO.tigeCreuse.clone().scale(r, h, r),
         couleur: vert,
         x, y: h / 2, z,
         rz: penche,
@@ -348,12 +360,12 @@ const BAMBOUS: Biome = {
     // Elles sont NOMBREUSES : c'est le rideau du fond, et le moindre trou
     // dedans se voit comme un manque. Une tige lointaine ne coûte que quelques
     // triangles, alors on en met beaucoup.
-    const loin = 16 + Math.floor(rng() * 10)
+    const loin = 34 + Math.floor(rng() * 18)
     for (let i = 0; i < loin; i++) {
       const h = 13 + rng() * 10
       const r = 0.11 + rng() * 0.08
       corps.push({
-        geo: GEO.tige.clone().scale(r, h, r),
+        geo: GEO.tigeCreuse.clone().scale(r, h, r),
         couleur: teinte(0x2b3d22, 0x141d12, rng()),
         x: 5 + rng() * 14,
         y: h / 2,
@@ -379,7 +391,7 @@ const BAMBOUS: Biome = {
     for (let i = 0; i < pousses; i++) {
       const h = 0.8 + rng() * 1.8
       corps.push({
-        geo: GEO.tige.clone().scale(0.05, h, 0.05),
+        geo: GEO.tigeCreuse.clone().scale(0.05, h, 0.05),
         couleur: teinte(0x86a352, 0x4e6a30, rng()),
         x: rng() * 6,
         y: h / 2,
