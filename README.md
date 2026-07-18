@@ -31,6 +31,11 @@ avec Claude Code comme développeur.
 - 💬 **Chat de salon** en attendant le départ
 - 🏋️ Mode **entraînement solo** contre **1 à 4 rivaux** (voir
   [le roster](#-les-rivaux-dentraînement)), avec record personnel sauvegardé
+- 🌸 **Le cerisier du départ** : pendant le décompte, une **rafale** emporte ses
+  pétales vers la droite, avec son **souffle de vent** — un son *synthétisé* à la
+  volée ([`src/sfx.ts`](src/sfx.ts)), donc zéro fichier à télécharger
+- 💨 **Rideau de vitesse façon animé** : des éclats **triangulaires** effilés
+  giclent vers les bords quand on martèle ou qu'on dash
 
 ### Contrôles
 
