@@ -62,6 +62,8 @@ export interface MenuCallbacks {
   onGoogle(): void
   /** Le joueur se deconnecte */
   onDeconnexion(): void
+  /** Creer un compte, ou retrouver le sien, par email */
+  onEmail(mode: 'inscription' | 'connexion', email: string, motDePasse: string): void
 }
 
 /**
@@ -176,6 +178,13 @@ export class Menu {
     compteAide: document.getElementById('compteAide')!,
     btnGoogle: document.getElementById('btnGoogle')!,
     btnDeconnexion: document.getElementById('btnDeconnexion')!,
+    compteOu: document.getElementById('compteOu')!,
+    compteActions: document.getElementById('compteActions')!,
+    compteErreur: document.getElementById('compteErreur')!,
+    mailCompte: document.getElementById('mailCompte') as HTMLInputElement,
+    mdpCompte: document.getElementById('mdpCompte') as HTMLInputElement,
+    btnInscription: document.getElementById('btnInscription')!,
+    btnConnexionMail: document.getElementById('btnConnexionMail')!,
   }
 
   constructor(cb: MenuCallbacks) {
@@ -206,6 +215,12 @@ export class Menu {
     document.getElementById('btnCompte')!.addEventListener('click', () => this.show('compte'))
     this.el.btnGoogle.addEventListener('click', () => cb.onGoogle())
     this.el.btnDeconnexion.addEventListener('click', () => cb.onDeconnexion())
+    this.el.btnInscription.addEventListener('click', () => this.envoyerEmail('inscription'))
+    this.el.btnConnexionMail.addEventListener('click', () => this.envoyerEmail('connexion'))
+    // Entree dans le mot de passe = on valide, comme partout ailleurs
+    this.el.mdpCompte.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') this.envoyerEmail('inscription')
+    })
     this.el.cancel.addEventListener('click', () => cb.onCancel())
 
     /*
@@ -612,6 +627,16 @@ export class Menu {
     connecte: boolean
   }) {
     const { anonyme, email, googleDispo, connecte } = opts
+    const formulaire = [
+      this.el.mailCompte.parentElement!,
+      this.el.mdpCompte.parentElement!,
+      this.el.btnInscription,
+      this.el.btnConnexionMail,
+    ]
+    const montrer = (els: HTMLElement[], oui: boolean) =>
+      els.forEach((e) => e.classList.toggle('hidden', !oui))
+
+    this.el.compteErreur.classList.add('hidden')
 
     if (!connecte) {
       // Serveur injoignable : ni compte, ni promesse qu'on ne peut pas tenir.
@@ -619,8 +644,10 @@ export class Menu {
       this.el.compteDetail.textContent = "Le serveur ne répond pas — tes Mon ne sont pas accessibles."
       this.el.compteAlerte.classList.add('hidden')
       this.el.btnGoogle.classList.add('hidden')
+      this.el.compteOu.classList.add('hidden')
       this.el.btnDeconnexion.classList.add('hidden')
       this.el.compteAide.classList.add('hidden')
+      montrer(formulaire, false)
       return
     }
 
@@ -634,7 +661,57 @@ export class Menu {
     // Le bouton Google n'apparaît que s'il MÈNE quelque part : sans les clés
     // côté serveur, mieux vaut pas de bouton qu'un bouton qui échoue.
     this.el.btnGoogle.classList.toggle('hidden', !anonyme || !googleDispo)
+    // Le « ou » ne sépare quelque chose que si les DEUX voies sont proposées
+    this.el.compteOu.classList.toggle('hidden', !anonyme || !googleDispo)
     this.el.btnDeconnexion.classList.toggle('hidden', anonyme)
+    // Déjà connecté : plus rien à saisir
+    montrer(formulaire, anonyme)
+  }
+
+  /**
+   * Valide la saisie AVANT d'appeler le serveur.
+   *
+   * Ce n'est pas une sécurité — le serveur revérifie tout — mais une politesse :
+   * dire « il manque le mot de passe » tout de suite vaut mieux qu'un
+   * aller-retour réseau pour l'apprendre.
+   */
+  private envoyerEmail(mode: 'inscription' | 'connexion') {
+    const email = this.el.mailCompte.value.trim()
+    const mdp = this.el.mdpCompte.value
+
+    if (!email || !email.includes('@')) {
+      this.erreurCompte('Il faut un email valide.')
+      this.el.mailCompte.focus()
+      return
+    }
+    // 8 caractères : la même longueur que celle exigée par le serveur
+    // (minPasswordLength). Les deux doivent rester d'accord.
+    if (mode === 'inscription' && mdp.length < 8) {
+      this.erreurCompte('Le mot de passe doit faire au moins 8 caractères.')
+      this.el.mdpCompte.focus()
+      return
+    }
+    if (!mdp) {
+      this.erreurCompte('Il faut un mot de passe.')
+      this.el.mdpCompte.focus()
+      return
+    }
+
+    this.el.compteErreur.classList.add('hidden')
+    this.cb.onEmail(mode, email, mdp)
+  }
+
+  /** Affiche un refus sous le formulaire. */
+  erreurCompte(texte: string) {
+    this.el.compteErreur.textContent = texte
+    this.el.compteErreur.classList.remove('hidden')
+  }
+
+  /** Vide les champs — après une réussite, on ne laisse pas traîner le mot de passe. */
+  viderFormulaireCompte() {
+    this.el.mailCompte.value = ''
+    this.el.mdpCompte.value = ''
+    this.el.compteErreur.classList.add('hidden')
   }
 
   /** Une retouche du skin : on sauve et on réapplique (aperçu + jeu en direct). */

@@ -917,7 +917,19 @@ barre d'adresse.
 > repartirait avec le jeton de session d'un joueur — donc son compte et ses
 > achats. *Vérifié* : destination inconnue → 400, destination absente → 400.
 
-Sans les clés Google, **le bouton reste masqué** et tout le reste fonctionne :
+**Sans compte Google**, on peut aussi s'inscrire par **email et mot de passe** :
+même parcours, même fusion, mais tout se joue en un seul appel — pas de
+redirection, donc le serveur rend directement le jeton. Le formulaire vérifie
+la saisie avant d'appeler (email valide, 8 caractères minimum, la même longueur
+que celle exigée par le serveur) : dire « il manque le mot de passe » tout de
+suite vaut mieux qu'un aller-retour réseau pour l'apprendre.
+
+Les refus sont traduits par **code** et non par message : Better Auth renvoie
+`USER_ALREADY_EXISTS_USE_ANOTHER_EMAIL` d'un côté et de la prose anglaise de
+l'autre. Traduire sur la prose, c'est afficher de l'anglais au premier
+reformulage de leur part.
+
+Sans les clés Google, **le bouton reste masqué** et le formulaire email suffit :
 un déploiement sans clés propose moins, il ne tombe pas en panne.
 
 ### La boutique

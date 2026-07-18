@@ -39,6 +39,8 @@ import {
   estAnonyme,
   monEmail,
   googleActif,
+  inscriptionEmail,
+  connexionEmail,
 } from './compte'
 import { souffleDeVent, jouerBruit, setVolumeSfx, sonDeSoin } from './sfx'
 import type { Quality } from './settings'
@@ -2507,6 +2509,42 @@ const menu = new Menu({
     })
   },
 
+  onEmail(mode, email, motDePasse) {
+    const p = mode === 'inscription'
+      ? inscriptionEmail(email, motDePasse, menu.settings.name)
+      : connexionEmail(email, motDePasse)
+
+    void p.then(async (r) => {
+      if (!r.ok) {
+        /*
+         * Les refus du serveur arrivent en anglais. On les traduit par
+         * MORCEAU de code plutôt que par égalité stricte : Better Auth
+         * les rallonge parfois (« USER_ALREADY_EXISTS_USE_ANOTHER_EMAIL »),
+         * et une correspondance exacte laisserait passer l'anglais brut.
+         */
+        const traductions: [string, string][] = [
+          ['hors-ligne', 'Serveur injoignable.'],
+          ['USER_ALREADY_EXISTS', 'Un compte existe déjà avec cet email.'],
+          ['INVALID_EMAIL_OR_PASSWORD', 'Email ou mot de passe incorrect.'],
+          ['INVALID_EMAIL', "Cet email n'est pas valide."],
+          ['PASSWORD_TOO_SHORT', 'Mot de passe trop court (8 caractères minimum).'],
+          ['PASSWORD_TOO_LONG', 'Mot de passe trop long.'],
+        ]
+        const brut = r.raison ?? ''
+        const trouve = traductions.find(([code]) => brut.includes(code))
+        menu.erreurCompte(trouve ? trouve[1] : 'Échec — réessaie dans un instant.')
+        return
+      }
+      menu.viderFormulaireCompte()
+      toast(mode === 'inscription' ? '✅ Compte créé !' : '👋 Content de te revoir !')
+      majAffichageBourse()
+      majCompte()
+      // Les couleurs achetees suivent le compte : on relit le catalogue
+      await chargerBoutique()
+      menu.setCouleursDebloquees(couleursDebloquees())
+    })
+  },
+
   onAcheter(code) {
     void acheterArticle(code).then((r) => {
       if (r.ok) {
@@ -2742,6 +2780,21 @@ function tick(now?: number) {
     // 🌸 Les pétales tombent pendant tout le décompte (monde immobile : dz = 0)
     petalesActifs = true
     updateEffets(dt, 0)
+
+    /*
+     * La piste doit vivre PENDANT le décompte, à vitesse nulle.
+     *
+     * `track.reset()` vide tout le décor pour repartir propre, et jusqu'ici
+     * rien ne le repeuplait avant le GO : on passait les dix secondes du départ
+     * devant une piste nue, la forêt n'apparaissant qu'une fois lancé. C'est
+     * précisément le moment où l'on REGARDE le décor, faute d'avoir autre chose
+     * à faire.
+     *
+     * Vitesse 0 : rien ne défile, on est bien à l'arrêt sur la ligne. Mais les
+     * bambous, les obstacles et les plateformes des 85 premiers mètres
+     * apparaissent, et l'on voit ce qui nous attend.
+     */
+    track.update(dt, 0, 0)
   } else if (state === 'course') {
     time += dt
 
@@ -3140,18 +3193,31 @@ function tick(now?: number) {
      * en haut, sur la route rapide. Rester bloqué contre un mur en pleine
      * course serait insupportable.
      */
-    if (
+    const touche = player.surMur === 0 ? track.hits(player.hitbox()) : null
+
+    /*
+     * ————— Ce qui se GRIMPE —————
+     *
+     * Le flanc d'une plateforme, mais aussi le MUR ordinaire : les deux font
+     * 2,40 m, la même hauteur, et aucun des deux ne se saute (apex 2,07 m).
+     * Les traiter différemment n'avait aucun sens — on butait contre un mur en
+     * trébuchant alors qu'on escaladait la structure identique d'à côté.
+     *
+     * Un mur n'a que 50 cm d'épaisseur : on l'enjambe et l'on retombe de
+     * l'autre côté. Une plateforme est longue : on reste dessus. Même geste,
+     * même prix, deux issues — et c'est la piste qui les distingue, pas une
+     * règle à retenir.
+     */
+    const aGrimper =
       player.surMur === 0 &&
-      !player.escalade &&
-      track.supportSous(player.mesh.position.x, player.mesh.position.y).heurte &&
-      player.escalader(PLATEFORME_H)
-    ) {
+      (touche === 'mur' ||
+        track.supportSous(player.mesh.position.x, player.mesh.position.y).heurte)
+
+    if (stumble <= 0 && aGrimper && armure === 0 && player.escalader(PLATEFORME_H)) {
       escaladeT = ESCALADE_FREIN_DUREE
       jouerBruit('chute')
       toast('🧗 Escalade !')
-    }
-    const touche = player.surMur === 0 ? track.hits(player.hitbox()) : null
-    if (stumble <= 0 && touche) {
+    } else if (stumble <= 0 && touche && !player.escalade) {
       if (armure > 0) {
         // 🛡️ L'armure avale le choc : on garde toute sa vitesse. Mais un mur
         // la met en pièces d'un coup, là où une barrière ne fait que l'entamer.

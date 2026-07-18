@@ -269,6 +269,72 @@ export async function connexionGoogle(): Promise<{ ok: boolean; raison?: string 
 }
 
 /**
+ * ————— S'inscrire ou se connecter par email —————
+ *
+ * Pour qui n'a pas de compte Google — ou n'en veut pas.
+ *
+ * Contrairement à Google, tout se joue en UN appel : pas de redirection, donc
+ * le serveur nous rend directement le jeton dans sa réponse. C'est le même
+ * chemin que le compte anonyme.
+ *
+ * Si le joueur était anonyme, Better Auth fusionne son ancien compte dans le
+ * nouveau (cf. `onLinkAccount`) : ses Mon et ses achats le suivent.
+ */
+async function authEmail(
+  route: 'sign-up/email' | 'sign-in/email',
+  corps: Record<string, unknown>
+): Promise<{ ok: boolean; raison?: string }> {
+  try {
+    const r = await fetch(`${API}/api/auth/${route}`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        // Le jeton anonyme courant : il dit à Better Auth quel compte reprendre
+        ...(jeton ? { authorization: `Bearer ${jeton}` } : {}),
+      },
+      body: JSON.stringify(corps),
+    })
+    const data = await r.json().catch(() => null)
+
+    if (!r.ok || !data?.token) {
+      /*
+       * On remonte le CODE en priorité, pas le message.
+       *
+       * Le code est stable et fait pour être lu par du code
+       * (« USER_ALREADY_EXISTS_USE_ANOTHER_EMAIL ») ; le message, lui, est de
+       * la prose anglaise qui peut changer d'une version à l'autre. Traduire
+       * sur le message, c'est afficher de l'anglais au premier reformulage.
+       */
+      return { ok: false, raison: data?.code ?? data?.message ?? 'echec' }
+    }
+
+    jeton = data.token
+    try {
+      localStorage.setItem(CLE_JETON, data.token)
+    } catch {
+      /* navigation privée */
+    }
+    profil = await appel('/api/profil')
+    retenirIdentite()
+    return { ok: true }
+  } catch {
+    return { ok: false, raison: 'hors-ligne' }
+  }
+}
+
+/** Crée un compte avec un email et un mot de passe. */
+export function inscriptionEmail(email: string, motDePasse: string, pseudo: string) {
+  // `name` est demandé par Better Auth ; on y met le pseudo du joueur, ce qui
+  // évite un champ de plus à remplir.
+  return authEmail('sign-up/email', { email, password: motDePasse, name: pseudo || 'Guerrier' })
+}
+
+/** Retrouve un compte existant. */
+export function connexionEmail(email: string, motDePasse: string) {
+  return authEmail('sign-in/email', { email, password: motDePasse })
+}
+
+/**
  * Se déconnecte : on oublie le jeton et on repart sur un compte anonyme neuf.
  *
  * ⚠️ Les Mon restent attachés au compte QUITTÉ, pas à l'appareil. Se

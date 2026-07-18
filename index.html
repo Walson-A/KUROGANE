@@ -160,17 +160,46 @@
           données ou changes d'appareil, tu perds tes Mon et tes achats.
         </p>
 
-        <div class="stack">
+        <div class="stack" id="compteActions">
           <button id="btnGoogle" class="hidden">
             <span class="g">G</span> CONTINUER AVEC GOOGLE
           </button>
+
+          <!-- Le trait de séparation ne s'affiche que si Google est proposé -->
+          <div class="ou hidden" id="compteOu"><span>ou</span></div>
+
+          <!-- Par email : pour qui n'a pas de compte Google, ou n'en veut pas -->
+          <div class="field">
+            <label for="mailCompte">Ton email</label>
+            <input
+              id="mailCompte"
+              type="email"
+              autocomplete="email"
+              placeholder="guerrier@exemple.fr"
+              spellcheck="false"
+            />
+          </div>
+          <div class="field">
+            <label for="mdpCompte">Ton mot de passe</label>
+            <input
+              id="mdpCompte"
+              type="password"
+              autocomplete="current-password"
+              placeholder="8 caractères minimum"
+            />
+          </div>
+
+          <p class="erreur hidden" id="compteErreur"></p>
+
+          <button id="btnInscription">CRÉER MON COMPTE</button>
+          <button id="btnConnexionMail" class="secondary">J'AI DÉJÀ UN COMPTE</button>
           <button id="btnDeconnexion" class="secondary hidden">SE DÉCONNECTER</button>
         </div>
 
         <p class="lead" id="compteAide">
-          Te connecter attache ta progression à ton compte Google : tu la
-          retrouves sur n'importe quel appareil. <b>Rien n'est perdu</b> — tes
-          Mon et tes couleurs suivent.
+          Te connecter attache ta progression à ton compte : tu la retrouves sur
+          n'importe quel appareil. <b>Rien n'est perdu</b> — tes Mon et tes
+          couleurs suivent.
         </p>
 
         <button class="primary" data-back>OK</button>

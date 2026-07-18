@@ -1430,3 +1430,33 @@ body {
   color: #4285f4;
   line-height: 1;
 }
+
+/* ——— Le séparateur « ou » entre Google et l'email ——— */
+.ou {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  color: #6b7594;
+  font-size: 0.8rem;
+}
+.ou::before,
+.ou::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: #3d4560;
+}
+
+/* Le refus du serveur, sous le formulaire */
+.erreur {
+  width: 100%;
+  padding: 9px 12px;
+  border-radius: 8px;
+  background: rgba(226, 75, 58, 0.14);
+  border: 1px solid rgba(226, 75, 58, 0.5);
+  color: #ffbdb4;
+  font-size: 0.85rem;
+  text-align: left;
+  line-height: 1.4;
+}
