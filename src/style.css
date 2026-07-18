@@ -269,14 +269,22 @@ body {
   transition: opacity 0.05s;
 }
 
-/* ——— 💨 Bombe fumigène : de la FUMÉE, pas de l'encre ———
-   De grosses volutes grises couvrent l'écran, avec des trous pour deviner la
-   piste, et un voile léger par-dessus tout.
+/* ——— 💨 Bombe fumigène : une nuée SOMBRE, mais qu'on traverse du regard ———
+   De grosses volutes bleu nuit presque noires envahissent l'écran. Le sort
+   doit rester noir : c'est une nuit qui te tombe dessus, pas un brouillard.
 
-   C'était d'abord de l'encre presque noire (#090a11 à 90 % d'opacité) : ça
-   aveuglait si bien qu'on ne jouait plus, on attendait. On l'éclaircit en
-   gris-bleu translucide — on gêne beaucoup, on ne coupe plus la vue. Le sort
-   doit se subir en courant, pas les yeux fermés. */
+   Deux réglages font tout le travail, et ils tirent en sens inverse :
+
+   · La COULEUR reste quasi noire (#080b16). C'est elle qui donne l'angoisse.
+   · L'OPACITÉ, elle, ne dépasse pas 0,74 sur les volutes et 0,34 sur le voile.
+     C'est elle qui laisse deviner la piste au travers.
+
+   Assombrir ET boucher, c'était l'ancienne version : on ne jouait plus, on
+   attendait la fin du sort. Une gêne qui suspend le jeu n'est pas une gêne.
+
+   Les volutes sont aussi POUSSÉES VERS LES BORDS : elles laissent un couloir
+   plus clair au centre-bas, là où la piste arrive sur toi. On te vole la
+   lecture des lignes lointaines, jamais celle de tes pieds. */
 #fumee {
   position: fixed;
   inset: -20%; /* déborde : quand la tache « gicle » (scale), pas de bord vide */
@@ -284,17 +292,17 @@ body {
   opacity: 0;
   transition: opacity 0.4s ease;
   background:
-    /* les volutes : gris translucide, bord flou, dispersées au hasard */
-    radial-gradient(circle at 24% 30%, rgba(126, 140, 163, 0.82) 0 20%, transparent 32%),
-    radial-gradient(circle at 72% 22%, rgba(126, 140, 163, 0.82) 0 24%, transparent 35%),
-    radial-gradient(circle at 84% 64%, rgba(112, 126, 150, 0.8) 0 22%, transparent 33%),
-    radial-gradient(circle at 33% 74%, rgba(126, 140, 163, 0.82) 0 25%, transparent 36%),
-    radial-gradient(circle at 56% 50%, rgba(112, 126, 150, 0.78) 0 26%, transparent 38%),
-    radial-gradient(circle at 13% 58%, rgba(126, 140, 163, 0.8) 0 17%, transparent 28%),
-    radial-gradient(circle at 62% 84%, rgba(112, 126, 150, 0.8) 0 18%, transparent 29%),
-    radial-gradient(circle at 92% 40%, rgba(126, 140, 163, 0.8) 0 15%, transparent 26%),
-    /* le voile de fond : il trouble les trous sans les fermer */
-    linear-gradient(rgba(150, 162, 182, 0.3), rgba(150, 162, 182, 0.3));
+    /* les volutes : bleu nuit presque noir, bord flou, chassées vers les bords */
+    radial-gradient(circle at 20% 26%, rgba(8, 11, 22, 0.74) 0 21%, transparent 34%),
+    radial-gradient(circle at 78% 20%, rgba(8, 11, 22, 0.74) 0 24%, transparent 36%),
+    radial-gradient(circle at 88% 62%, rgba(6, 9, 18, 0.72) 0 23%, transparent 35%),
+    radial-gradient(circle at 18% 78%, rgba(8, 11, 22, 0.72) 0 24%, transparent 37%),
+    radial-gradient(circle at 60% 30%, rgba(6, 9, 18, 0.7) 0 22%, transparent 35%),
+    radial-gradient(circle at 8% 52%, rgba(8, 11, 22, 0.72) 0 18%, transparent 30%),
+    radial-gradient(circle at 80% 88%, rgba(6, 9, 18, 0.7) 0 19%, transparent 31%),
+    radial-gradient(circle at 96% 38%, rgba(8, 11, 22, 0.7) 0 16%, transparent 28%),
+    /* le voile de fond : il assombrit partout sans jamais fermer la vue */
+    linear-gradient(rgba(7, 10, 20, 0.34), rgba(7, 10, 20, 0.34));
   background-repeat: no-repeat;
 }
 /* Le « ploop » : l'encre gicle sur l'écran d'un coup, avec un petit rebond */
