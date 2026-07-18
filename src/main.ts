@@ -363,13 +363,13 @@ function lancerProjet(
  *
  * Elle sert aux deux camps : sur soi pour les sorts qu'on s'applique, sur la
  * victime pour les sabotages. Une couleur par sort, toujours la même.
+ *
+ * Trois sorts s'en passent : la Grue a son anneau, la Parade sa glace et le
+ * Kusarigama ses chaînes. Une bulle de plus ne les aurait pas racontés.
  */
 const AURA_VENT = 0x8fe6ff
-const AURA_GRUE = 0xdfe8ff
-const AURA_MIROIR = 0xc9d4e8
 const AURA_THE = 0x8fce7a
 const AURA_SENBON = 0x9b5cff // le violet du poison
-const AURA_KUSARIGAMA = 0x7a8ba0
 
 interface Aura {
   mesh: THREE.Mesh
@@ -407,6 +407,136 @@ function poserAura(cible: THREE.Object3D, couleur: number, duree: number) {
   a.mesh.visible = true
   a.mesh.position.copy(cible.position).setY(0.85)
 }
+
+// ————— 🕊️ L'anneau du Saut de la Grue —————
+// Un cercle vert qui te ceint. Il SUIT le saut — hauteur comprise : c'est un
+// pouvoir de saut, un anneau resté au sol pendant que tu voles ne dirait rien.
+const GRUE_VERT = 0x5ef08a
+const grueAnneau = new THREE.Mesh(
+  new THREE.TorusGeometry(0.95, 0.055, 8, 32),
+  new THREE.MeshBasicMaterial({
+    color: GRUE_VERT,
+    transparent: true,
+    opacity: 0,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+  })
+)
+grueAnneau.rotation.x = -Math.PI / 2 // à plat, comme un cerceau autour du coureur
+grueAnneau.visible = false
+scene.add(grueAnneau)
+
+// ————— ⛓️ Les chaînes du Kusarigama —————
+// Une entrave qu'on VOIT : des maillons partent de la hanche de la victime et
+// retombent au sol derrière elle, qu'elle traîne tant que le sort dure. Un
+// simple halo gris ne disait pas « tu es enchaîné », juste « il se passe un truc ».
+const CHAINE_MAILLONS = 9
+interface Chaine {
+  group: THREE.Group
+  maillons: THREE.Mesh[]
+  boulet: THREE.Mesh
+  cible: THREE.Object3D
+  fin: number
+  duree: number
+  actif: boolean
+}
+const chaines: Chaine[] = []
+
+function poserChaines(cible: THREE.Object3D, duree: number) {
+  let c = chaines.find((x) => !x.actif)
+  if (!c) {
+    const group = new THREE.Group()
+    const mat = () =>
+      new THREE.MeshStandardMaterial({ color: 0x9aa4b8, roughness: 0.45, metalness: 0.8 })
+    const maillons: THREE.Mesh[] = []
+    for (let i = 0; i < CHAINE_MAILLONS; i++) {
+      const m = new THREE.Mesh(new THREE.TorusGeometry(0.1, 0.032, 6, 10), mat())
+      // Un maillon sur deux pivote d'un quart de tour : c'est ce qui fait lire
+      // « chaîne » plutôt que « collier de rondelles ».
+      m.rotation.y = (i % 2) * (Math.PI / 2)
+      maillons.push(m)
+      group.add(m)
+    }
+    const boulet = new THREE.Mesh(new THREE.SphereGeometry(0.17, 10, 8), mat())
+    group.add(boulet)
+    group.visible = false
+    scene.add(group)
+    c = { group, maillons, boulet, cible, fin: 0, duree, actif: false }
+    chaines.push(c)
+  }
+  c.cible = cible
+  c.duree = duree
+  c.fin = time + duree
+  c.actif = true
+  c.group.visible = true
+}
+
+/** Coupe les chaînes qui pendent à `cible` (le 🍵 Thé les fait tomber). */
+function libererChaines(cible: THREE.Object3D) {
+  for (const c of chaines) {
+    if (c.actif && c.cible === cible) {
+      c.actif = false
+      c.group.visible = false
+    }
+  }
+}
+
+// ————— 🪞 Le miroir de la Parade —————
+// Une grande glace dressée derrière toi, face aux sorts qui arrivent — c'est
+// de là qu'ils viennent, lancés par ceux qui te suivent. Un reflet balaie sa
+// surface : sans ce glissement, un rectangle gris ne se lit pas comme un miroir.
+function makeRefletTexture(): THREE.CanvasTexture {
+  const cv = document.createElement('canvas')
+  cv.width = 128
+  cv.height = 128
+  const g = cv.getContext('2d')!
+  // Le fond : un verre bleuté qui s'assombrit vers le bas
+  const fond = g.createLinearGradient(0, 0, 0, 128)
+  fond.addColorStop(0, '#cfe2ff')
+  fond.addColorStop(1, '#6d86ad')
+  g.fillStyle = fond
+  g.fillRect(0, 0, 128, 128)
+  // La bande de reflet, en biais : c'est elle qui glissera
+  const bande = g.createLinearGradient(0, 128, 128, 0)
+  bande.addColorStop(0, 'rgba(255,255,255,0)')
+  bande.addColorStop(0.42, 'rgba(255,255,255,0)')
+  bande.addColorStop(0.5, 'rgba(255,255,255,0.95)')
+  bande.addColorStop(0.58, 'rgba(255,255,255,0)')
+  bande.addColorStop(1, 'rgba(255,255,255,0)')
+  g.fillStyle = bande
+  g.fillRect(0, 0, 128, 128)
+  const tex = new THREE.CanvasTexture(cv)
+  tex.wrapS = THREE.RepeatWrapping
+  tex.wrapT = THREE.RepeatWrapping
+  return tex
+}
+const miroirTex = makeRefletTexture()
+const miroirGroup = new THREE.Group()
+const miroirGlace = new THREE.Mesh(
+  new THREE.PlaneGeometry(2.1, 2.5),
+  new THREE.MeshBasicMaterial({
+    map: miroirTex,
+    transparent: true,
+    opacity: 0,
+    side: THREE.DoubleSide,
+    depthWrite: false,
+  })
+)
+// Le cadre : sans lui, la glace flotte comme un simple carré de lumière
+const miroirCadre = new THREE.Mesh(
+  new THREE.PlaneGeometry(2.34, 2.74),
+  new THREE.MeshBasicMaterial({
+    color: 0xd6ac5a,
+    transparent: true,
+    opacity: 0,
+    side: THREE.DoubleSide,
+    depthWrite: false,
+  })
+)
+miroirCadre.position.z = -0.02
+miroirGroup.add(miroirCadre, miroirGlace)
+miroirGroup.visible = false
+scene.add(miroirGroup)
 
 /**
  * 🔮 La lueur jaune de l'échange. Elle enveloppe LES DEUX échangés : sans ça,
@@ -1259,22 +1389,20 @@ function lancerParchemin() {
     ventFin = time + VENT_DUREE
     poserAura(player.mesh, AURA_VENT, VENT_DUREE)
   } else if (kind === 'grue') {
-    grueFin = time + GRUE_DUREE
-    poserAura(player.mesh, AURA_GRUE, GRUE_DUREE)
+    grueFin = time + GRUE_DUREE // 🕊️ l'anneau vert suit `grueFin` tout seul
   } else if (kind === 'armure') armure = ARMURE_SOLIDITE
   else if (kind === 'miroir') {
-    miroirFin = time + MIROIR_DUREE
-    poserAura(player.mesh, AURA_MIROIR, MIROIR_DUREE)
+    miroirFin = time + MIROIR_DUREE // 🪞 la glace suit `miroirFin` tout seul
   } else if (kind === 'the') {
     // 🍵 Le thé lave TOUT d'un coup — y compris ce qu'on vient d'encaisser
     kusarigamaFin = 0
     fumigeneFin = 0
     senbonFin = 0
-    // Les auras des afflictions s'éteignent avec elles : sinon on croirait
-    // encore empoisonné alors qu'on vient justement de se purifier.
+    // Les marques des afflictions s'éteignent avec elles : sinon on se croirait
+    // encore empoisonné et entravé alors qu'on vient de se purifier.
+    libererChaines(player.mesh) // ⛓️ les chaînes tombent
     for (const a of auras) {
-      const c = (a.mesh.material as THREE.MeshBasicMaterial).color.getHex()
-      if (c === AURA_SENBON || c === AURA_KUSARIGAMA) {
+      if ((a.mesh.material as THREE.MeshBasicMaterial).color.getHex() === AURA_SENBON) {
         a.actif = false
         a.mesh.visible = false
       }
@@ -1366,6 +1494,12 @@ function backToMenu(banner?: string) {
     a.actif = false
     a.mesh.visible = false
   }
+  for (const c of chaines) {
+    c.actif = false
+    c.group.visible = false
+  }
+  grueAnneau.visible = false
+  miroirGroup.visible = false
   hideSpark()
   oppmarkEl.classList.add('hidden')
   rankEl.classList.add('hidden')
@@ -1416,6 +1550,12 @@ function startRace(seed: number) {
     a.actif = false
     a.mesh.visible = false
   }
+  for (const c of chaines) {
+    c.actif = false
+    c.group.visible = false
+  }
+  grueAnneau.visible = false
+  miroirGroup.visible = false
   lueurFin = 0
   lueurCible = null
   lueurJoueur.visible = false
@@ -1947,9 +2087,8 @@ function tick(now?: number) {
         // On retire le vol de la durée : l'aura doit s'éteindre AVEC le sort,
         // pas 0,28 s après — c'est une jauge, elle ne doit pas mentir.
         if (p.kind === 'senbon') poserAura(p.cible, AURA_SENBON, SENBON_DUREE - PROJET_VOL)
-        else if (p.kind === 'kusarigama') {
-          poserAura(p.cible, AURA_KUSARIGAMA, KUSARIGAMA_DUREE - PROJET_VOL)
-        }
+        // ⛓️ Le poids touche : les chaînes s'accrochent et retombent au sol
+        else if (p.kind === 'kusarigama') poserChaines(p.cible, KUSARIGAMA_DUREE - PROJET_VOL)
       }
     }
 
@@ -1968,6 +2107,57 @@ function tick(now?: number) {
       a.mesh.scale.setScalar(battement)
       // Franche à l'apparition, elle s'efface sur la fin : on voit le sort mourir
       ;(a.mesh.material as THREE.MeshBasicMaterial).opacity = 0.16 + Math.min(1, k * 2.2) * 0.16
+    }
+
+    // 🕊️ L'anneau de la Grue : il te ceint et MONTE AVEC TOI quand tu sautes
+    const grueOn = time < grueFin
+    grueAnneau.visible = grueOn
+    if (grueOn) {
+      const p = player.mesh.position
+      grueAnneau.position.set(p.x, p.y + 0.2, p.z) // p.y : il suit le saut
+      grueAnneau.rotation.z += dt * 1.6
+      const k = (grueFin - time) / GRUE_DUREE
+      ;(grueAnneau.material as THREE.MeshBasicMaterial).opacity =
+        (0.5 + Math.sin(time * 7) * 0.14) * Math.min(1, k * 3)
+    }
+
+    // 🪞 La glace de la Parade, dressée derrière toi, reflet qui balaie
+    const miroirOn = time < miroirFin
+    miroirGroup.visible = miroirOn
+    if (miroirOn) {
+      const p = player.mesh.position
+      miroirGroup.position.set(p.x, p.y + 1.25, p.z + 0.75)
+      miroirTex.offset.x -= dt * 0.32 // le reflet glisse : c'est ça qui fait « miroir »
+      const k = (miroirFin - time) / MIROIR_DUREE
+      const fondu = Math.min(1, k * 4) // il s'efface quand la parade expire
+      ;(miroirGlace.material as THREE.MeshBasicMaterial).opacity = 0.62 * fondu
+      ;(miroirCadre.material as THREE.MeshBasicMaterial).opacity = 0.78 * fondu
+    }
+
+    // ⛓️ Les chaînes : accrochées à la hanche, elles retombent au sol derrière
+    for (const c of chaines) {
+      if (!c.actif) continue
+      const reste = c.fin - time
+      if (reste <= 0) {
+        c.actif = false
+        c.group.visible = false
+        continue
+      }
+      const p = c.cible.position
+      const sway = Math.sin(time * 4) * 0.12
+      c.maillons.forEach((m, i) => {
+        const t = i / (CHAINE_MAILLONS - 1) // 0 = la hanche, 1 = le sol
+        // La chute est RAPIDE puis traîne : une chaîne pend, elle ne descend
+        // pas en ligne droite. L'exposant fait toute la différence.
+        m.position.set(
+          p.x + sway * t,
+          Math.max(0.07, (p.y + 0.85) * Math.pow(1 - t, 1.7) + 0.07),
+          p.z + t * 1.9
+        )
+        m.rotation.z += dt * 0.8
+      })
+      const dernier = c.maillons[CHAINE_MAILLONS - 1].position
+      c.boulet.position.set(dernier.x, 0.17, dernier.z + 0.22) // le poids, posé au sol
     }
 
     // 💨💥 Le rideau de vitesse : monte avec le martèlement du sprint final,
