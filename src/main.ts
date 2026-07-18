@@ -88,6 +88,8 @@ interface Rival {
   name: string
   rank: number
   finished: boolean
+  /** Était-il en l'air à l'image précédente ? (pour la poussière d'atterrissage) */
+  enLAir: boolean
 }
 /** Les rivaux du salon, par identifiant réseau. */
 const rivals = new Map<string, Rival>()
@@ -122,7 +124,7 @@ function syncRivals(others: RemotePlayer[]) {
       if (!libre) continue // plus de 9 rivaux : les suivants ne sont pas dessinés
       libre.active = true
       libre.reset(p.startLane)
-      r = { opp: libre, id: p.id, name: '', rank: 0, finished: false }
+      r = { opp: libre, id: p.id, name: '', rank: 0, finished: false, enLAir: false }
       rivals.set(p.id, r)
     }
     r.opp.setFighter(p.fighter)
@@ -311,8 +313,25 @@ let lueurCible: THREE.Object3D | null = null // le corps de l'échangé
  * bleu nuit), qui claquent entre l'ancienne et la nouvelle ligne à chaque
  * changement de voie, quand le guerrier a le style de Sasuke (`player.spark`).
  */
-const SPARK_DUREE = 0.26 // secondes
-let sparkFin = 0
+// L'éclair se DESSINE (très vite) puis se DISSIPE — il ne doit jamais avoir
+// l'air « déjà posé » : on doit voir le trait naître et filer.
+const SPARK_TRACE = 0.07 // la création, à la vitesse de la lumière
+const SPARK_DISSIP = 0.2 // puis il s'efface en s'étalant
+let sparkT0 = -99 // instant du déclenchement
+let sparkDe = 0 // bornes X du tracé — le plan de coupe balaie entre les deux
+let sparkVers = 0
+
+/**
+ * Le plan de coupe qui RÉVÈLE l'éclair au fil de sa création. On le fait
+ * glisser de `sparkDe` à `sparkVers` : le zigzag apparaît au fur et à mesure,
+ * comme s'il se traçait tout seul. C'est ça qui donne la vitesse de la lumière.
+ */
+const sparkPlane = new THREE.Plane(new THREE.Vector3(-1, 0, 0), 0)
+// Les deux sens de balayage : vers la droite on garde « x < balai », vers la
+// gauche « x > balai ». (Three.js garde le côté où normale·point + constante > 0.)
+const SPARK_N_NEG = new THREE.Vector3(-1, 0, 0)
+const SPARK_N_POS = new THREE.Vector3(1, 0, 0)
+renderer.localClippingEnabled = true
 
 /** La silhouette d'un éclair (zigzag façon ⚡), en unités locales. */
 function boltShape(): THREE.Shape {
@@ -331,15 +350,28 @@ function boltShape(): THREE.Shape {
 function makeBolt(): THREE.Group {
   const geo = new THREE.ShapeGeometry(boltShape())
   const g = new THREE.Group()
+  // Les deux matériaux sont coupés par le MÊME plan : le trait se révèle d'un bloc
   const contour = new THREE.Mesh(
     geo,
-    new THREE.MeshBasicMaterial({ color: 0x11224a, transparent: true, opacity: 0, depthWrite: false })
+    new THREE.MeshBasicMaterial({
+      color: 0x11224a,
+      transparent: true,
+      opacity: 0,
+      depthWrite: false,
+      clippingPlanes: [sparkPlane],
+    })
   )
   contour.scale.set(1.45, 1.18, 1)
   contour.position.z = -0.01
   const remplissage = new THREE.Mesh(
     geo,
-    new THREE.MeshBasicMaterial({ color: 0x9fe8ff, transparent: true, opacity: 0, depthWrite: false })
+    new THREE.MeshBasicMaterial({
+      color: 0x9fe8ff,
+      transparent: true,
+      opacity: 0,
+      depthWrite: false,
+      clippingPlanes: [sparkPlane],
+    })
   )
   g.add(contour, remplissage)
   return g
@@ -354,22 +386,39 @@ for (const b of sparkBolts) {
 /** Cache les deux éclairs (fin de course, retour menu). */
 function hideSpark() {
   for (const b of sparkBolts) b.visible = false
+  sparkT0 = -99
 }
 
-/** Fait claquer les DEUX éclairs entre deux positions X (centres de ligne). */
-function flashSpark(fromX: number, toX: number) {
+/**
+ * Fait naître les DEUX éclairs entre deux positions X. `echelle` : 1 pour un
+ * changement de ligne, plus petit pour le saut. Ils ne sont pas « posés » : le
+ * plan de coupe les trace de `fromX` vers `toX` en 70 ms, puis ils se dissipent.
+ */
+function flashSpark(fromX: number, toX: number, echelle = 1) {
   const z = player.mesh.position.z + 0.12
   const dir = Math.sign(toX - fromX) || 1
   // Le 1er éclair, plus haut et incliné vers le départ ; le 2e plus bas, penché
   // à l'inverse et plus petit : deux zigzags qui crépitent sur le trajet.
   sparkBolts[0].position.set(fromX + (toX - fromX) * 0.32, 1.2, z)
   sparkBolts[0].rotation.z = dir * -0.3
-  sparkBolts[0].scale.setScalar(1)
+  sparkBolts[0].scale.setScalar(echelle)
+  sparkBolts[0].userData.base = echelle
   sparkBolts[1].position.set(fromX + (toX - fromX) * 0.72, 0.7, z + 0.04)
   sparkBolts[1].rotation.z = dir * 0.45
-  sparkBolts[1].scale.setScalar(0.78)
+  sparkBolts[1].scale.setScalar(0.78 * echelle)
+  sparkBolts[1].userData.base = 0.78 * echelle
   for (const b of sparkBolts) b.visible = true
-  sparkFin = time + SPARK_DUREE
+  // Les bornes du tracé : on déborde un peu pour que les pointes soient prises
+  sparkDe = Math.min(fromX, toX) - 0.7
+  sparkVers = Math.max(fromX, toX) + 0.7
+  if (dir < 0) [sparkDe, sparkVers] = [sparkVers, sparkDe] // on trace dans le sens du saut
+  sparkT0 = time
+}
+
+/** ⚡ Le petit éclair du saut : même effet, en réduit, autour du guerrier. */
+function flashSparkSaut() {
+  const x = player.mesh.position.x
+  flashSpark(x - 0.6, x + 0.6, 0.5)
 }
 
 // ═══════════ Effets visuels de course ═══════════
@@ -644,8 +693,87 @@ for (const cote of ['g', 'd'] as const) {
 }
 document.body.appendChild(speedEl)
 
+// ————— 💨 La poussière d'atterrissage (tout le monde, bots compris) —————
+// Un petit nuage plat qui s'étale au sol quand un coureur retombe d'un saut.
+// Une horloge à part (`effetTemps`) : le chrono de course est figé pendant le
+// décompte, ces effets doivent tourner quand même.
+interface Poussiere {
+  mesh: THREE.Mesh
+  fin: number
+}
+const POUSSIERE_DUREE = 0.5
+let effetTemps = 0
+const poussieres: Poussiere[] = []
+for (let i = 0; i < 14; i++) {
+  const m = new THREE.Mesh(
+    new THREE.CircleGeometry(0.42, 16),
+    new THREE.MeshBasicMaterial({
+      color: 0xcbbba0,
+      transparent: true,
+      opacity: 0,
+      depthWrite: false,
+    })
+  )
+  m.rotation.x = -Math.PI / 2 // à plat sur le sol
+  m.visible = false
+  scene.add(m)
+  poussieres.push({ mesh: m, fin: 0 })
+}
+
+/** Lâche un nuage de poussière au sol, aux pieds d'un coureur qui atterrit. */
+function poserPoussiere(x: number, z: number) {
+  const p = poussieres.find((q) => !q.mesh.visible) ?? poussieres[0]
+  p.mesh.position.set(x, 0.04, z)
+  p.mesh.scale.setScalar(0.45)
+  p.mesh.visible = true
+  p.fin = effetTemps + POUSSIERE_DUREE
+}
+
+// Qui était en l'air à l'image d'avant ? On compare avec maintenant : passer de
+// « en l'air » à « au sol », c'est un atterrissage.
+let joueurEnLAir = false
+const botEnLAir = PROFILS.map(() => false)
+
+/** Repère les atterrissages de TOUT LE MONDE et lâche la poussière qui va avec. */
+function detecterAtterrissages() {
+  const AIR = 0.05 // au-dessus de ça, on considère qu'on décolle
+
+  const pAir = player.mesh.position.y > AIR
+  if (joueurEnLAir && !pAir) poserPoussiere(player.mesh.position.x, player.mesh.position.z)
+  joueurEnLAir = pAir
+
+  bots.forEach((b, i) => {
+    if (!b.actif) {
+      botEnLAir[i] = false
+      return
+    }
+    const air = b.mesh.position.y > AIR
+    if (botEnLAir[i] && !air) poserPoussiere(b.mesh.position.x, b.mesh.position.z)
+    botEnLAir[i] = air
+  })
+
+  for (const r of rivals.values()) {
+    const air = r.opp.mesh.position.y > AIR
+    if (r.enLAir && !air) poserPoussiere(r.opp.mesh.position.x, r.opp.mesh.position.z)
+    r.enLAir = air
+  }
+}
+
 /** Fait avancer tous les effets d'un pas. `dz` = recul du monde cette image. */
 function updateEffets(dt: number, dz: number) {
+  effetTemps += dt
+  // 💨 Les nuages de poussière s'étalent au sol puis s'effacent
+  for (const p of poussieres) {
+    if (!p.mesh.visible) continue
+    const k = (p.fin - effetTemps) / POUSSIERE_DUREE // 1 → 0
+    if (k <= 0) {
+      p.mesh.visible = false
+      continue
+    }
+    p.mesh.position.z += dz
+    p.mesh.scale.setScalar(0.45 + (1 - k) * 1.6)
+    ;(p.mesh.material as THREE.MeshBasicMaterial).opacity = k * 0.45
+  }
   // 🌸 Le cerisier glisse vers l'arrière puis disparaît, une fois dépassé
   if (cerisier.visible) {
     cerisier.position.z += dz
@@ -1151,6 +1279,10 @@ function startRace(seed: number) {
   // 3 s en solo). Le son est synthétisé : aucun fichier à charger.
   souffleDeVent(online ? 5 : 3.2)
   boomMesh.visible = false
+  // 💨 Poussière : on efface les nuages et on repart « tout le monde au sol »
+  for (const p of poussieres) p.mesh.visible = false
+  joueurEnLAir = false
+  botEnLAir.fill(false)
   // 🛡️ Ni dôme ni éclat ne survivent d'une course à l'autre
   boucFlash = 0
   boucFill.visible = false
@@ -1441,6 +1573,8 @@ new Input(document.body, {
   jump: () => {
     if (state !== 'course') return
     const v = player.jump(time < grueFin)
+    // ⚡ Le style de Sasuke crépite aussi au décollage, en plus petit
+    if (v > 0 && player.spark) flashSparkSaut()
     if (online && v > 0) net.sendAction({ t: 'jump', v })
   },
   slide: () => {
@@ -1663,6 +1797,8 @@ function tick(now?: number) {
     // ceux déjà en l'air finissent de tomber pendant que le cerisier s'éloigne.
     petalesActifs = time < 2.5
     updateEffets(dt, speed * dt)
+    // 💨 Après que TOUT LE MONDE a bougé : qui vient de retomber au sol ?
+    detecterAtterrissages()
 
     // 10 fois par seconde suffisent : à 60, on réécrirait le DOM pour rien
     rankTimer += dt
@@ -1718,19 +1854,35 @@ function tick(now?: number) {
     fumeeEl.classList.toggle('show', time < fumigeneFin)
     canvas.classList.toggle('poison', time < senbonFin)
 
-    // ⚡ Les deux éclairs de Sasuke s'éteignent en scintillant
+    // ⚡ Les deux éclairs de Sasuke : ils se TRACENT, puis se dissipent
     if (sparkBolts[0].visible) {
-      const reste = sparkFin - time
-      if (reste <= 0) {
+      const t = time - sparkT0
+      if (t >= SPARK_TRACE + SPARK_DISSIP) {
         hideSpark()
-      } else {
-        const k = reste / SPARK_DUREE // 1 → 0
+      } else if (t < SPARK_TRACE) {
+        // ————— Création : le plan de coupe file et le zigzag naît derrière lui
+        const k = t / SPARK_TRACE // 0 → 1
+        const balai = sparkDe + (sparkVers - sparkDe) * k
+        if (sparkVers >= sparkDe) sparkPlane.set(SPARK_N_NEG, balai) // garde x < balai
+        else sparkPlane.set(SPARK_N_POS, -balai) // garde x > balai
         for (const b of sparkBolts) {
-          const op = k * (0.55 + Math.random() * 0.45) // scintillement électrique
           for (const c of b.children) {
-            ;((c as THREE.Mesh).material as THREE.MeshBasicMaterial).opacity =
-              c === b.children[0] ? op * 0.9 : op // le contour un poil moins fort
+            ;((c as THREE.Mesh).material as THREE.MeshBasicMaterial).opacity = 1
           }
+          b.scale.setScalar(b.userData.base as number)
+        }
+      } else {
+        // ————— Dissipation : plus de coupe, il s'efface en s'étalant (flou)
+        sparkPlane.set(SPARK_N_NEG, 1e6) // tout passe
+        const k = (t - SPARK_TRACE) / SPARK_DISSIP // 0 → 1
+        for (const b of sparkBolts) {
+          const base = b.userData.base as number
+          b.scale.setScalar(base * (1 + k * 0.45)) // il gonfle en se dissolvant
+          const c0 = b.children[0] as THREE.Mesh
+          const c1 = b.children[1] as THREE.Mesh
+          // Le contour s'efface plus vite : le trait « perd ses bords », ça floute
+          ;(c0.material as THREE.MeshBasicMaterial).opacity = Math.max(0, 1 - k * 1.6)
+          ;(c1.material as THREE.MeshBasicMaterial).opacity = 1 - k
         }
       }
     }
@@ -1848,5 +2000,26 @@ function resize() {
 }
 addEventListener('resize', resize)
 resize()
+
+// ————— Le banc d'essai des sorts (développement uniquement) —————
+// Les slots sont internes au module : sans ce petit guichet, aucune page de
+// test ne peut mettre un parchemin précis dans la main du joueur.
+//
+// Vite remplace `import.meta.env.DEV` par `false` au build : tout ce bloc — le
+// guichet compris — disparaît du bundle de production. Impossible de s'en
+// servir pour tricher dans une vraie partie.
+if (import.meta.env.DEV) {
+  ;(window as unknown as { __sorts?: unknown }).__sorts = {
+    /** Met `kind` en main, à la place de ce qu'on tenait. */
+    donner(kind: ParcheminKind) {
+      slots = [kind]
+      drawSlots()
+    },
+    /** Le lance tout de suite — comme la touche E. */
+    lancer() {
+      lancerParchemin()
+    },
+  }
+}
 
 tick()

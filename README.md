@@ -36,6 +36,8 @@ avec Claude Code comme développeur.
   volée ([`src/sfx.ts`](src/sfx.ts)), donc zéro fichier à télécharger
 - 💨 **Rideau de vitesse façon animé** : des éclats **triangulaires** effilés
   giclent vers les bords quand on martèle ou qu'on dash
+- 👣 **Poussière d'atterrissage** : un petit nuage s'étale au sol quand un
+  coureur retombe d'un saut — **tout le monde**, bots et rivaux en ligne compris
 
 ### Contrôles
 
@@ -193,8 +195,15 @@ purement cosmétiques. Sasuke n'est **pas un guerrier jouable** — ses réglage
 servent que de style par défaut au « + ».
 
 Signature visuelle du style Sasuke : **deux éclairs cartoon** (zigzag façon ⚡,
-remplissage cyan + gros contour bleu nuit) claquent à chaque changement de ligne.
-Réglé dans [`src/main.ts`](src/main.ts) (`SPARK_DUREE`, `makeBolt`, `flashSpark`).
+remplissage cyan + gros contour bleu nuit) à chaque **changement de ligne**, et
+un plus petit au **saut**.
+
+Ils ne sont jamais « déjà posés » : un **plan de coupe** balaie la trajectoire en
+**70 ms** et le zigzag *naît derrière lui* — c'est ça qui donne la vitesse de la
+lumière. Puis ils se **dissipent** en 200 ms : le trait gonfle pendant que le
+contour s'efface plus vite que le remplissage, si bien qu'il « perd ses bords »
+et paraît flou. Réglé dans [`src/main.ts`](src/main.ts) : `SPARK_TRACE`,
+`SPARK_DISSIP`, `makeBolt`, `flashSpark`.
 
 Tout est dans [`src/roster.ts`](src/roster.ts). Deux règles d'équité s'appliquent :
 
