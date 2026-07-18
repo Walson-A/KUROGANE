@@ -18,7 +18,6 @@ import {
   ARMURE_SOLIDITE,
   ARMURE_COUT_MUR,
   ARMURE_COUT_PETIT,
-  MIROIR_DUREE,
   FUMIGENE_DUREE,
   SENBON_DUREE,
   ONMYOJI_VITESSE,
@@ -26,7 +25,7 @@ import {
   type ParcheminKind,
 } from './parchemin'
 import { Menu, escapeHtml } from './menu'
-import { souffleDeVent } from './sfx'
+import { souffleDeVent, sonDeSoin } from './sfx'
 import type { Quality } from './settings'
 
 /**
@@ -395,58 +394,155 @@ function lancerProjet(
 }
 
 /**
- * ————— Les auras : « ce sort agit, sur LUI, encore maintenant » —————
+ * ————— Chaque sort a sa FORME, plus une bulle pour tous —————
  *
- * Une bulle colorée collée à un coureur, pour toute la durée du sort. C'est la
- * même règle que le nuage de fumée : une aura n'est pas un décor, c'est la
- * JAUGE de l'effet — tant qu'elle brille, l'effet court.
+ * La bulle colorée générique disait « il se passe quelque chose », jamais QUOI.
+ * Chaque sort a donc désormais son propre corps : la brume du poison, l'aura
+ * jaillissante du dash, les cercles montants du soin, l'anneau de la Grue, les
+ * chaînes du Kusarigama, la glace de la Parade.
  *
- * Elle sert aux deux camps : sur soi pour les sorts qu'on s'applique, sur la
- * victime pour les sabotages. Une couleur par sort, toujours la même.
- *
- * Trois sorts s'en passent : la Grue a son anneau, la Parade sa glace et le
- * Kusarigama ses chaînes. Une bulle de plus ne les aurait pas racontés.
+ * La règle commune ne change pas : tant que l'effet se voit, l'effet court.
  */
-const AURA_VENT = 0x8fe6ff
-const AURA_THE = 0x8fce7a
-const AURA_SENBON = 0x9b5cff // le violet du poison
 
-interface Aura {
-  mesh: THREE.Mesh
+/** Une tache douce, pour la brume et les auras — dégradé radial en mémoire. */
+function makeBlobTexture(): THREE.CanvasTexture {
+  const cv = document.createElement('canvas')
+  cv.width = 64
+  cv.height = 64
+  const g = cv.getContext('2d')!
+  const grad = g.createRadialGradient(32, 32, 0, 32, 32, 32)
+  grad.addColorStop(0, 'rgba(255,255,255,0.95)')
+  grad.addColorStop(0.45, 'rgba(255,255,255,0.35)')
+  grad.addColorStop(1, 'rgba(255,255,255,0)')
+  g.fillStyle = grad
+  g.fillRect(0, 0, 64, 64)
+  return new THREE.CanvasTexture(cv)
+}
+const blobTex = makeBlobTexture()
+
+// ————— ☠️ La brume du Senbon —————
+// Le poison ne cerne pas la victime d'un ovale : il la NOIE dans une brume
+// violette. Plusieurs voiles doux qui dérivent et tournent lentement — c'est
+// leur chevauchement irrégulier qui fait « brume » plutôt que « boule ».
+const BRUME_VOILES = 6
+interface Brume {
+  group: THREE.Group
+  voiles: THREE.Mesh[]
   cible: THREE.Object3D
-  duree: number
   fin: number
+  duree: number
   actif: boolean
 }
-const auras: Aura[] = []
+const brumes: Brume[] = []
 
-/** Enveloppe `cible` de `couleur` pendant `duree` secondes. */
-function poserAura(cible: THREE.Object3D, couleur: number, duree: number) {
-  let a = auras.find((x) => !x.actif)
-  if (!a) {
-    const mesh = new THREE.Mesh(
-      new THREE.SphereGeometry(1.05, 16, 12),
-      new THREE.MeshBasicMaterial({
-        color: couleur,
-        transparent: true,
-        opacity: 0,
-        blending: THREE.AdditiveBlending,
-        depthWrite: false,
-      })
-    )
-    mesh.visible = false
-    scene.add(mesh)
-    a = { mesh, cible, duree, fin: 0, actif: false }
-    auras.push(a)
+function poserBrume(cible: THREE.Object3D, duree: number) {
+  let b = brumes.find((x) => !x.actif)
+  if (!b) {
+    const group = new THREE.Group()
+    const voiles: THREE.Mesh[] = []
+    for (let i = 0; i < BRUME_VOILES; i++) {
+      const m = new THREE.Mesh(
+        new THREE.PlaneGeometry(1.9, 1.9),
+        new THREE.MeshBasicMaterial({
+          map: blobTex,
+          color: 0x9b5cff, // le violet du poison
+          transparent: true,
+          opacity: 0,
+          blending: THREE.AdditiveBlending,
+          depthWrite: false,
+        })
+      )
+      m.userData.phase = (i / BRUME_VOILES) * Math.PI * 2
+      voiles.push(m)
+      group.add(m)
+    }
+    group.visible = false
+    scene.add(group)
+    b = { group, voiles, cible, fin: 0, duree, actif: false }
+    brumes.push(b)
   }
-  ;(a.mesh.material as THREE.MeshBasicMaterial).color.setHex(couleur)
-  a.cible = cible
-  a.duree = duree
-  a.fin = time + duree
-  a.actif = true
-  a.mesh.visible = true
-  a.mesh.position.copy(cible.position).setY(0.85)
+  b.cible = cible
+  b.duree = duree
+  b.fin = time + duree
+  b.actif = true
+  b.group.visible = true
 }
+
+/** Dissipe la brume qui enveloppe `cible` (le 🍵 Thé la balaie). */
+function dissiperBrume(cible: THREE.Object3D) {
+  for (const b of brumes) {
+    if (b.actif && b.cible === cible) {
+      b.actif = false
+      b.group.visible = false
+    }
+  }
+}
+
+// ————— 🌀 L'aura du Vent du Nord —————
+// Une aura qui JAILLIT vers le haut et crépite, façon Super Saiyan : le dash
+// est le sort le plus court du jeu (1,5 s), il lui faut la présence la plus
+// violente, sinon on le rate. Un cône additif qui scintille à chaque image,
+// plus des traits qui montent — c'est l'agitation qui fait l'énergie.
+const VENT_CYAN = 0x8fe6ff
+const ventAura = new THREE.Mesh(
+  new THREE.ConeGeometry(0.85, 2.7, 14, 1, true),
+  new THREE.MeshBasicMaterial({
+    color: VENT_CYAN,
+    transparent: true,
+    opacity: 0,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+    side: THREE.DoubleSide,
+  })
+)
+ventAura.visible = false
+scene.add(ventAura)
+
+// Les langues de feu qui remontent le long du corps
+const VENT_LANGUES = 7
+const ventLangues: THREE.Mesh[] = []
+for (let i = 0; i < VENT_LANGUES; i++) {
+  const m = new THREE.Mesh(
+    new THREE.PlaneGeometry(0.16, 0.8),
+    new THREE.MeshBasicMaterial({
+      color: 0xdaf7ff,
+      transparent: true,
+      opacity: 0,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+    })
+  )
+  m.userData.phase = Math.random() * Math.PI * 2
+  m.userData.angle = (i / VENT_LANGUES) * Math.PI * 2
+  m.visible = false
+  scene.add(m)
+  ventLangues.push(m)
+}
+
+// ————— 🍵 Les cercles du Thé Purificateur —————
+// Des anneaux clairs qui MONTENT le long du corps, du sol vers la tête : le
+// sens de lecture du soin. Ils partent décalés dans le temps pour qu'on lise
+// une vague, pas un clignotement.
+const THE_CERCLES = 4
+const THE_DUREE = 1.15
+const theCercles: THREE.Mesh[] = []
+for (let i = 0; i < THE_CERCLES; i++) {
+  const m = new THREE.Mesh(
+    new THREE.TorusGeometry(0.62, 0.045, 8, 26),
+    new THREE.MeshBasicMaterial({
+      color: 0xc9ffd8, // vert très clair, presque blanc : ça doit apaiser
+      transparent: true,
+      opacity: 0,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+    })
+  )
+  m.rotation.x = -Math.PI / 2
+  m.visible = false
+  scene.add(m)
+  theCercles.push(m)
+}
+let theFin = 0
 
 // ————— 🕊️ L'anneau du Saut de la Grue —————
 // Un cercle vert qui te ceint. Il SUIT le saut — hauteur comprise : c'est un
@@ -553,7 +649,7 @@ function makeRefletTexture(): THREE.CanvasTexture {
 const miroirTex = makeRefletTexture()
 const miroirGroup = new THREE.Group()
 const miroirGlace = new THREE.Mesh(
-  new THREE.PlaneGeometry(2.1, 2.5),
+  new THREE.PlaneGeometry(1.25, 1.55),
   new THREE.MeshBasicMaterial({
     map: miroirTex,
     transparent: true,
@@ -564,7 +660,7 @@ const miroirGlace = new THREE.Mesh(
 )
 // Le cadre : sans lui, la glace flotte comme un simple carré de lumière
 const miroirCadre = new THREE.Mesh(
-  new THREE.PlaneGeometry(2.34, 2.74),
+  new THREE.PlaneGeometry(1.42, 1.72),
   new THREE.MeshBasicMaterial({
     color: 0xd6ac5a,
     transparent: true,
@@ -1423,16 +1519,17 @@ function lancerParchemin() {
   toast(p.cri)
 
   // ————— Sur soi —————
-  // Chacun pose son aura pour SA durée : tant qu'elle brille, le sort court.
+  // Chacun a sa forme, et elle vit exactement le temps du sort.
   // L'armure fait exception — son dôme facetté joue déjà ce rôle, en mieux.
   if (kind === 'vent') {
-    ventFin = time + VENT_DUREE
-    poserAura(player.mesh, AURA_VENT, VENT_DUREE)
+    ventFin = time + VENT_DUREE // 🌀 l'aura jaillissante suit `ventFin`
   } else if (kind === 'grue') {
     grueFin = time + GRUE_DUREE // 🕊️ l'anneau vert suit `grueFin` tout seul
   } else if (kind === 'armure') armure = ARMURE_SOLIDITE
   else if (kind === 'miroir') {
-    miroirFin = time + MIROIR_DUREE // 🪞 la glace suit `miroirFin` tout seul
+    // 🪞 La glace tient TANT QU'ON N'Y TOUCHE PAS : elle ne s'éteint qu'en
+    // renvoyant un sort (cf. subirSort). C'est une garde, pas un minuteur.
+    miroirFin = Infinity
   } else if (kind === 'the') {
     // 🍵 Le thé lave TOUT d'un coup — y compris ce qu'on vient d'encaisser
     kusarigamaFin = 0
@@ -1441,13 +1538,9 @@ function lancerParchemin() {
     // Les marques des afflictions s'éteignent avec elles : sinon on se croirait
     // encore empoisonné et entravé alors qu'on vient de se purifier.
     libererChaines(player.mesh) // ⛓️ les chaînes tombent
-    for (const a of auras) {
-      if ((a.mesh.material as THREE.MeshBasicMaterial).color.getHex() === AURA_SENBON) {
-        a.actif = false
-        a.mesh.visible = false
-      }
-    }
-    poserAura(player.mesh, AURA_THE, 0.9) // une bouffée verte, courte : c'est instantané
+    dissiperBrume(player.mesh) // ☠️ la brume se lève
+    theFin = time + THE_DUREE // 🍵 les cercles montent
+    sonDeSoin()
   }
   // ————— 🔮 Le portail : il part, il ne vise pas —————
   else if (kind === 'onmyoji') {
@@ -1649,10 +1742,14 @@ function backToMenu(banner?: string) {
     p.actif = false
     p.mesh.visible = false
   }
-  for (const a of auras) {
-    a.actif = false
-    a.mesh.visible = false
+  for (const b of brumes) {
+    b.actif = false
+    b.group.visible = false
   }
+  theFin = 0
+  for (const c of theCercles) c.visible = false
+  ventAura.visible = false
+  for (const l of ventLangues) l.visible = false
   for (const c of chaines) {
     c.actif = false
     c.group.visible = false
@@ -1707,10 +1804,14 @@ function startRace(seed: number) {
     p.actif = false
     p.mesh.visible = false
   }
-  for (const a of auras) {
-    a.actif = false
-    a.mesh.visible = false
+  for (const b of brumes) {
+    b.actif = false
+    b.group.visible = false
   }
+  theFin = 0
+  for (const c of theCercles) c.visible = false
+  ventAura.visible = false
+  for (const l of ventLangues) l.visible = false
   for (const c of chaines) {
     c.actif = false
     c.group.visible = false
@@ -2282,27 +2383,79 @@ function tick(now?: number) {
         // ☠️ et ⛓️ marquent leur victime d'une aura, le temps de leur effet.
         // On retire le vol de la durée : l'aura doit s'éteindre AVEC le sort,
         // pas 0,28 s après — c'est une jauge, elle ne doit pas mentir.
-        if (p.kind === 'senbon') poserAura(p.cible, AURA_SENBON, SENBON_DUREE - PROJET_VOL)
+        if (p.kind === 'senbon') poserBrume(p.cible, SENBON_DUREE - PROJET_VOL)
         // ⛓️ Le poids touche : les chaînes s'accrochent et retombent au sol
         else if (p.kind === 'kusarigama') poserChaines(p.cible, KUSARIGAMA_DUREE - PROJET_VOL)
       }
     }
 
-    // Les auras collent à leur porteur et battent doucement jusqu'à l'extinction
-    for (const a of auras) {
-      if (!a.actif) continue
-      const reste = a.fin - time
+    // ☠️ La brume : des voiles qui dérivent autour de la victime et la noient
+    for (const b of brumes) {
+      if (!b.actif) continue
+      const reste = b.fin - time
       if (reste <= 0) {
-        a.actif = false
-        a.mesh.visible = false
+        b.actif = false
+        b.group.visible = false
         continue
       }
-      a.mesh.position.copy(a.cible.position).setY(0.85)
-      const k = reste / a.duree // 1 → 0
-      const battement = 1 + Math.sin(time * 9) * 0.05
-      a.mesh.scale.setScalar(battement)
-      // Franche à l'apparition, elle s'efface sur la fin : on voit le sort mourir
-      ;(a.mesh.material as THREE.MeshBasicMaterial).opacity = 0.16 + Math.min(1, k * 2.2) * 0.16
+      const p = b.cible.position
+      const k = Math.min(1, reste / 0.5) // elle se lève sur la fin
+      b.voiles.forEach((v) => {
+        const ph = (v.userData.phase as number) + time * 0.8
+        // Chacun tourne à son rythme sur une orbite propre : c'est l'irrégularité
+        // qui fait « brume » — alignés, ils redeviendraient une boule.
+        v.position.set(
+          p.x + Math.cos(ph) * 0.5,
+          0.5 + Math.sin(ph * 1.7) * 0.45 + 0.5,
+          p.z + Math.sin(ph) * 0.5
+        )
+        v.rotation.z = ph * 0.5
+        v.lookAt(camera.position) // toujours face à l'œil : un voile n'a pas de dos
+        ;(v.material as THREE.MeshBasicMaterial).opacity = (0.3 + Math.sin(ph * 2) * 0.12) * k
+      })
+    }
+
+    // 🌀 L'aura du Vent : elle jaillit et CRÉPITE — le scintillement fait l'énergie
+    const ventOn = time < ventFin
+    ventAura.visible = ventOn
+    for (const l of ventLangues) l.visible = ventOn
+    if (ventOn) {
+      const p = player.mesh.position
+      const k = (ventFin - time) / VENT_DUREE
+      ventAura.position.set(p.x, p.y + 1.25, p.z)
+      // Une secousse à CHAQUE image : lissée, l'aura ferait « bulle », pas « énergie »
+      const nerf = 0.86 + Math.random() * 0.28
+      ventAura.scale.set(nerf, 0.92 + Math.random() * 0.2, nerf)
+      ;(ventAura.material as THREE.MeshBasicMaterial).opacity = (0.3 + Math.random() * 0.22) * Math.min(1, k * 3)
+      ventLangues.forEach((l) => {
+        const a = l.userData.angle as number
+        // Elles remontent en boucle le long du corps, décalées entre elles
+        const monte = ((time * 2.6 + (l.userData.phase as number)) % 1)
+        l.position.set(p.x + Math.cos(a) * 0.52, p.y + 0.15 + monte * 2.1, p.z + Math.sin(a) * 0.52)
+        l.lookAt(camera.position)
+        ;(l.material as THREE.MeshBasicMaterial).opacity = (1 - monte) * 0.55 * Math.min(1, k * 3)
+      })
+    }
+
+    // 🍵 Les cercles du Thé : ils montent du sol vers la tête, décalés
+    const theOn = time < theFin
+    if (theOn) {
+      const p = player.mesh.position
+      const ecoule = 1 - (theFin - time) / THE_DUREE // 0 → 1
+      theCercles.forEach((c, i) => {
+        // Chacun part un quart de seconde après le précédent : on lit une vague
+        const t = ecoule * 1.6 - i * 0.18
+        if (t <= 0 || t >= 1) {
+          c.visible = false
+          return
+        }
+        c.visible = true
+        c.position.set(p.x, p.y + 0.1 + t * 2.1, p.z)
+        c.scale.setScalar(1 + t * 0.35) // il s'évase en montant
+        ;(c.material as THREE.MeshBasicMaterial).opacity = (1 - t) * 0.85
+      })
+    } else {
+      for (const c of theCercles) c.visible = false
     }
 
     // 🕊️ L'anneau de la Grue : il te ceint et MONTE AVEC TOI quand tu sautes
@@ -2324,10 +2477,12 @@ function tick(now?: number) {
       const p = player.mesh.position
       miroirGroup.position.set(p.x, p.y + 1.25, p.z + 0.75)
       miroirTex.offset.x -= dt * 0.32 // le reflet glisse : c'est ça qui fait « miroir »
-      const k = (miroirFin - time) / MIROIR_DUREE
-      const fondu = Math.min(1, k * 4) // il s'efface quand la parade expire
-      ;(miroirGlace.material as THREE.MeshBasicMaterial).opacity = 0.62 * fondu
-      ;(miroirCadre.material as THREE.MeshBasicMaterial).opacity = 0.78 * fondu
+      // Discrète : la garde tient sans limite de temps, elle ne doit donc pas
+      // masquer la piste pendant toute la course. On la devine, le reflet la
+      // rappelle par éclats — juste assez pour savoir qu'on est couvert.
+      const respire = 0.5 + Math.sin(time * 2.4) * 0.5 // 0 → 1, lent
+      ;(miroirGlace.material as THREE.MeshBasicMaterial).opacity = 0.16 + respire * 0.16
+      ;(miroirCadre.material as THREE.MeshBasicMaterial).opacity = 0.22 + respire * 0.16
     }
 
     // ⛓️ Les chaînes : accrochées à la hanche, elles retombent au sol derrière

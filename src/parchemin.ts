@@ -111,8 +111,20 @@ export const ARMURE_COUT_MUR = 2
 export const ARMURE_COUT_PETIT = 1
 
 // ————— 🪞 Parade Miroir —————
-// Le prochain sort reçu repart chez son auteur. Elle ne dure pas éternellement,
-// sinon on la garderait allumée toute la course : c'est un pari, pas un abri.
+// Le prochain sort reçu repart chez son auteur.
+//
+// Elle tient TANT QU'ON N'Y TOUCHE PAS : pas de minuteur, elle ne se consomme
+// qu'en renvoyant quelque chose. C'est une garde qu'on lève et qu'on oublie —
+// le prix, c'est un slot immobilisé pendant tout ce temps, dans une file de
+// deux : la garder, c'est courir avec une main en moins.
+//
+// La glace à l'écran est volontairement discrète (cf. main.ts) : une garde qui
+// dure toute la course ne doit pas masquer la piste.
+//
+// ⚠️ Les bots gardent une parade À DURÉE LIMITÉE : sans minuteur, un rival qui
+// tire un miroir tôt le garderait jusqu'à l'arrivée et tous les sabotages du
+// joueur lui reviendraient dans les dents. Eux ne choisissent pas leur moment,
+// le joueur si — c'est ce qui justifie les deux règles.
 export const MIROIR_DUREE = 8
 
 // ————— 🎯 Kunai Explosif —————

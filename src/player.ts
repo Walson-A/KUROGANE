@@ -10,7 +10,23 @@ export const LANES = [-2.2, 0, 2.2]
  * Chaque guerrier les multiplie par ses propres réglages (cf. roster.ts).
  */
 const GRAVITY = 42 // force qui te ramène au sol
-const JUMP_SPEED = 14 // impulsion du saut
+/**
+ * L'impulsion du saut.
+ *
+ * ⚠️ Calibrée sur LE MUR (2,4 m, soit 2,28 m après la tolérance de collision) :
+ * il ne doit se franchir que d'une seule façon, en changeant de ligne — sauf
+ * pour Hana, la sauteuse, à qui ça donne enfin une raison d'être choisie.
+ *
+ *   apex = (JUMP_SPEED × saut)² / (2 × GRAVITY),  pieds = apex + 0,05
+ *
+ * À 14, Yasuke (×1) culminait à 2,33 m et passait le mur de 10 cm — la voie
+ * royale qui vidait le mur de son sens. À 13,2 il plafonne à 2,07 m et reste
+ * bloqué, quand Hana (×1,18) monte à 2,89 m et passe franchement.
+ *
+ * On baisse la RÉFÉRENCE plutôt que les multiplicateurs : chaque guerrier garde
+ * son identité chiffrée, et Yasuke reste le mètre-étalon à 1,00 partout.
+ */
+const JUMP_SPEED = 13.2
 const ATTACK_TIME = 0.26 // durée d'un coup : on ne peut pas réenchaîner avant
 const SLIDE_TIME = 0.55 // durée d'une glissade (secondes)
 const LANE_LERP = 12 // vitesse de glissement vers la ligne visée
