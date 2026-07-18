@@ -33,6 +33,25 @@ function corpsDe(f: Fighter): { racine: THREE.Object3D; corps: Corps } {
   return { racine, corps: racine.userData.corps as Corps }
 }
 
+/**
+ * De quel côté regarde le corps DANS SON PROPRE REPÈRE : +1 si son avant est
+ * en +Z local, −1 si c'est en −Z.
+ *
+ * Le coureur avance vers −Z dans le monde ; `buildFighter` oriente la racine
+ * pour l'y faire face. On remonte cette orientation pour savoir quel signe
+ * attendre sur les angles, plutôt que de le coder en dur — la convention du
+ * modèle a déjà changé une fois, et les contrôles avaient tous basculé d'un
+ * coup sans qu'aucun ne soit réellement faux.
+ */
+const devantZ = (() => {
+  const { racine } = corpsDe(ROSTER[0])
+  racine.updateMatrixWorld(true)
+  const q = new THREE.Quaternion()
+  racine.getWorldQuaternion(q)
+  const avantLocal = new THREE.Vector3(0, 0, -1).applyQuaternion(q.invert())
+  return Math.sign(avantLocal.z) || 1
+})()
+
 /** La hauteur au sol d'un point du membre, une fois toute la chaîne appliquée. */
 function hauteurMonde(racine: THREE.Object3D, noeud: THREE.Object3D, bas: number) {
   racine.updateMatrixWorld(true)
@@ -64,7 +83,7 @@ for (const f of PERSOS) {
   anim.jouer('course')
 
   let genouAvant = -9
-  let coudeArriere = 9
+  let coudeArriere = -9
   let piedBas = 9
   let piedHaut = -9
   let opposition = 0
@@ -76,21 +95,25 @@ for (const f of PERSOS) {
     racine.updateMatrixWorld(true)
 
     /*
-     * Le repère, établi une fois pour toutes : le coureur avance vers -Z
-     * (le décor défile vers +Z et sort derrière la caméra), et son buste se
-     * penche vers -Z. Donc -Z = devant, +Z = derrière.
-     *
      * Un segment qui pend vers le bas et qu'on tourne de `a` autour de X voit
-     * son extrémité partir en z = -sin(a). Le genou doit se replier DERRIÈRE
-     * (+Z), donc a < 0 ; le coude se plie DEVANT (-Z), donc a > 0.
+     * son extrémité partir en z = -sin(a). Le genou doit se replier DERRIÈRE,
+     * le coude se plier DEVANT.
+     *
+     * Le signe attendu dépend du sens dans lequel le corps est modelé — et ce
+     * sens a déjà changé une fois. On le DÉDUIT donc du rig (cf. `devantZ`)
+     * au lieu de le figer : ce contrôle reste juste quelle que soit la
+     * convention choisie plus tard.
      */
     const eG = new THREE.Euler().setFromQuaternion(corps.jambeG.bas.quaternion, 'XYZ')
     const eD = new THREE.Euler().setFromQuaternion(corps.jambeD.bas.quaternion, 'XYZ')
-    genouAvant = Math.max(genouAvant, eG.x, eD.x)
+    genouAvant = Math.max(genouAvant, -devantZ * eG.x, -devantZ * eD.x)
 
     const cG = new THREE.Euler().setFromQuaternion(corps.brasG.bas.quaternion, 'XYZ')
     const cD = new THREE.Euler().setFromQuaternion(corps.brasD.bas.quaternion, 'XYZ')
-    coudeArriere = Math.min(coudeArriere, cG.x, cD.x)
+    // `devantZ * a` mesure combien le coude part EN ARRIÈRE. C'est cette
+    // valeur-là qui doit rester petite ; la flexion vers l'avant, elle, est
+    // au contraire attendue et ample.
+    coudeArriere = Math.max(coudeArriere, devantZ * cG.x, devantZ * cD.x)
 
     // Les pieds : le mesh du pied est à -0.36 sous le genou
     for (const j of [corps.jambeG, corps.jambeD]) {
@@ -108,7 +131,7 @@ for (const f of PERSOS) {
   }
 
   verifier(`${nom.padEnd(16)} genou se replie derriere`, genouAvant < 0.35, `pire hyperextension ${genouAvant.toFixed(2)} rad`)
-  verifier(`${nom.padEnd(16)} coude se plie devant`, coudeArriere > -0.35, `pire flexion arriere ${coudeArriere.toFixed(2)} rad`)
+  verifier(`${nom.padEnd(16)} coude se plie devant`, coudeArriere < 0.35, `pire flexion arriere ${coudeArriere.toFixed(2)} rad`)
   verifier(`${nom.padEnd(16)} pieds au sol`, piedBas < 0.25, `plus bas ${piedBas.toFixed(2)}`)
   verifier(`${nom.padEnd(16)} jambes qui levent`, piedHaut - piedBas > 0.25, `amplitude ${(piedHaut - piedBas).toFixed(2)}`)
   verifier(`${nom.padEnd(16)} bras opposes aux jambes`, opposition / images < 0, `correlation ${(opposition / images).toFixed(3)}`)
@@ -241,26 +264,99 @@ for (const geste of ['lancer', 'attaque', 'impact'] as const) {
 console.log('\n————— La foulee pressee va vraiment plus vite —————')
 for (const f of PERSOS) {
   const nom = f.id === 'perso' ? `perso(${f.head})` : f.id
-  // Combien de cycles de foulee en une seconde, pour chaque allure ?
-  const cycles = (a: Action) => {
+  /*
+   * On mesure l'ANGLE TOTAL parcouru par la cuisse en une seconde, pas un
+   * nombre de cycles entiers : compter des cycles ne donnait que 2 ou 3, une
+   * resolution trop grossiere pour distinguer un facteur 1,35.
+   */
+  const agitation = (a: Action) => {
     const { racine, corps } = corpsDe(f)
     const anim = new Anim()
-    let tours = 0
-    let precedent = new THREE.Euler().setFromQuaternion(corps.jambeG.pivot.quaternion, 'XYZ').x
-    let montait = true
+    let cumul = 0
+    let precedent = corps.jambeG.pivot.quaternion.clone()
     for (let i = 0; i < 120; i++) {
       animerGuerrier(racine, f, anim, a, 1 / 120, i / 120)
-      const x = new THREE.Euler().setFromQuaternion(corps.jambeG.pivot.quaternion, 'XYZ').x
-      // Un cycle = un passage par le point haut de la cuisse
-      if (montait && x < precedent) { tours++; montait = false }
-      if (!montait && x > precedent) montait = true
-      precedent = x
+      cumul += precedent.angleTo(corps.jambeG.pivot.quaternion)
+      precedent = corps.jambeG.pivot.quaternion.clone()
     }
-    return tours
+    return cumul
   }
-  const lent = cycles('course')
-  const vite = cycles('courseRapide')
-  verifier(`${nom.padEnd(16)} cadence pressee > normale`, vite > lent, `${lent} → ${vite} appuis/s`)
+  const lent = agitation('course')
+  const vite = agitation('courseRapide')
+  const rapport = vite / lent
+  // On vise 1,35. On accepte 1,2–1,5 : l'echantillonnage a 120 Hz sur des
+  // clips de 0,53 s ne tombe pas au centieme pres.
+  verifier(
+    `${nom.padEnd(16)} cadence pressee ~1,35x`,
+    rapport > 1.2 && rapport < 1.5,
+    `${lent.toFixed(1)} → ${vite.toFixed(1)} rad/s, soit ×${rapport.toFixed(2)}`
+  )
+}
+
+console.log('\n————— Ce qui traine doit trainer DERRIERE —————')
+for (const f of PERSOS) {
+  const nom = f.id === 'perso' ? `perso(${f.head})` : f.id
+  const { racine, corps } = corpsDe(f)
+  racine.updateMatrixWorld(true)
+  /*
+   * Queues de kitsune, echarpe, cape : tout cela doit flotter dans le dos.
+   * Les pans de jupe, eux, pendent devant — et c'est voulu. On les distingue
+   * par leur nature : un trainant est un Group (plusieurs pieces), un pan de
+   * jupe un simple Mesh.
+   */
+  let devant = 0
+  let derriere = 0
+  for (const fl of corps.flottants) {
+    if (fl.type !== 'Group') continue
+    const p = new THREE.Vector3(0, 0.5, 0)
+    fl.localToWorld(p) // remonte toute la chaine, demi-tour de la racine compris
+    if (p.z > 0.05) derriere++
+    else if (p.z < -0.05) devant++
+  }
+  verifier(
+    `${nom.padEnd(16)} ${derriere} trainant(s) dans le dos`,
+    devant === 0,
+    devant ? `${devant} devant le nez !` : ''
+  )
+}
+
+console.log('\n————— Personne ne s\'enfonce dans la piste —————')
+for (const action of ACTIONS) {
+  let pire = 9
+  let coupable = ''
+  for (const f of PERSOS) {
+    const clip = clipDe(f, action)
+    if (!clip) continue
+    const { racine, corps } = corpsDe(f)
+    const anim = new Anim()
+    for (let i = 0; i < 60; i++) {
+      animerGuerrier(racine, f, anim, action, clip.duree / 60, i / 60)
+      racine.updateMatrixWorld(true)
+      for (const [m, creux] of [
+        [corps.jambeG.bas, -0.41], [corps.jambeD.bas, -0.41],
+        [corps.brasG.bas, -0.38], [corps.brasD.bas, -0.38],
+      ] as const) {
+        const p = new THREE.Vector3(0, creux, 0)
+        m.localToWorld(p)
+        racine.worldToLocal(p)
+        if (p.y < pire) { pire = p.y; coupable = f.id }
+      }
+    }
+  }
+  verifier(
+    `${action.padEnd(13)} membre le plus bas`,
+    pire > -0.02,
+    `${pire.toFixed(3)} (${coupable})`
+  )
+}
+
+console.log('\n————— L\'attaque tient dans le verrou du jeu —————')
+{
+  // ATTACK_TIME vaut 0,26 s dans player.ts : le jeu autorise une frappe tous
+  // les 0,26 s. Un geste plus long serait relance avant d'avoir fini et
+  // begaierait des qu'on enchaine les jarres.
+  const clip = clipDe(PERSOS[0], 'attaque')!
+  verifier('le geste ne depasse pas ATTACK_TIME', clip.duree <= 0.261, `${clip.duree.toFixed(3)} s`)
 }
 
 console.log('\n————— Le repli quand le mouvement manque —————')

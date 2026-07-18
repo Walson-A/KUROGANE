@@ -30,10 +30,15 @@ const PRECISION = 1000
 /*
  * ————— Le reciblage —————
  *
- * Mixamo place le personnage FACE À +Z ; notre coureur regarde -Z (la caméra
- * est derrière lui). D'où le demi-tour appliqué à chaque direction.
+ * Mixamo modèle FACE À +Z. Notre corps à boîtes aussi : masque en z positif,
+ * queues et écharpe en z négatif. Les deux repères COÏNCIDENT, donc il n'y a
+ * rien à retourner ici.
+ *
+ * 🔗 C'est `buildFighter` qui tourne la racine d'un demi-tour pour faire face
+ * au sens de la marche (le coureur avance vers -Z). Toucher à l'un sans
+ * l'autre ferait courir tout le monde à reculons — voir le commentaire en fin
+ * de buildFighter, dans roster.ts.
  */
-const DEMI_TOUR = (v) => v.set(-v.x, v.y, -v.z)
 
 /** Vers le BAS : la pose de repos de nos membres (le mesh pend sous le pivot) */
 const BAS = new THREE.Vector3(0, -1, 0)
@@ -98,9 +103,17 @@ const DECOUPES = {
   // Fireball dure 3,37 s : la main recule jusqu'à 1,5 s, se projette à 1,90 s,
   // puis récupère. On garde l'armé + le jet, joué une fois et demie plus vite.
   'Fireball.fbx': { debut: 1.35, fin: 2.45, vitesse: 1.5 },
-  // Hell Slammer dure 7,57 s pour une attaque qui en dure 0,26 dans le jeu.
-  // Son pic est à 0,97 s : on ne garde que la frappe autour.
-  'Hell Slammer A.fbx': { debut: 0.62, fin: 1.32, vitesse: 1.4 },
+  /*
+   * Hell Slammer dure 7,57 s. On y a cherché un VRAI coup porté : la main
+   * droite passe de 31 unités derrière la hanche à 40 devant entre 0,80 s et
+   * 1,08 s, puis revient. C'est la seule frappe franche du clip.
+   *
+   * La fenêtre est jouée en 0,26 s — exactement ATTACK_TIME (cf. player.ts).
+   * Ce n'est pas un chiffre décoratif : le jeu autorise une nouvelle frappe
+   * tous les 0,26 s, et en enchaînant les jarres on relançait le geste avant
+   * qu'il finisse. Il ne montrait jamais que son élan et bégayait.
+   */
+  'Hell Slammer A.fbx': { debut: 0.8, fin: 1.3, vitesse: 0.5 / 0.26 },
 }
 
 /**
@@ -241,7 +254,6 @@ function cuire(fichier) {
       a.getWorldPosition(pos1)
       bOs.getWorldPosition(pos2)
       dir.subVectors(pos2, pos1).normalize()
-      DEMI_TOUR(dir)
 
       // La direction voulue, ramenée dans le repère du parent
       const qParent = accum[j.parent] ?? new THREE.Quaternion()

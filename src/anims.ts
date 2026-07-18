@@ -375,6 +375,43 @@ const REPOS = new THREE.Quaternion()
 const ARME_EPAULE = new THREE.Quaternion().setFromEuler(new THREE.Euler(-0.3, 0, 0))
 const ARME_COUDE = new THREE.Quaternion().setFromEuler(new THREE.Euler(1.15, 0, 0))
 
+/*
+ * ————— Le garde-fou du sol —————
+ *
+ * Les mouvements Mixamo sont joués par un corps aux proportions qui ne sont
+ * pas les nôtres : là où leur personnage rase le sol, nos boîtes le
+ * traversent. La glissade était la pire — mains et bassin passaient jusqu'à
+ * 16 cm sous la piste, et le coureur semblait à moitié enterré.
+ *
+ * Plutôt que de retoucher chaque clip à la main, on relève le bassin de ce
+ * qui dépasse. C'est un filet : il ne fait rien quand tout va bien, et aucun
+ * mouvement futur ne pourra enfoncer un guerrier dans le décor.
+ *
+ * On sonde les MEMBRES SOLIDES uniquement. Les queues, capes et écharpes
+ * traînent volontiers plus bas : les inclure relèverait le corps entier pour
+ * sauver un bout de tissu, et la glissade se jouerait debout.
+ */
+const SOUS_LE_PIED = -0.41 // le dessous de la semelle, dans le repère du genou
+const SOUS_LA_MAIN = -0.38 // le bout de la main, dans le repère du coude
+const sonde = new THREE.Vector3()
+
+function poserAuSol(racine: THREE.Object3D, g: Corps) {
+  racine.updateMatrixWorld(true)
+  let plusBas = 0
+  for (const [membre, creux] of [
+    [g.jambeG.bas, SOUS_LE_PIED],
+    [g.jambeD.bas, SOUS_LE_PIED],
+    [g.brasG.bas, SOUS_LA_MAIN],
+    [g.brasD.bas, SOUS_LA_MAIN],
+  ] as const) {
+    sonde.set(0, creux, 0)
+    membre.localToWorld(sonde)
+    racine.worldToLocal(sonde)
+    if (sonde.y < plusBas) plusBas = sonde.y
+  }
+  if (plusBas < 0) g.bassin.position.y -= plusBas
+}
+
 function finitions(g: Corps, t: number, intensite: number, geste: boolean) {
   // Pendant un geste (lancer, frappe, encaissement), on RELÂCHE le verrou :
   // le bras doit pouvoir partir. Le garder tiendrait la garde et écraserait
@@ -424,4 +461,5 @@ export function animerGuerrier(
     return
   }
   finitions(g, tSecours, intensite, anim.gesteEnCours)
+  if (racine) poserAuSol(racine, g)
 }

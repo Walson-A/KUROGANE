@@ -202,6 +202,13 @@ clip et départage sur les faits :
   et `Running Arc (1)` — les noms ne disent rien. C'est la **dérive latérale des
   hanches** qui tranche. Là où Mixamo nomme le côté (`Arc Left` / `Arc Right`),
   la mesure tombe d'accord avec le nom : de quoi lui faire confiance ailleurs.
+- **une attaque doit frapper devant.** Dans les 7,57 s de `Hell Slammer`, la
+  main droite ne passe devant la hanche qu'**une seule fois** : de 31 unités
+  derrière à 40 devant, entre 0,80 s et 1,08 s. On ne garde que ça — joué en
+  **0,26 s, soit exactement `ATTACK_TIME`**. Ce n'est pas décoratif : le jeu
+  autorise une frappe toutes les 0,26 s, et en enchaînant les jarres le geste
+  était relancé avant d'avoir fini. Il ne montrait jamais que son élan et
+  bégayait.
 - **un clip trop long est taillé autour de son geste.** `Fireball` dure 3,37 s :
   la main recule jusqu'à 1,5 s, se projette à 1,90 s, puis récupère. On garde
   1,35 → 2,45 s, joué une fois et demie plus vite. `Hell Slammer` dure 7,57 s
@@ -219,11 +226,40 @@ C'est ce contrôle qui a établi le repère : le coureur avance vers **−Z** (l
 décor défile vers +Z et sort derrière la caméra) et son buste se penche dans le
 sens de la marche. Donc −Z devant, +Z derrière.
 
-> ⚠️ Deux détails **antérieurs** à ces animations, laissés en l'état :
-> l'ancienne foulée calculée de `animerCourse` plie genoux et coudes dans
-> l'autre sens, et la plaque de visage (menpo, masque d'oni) est modelée du
-> côté +Z, donc à l'arrière de la tête. Les mouvements importés, eux, suivent
-> le repère ci-dessus.
+### 🔄 Le demi-tour
+
+Tout le corps est modelé **face à +Z** : masque et menpo en z positif, queues,
+écharpe, cape et pan de capuche en z négatif — leurs commentaires disent bien
+« en arrière ».
+
+Mais le jeu fait avancer le coureur vers **−Z**. Sans correction, le guerrier
+courait **à reculons** : les queues de kitsune lui battaient devant le nez et
+son visage était dans son dos.
+
+`buildFighter` tourne donc la **racine** d'un demi-tour, plutôt que de déplacer
+trente pièces une à une — une seule ligne, et rien ne peut être oublié. Mixamo
+modelant lui aussi face à +Z, les deux repères coïncident et **la cuisson ne
+retourne plus rien**. ⚠️ Les deux vont ensemble : toucher à l'un sans l'autre
+fait courir tout le monde à l'envers.
+
+Le contrôle en garde la trace, et il **déduit le sens du rig** au lieu de le
+figer : quand la convention a changé, tous les contrôles d'angle ont basculé
+d'un coup sans qu'aucun ne soit réellement faux. Ils s'adaptent désormais.
+
+### 🕳️ Le garde-fou du sol
+
+Les mouvements sont joués par un corps aux proportions qui ne sont pas les
+nôtres : là où le personnage Mixamo rase le sol, nos boîtes le traversent. La
+**glissade** était la pire — mains et bassin passaient jusqu'à **16 cm sous la
+piste**, et le coureur semblait à moitié enterré.
+
+Plutôt que de retoucher chaque clip, on relève le bassin de ce qui dépasse.
+C'est un filet : il ne fait rien quand tout va bien, et aucun mouvement futur
+ne pourra enfoncer un guerrier dans le décor.
+
+On ne sonde que les **membres solides**. Les queues, capes et écharpes traînent
+volontiers plus bas : les inclure relèverait le corps entier pour sauver un
+bout de tissu, et la glissade se jouerait debout.
 
 ## 🎌 Les salons — jouer jusqu'à 10
 
