@@ -7,6 +7,72 @@
     <title>KUROGANE 黒鉄</title>
   </head>
   <body>
+    <!--
+      ————— Les icônes des deux monnaies —————
+      Dessinées UNE fois ici, puis référencées partout par <use href="#i-mon">.
+      Du SVG plutôt qu'une image : ça pèse zéro octet à télécharger, ça reste
+      net sur les écrans à forte densité, et ça se teinte en CSS.
+    -->
+    <svg width="0" height="0" style="position: absolute" aria-hidden="true">
+      <defs>
+        <linearGradient id="g-mon" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="#e8cd85" />
+          <stop offset="0.5" stop-color="#c2a054" />
+          <stop offset="1" stop-color="#8a7433" />
+        </linearGradient>
+        <linearGradient id="g-hisui" x1="0.2" y1="0" x2="0.8" y2="1">
+          <stop offset="0" stop-color="#7fe0b0" />
+          <stop offset="0.45" stop-color="#2f9e63" />
+          <stop offset="1" stop-color="#145c3a" />
+        </linearGradient>
+
+        <!-- 文 Le mon : la pièce percée d'un trou carré de l'ère Sengoku -->
+        <symbol id="i-mon" viewBox="0 0 24 24">
+          <circle cx="12" cy="12" r="11" fill="url(#g-mon)" />
+          <circle cx="12" cy="12" r="11" fill="none" stroke="#6b5827" stroke-width="1" />
+          <!-- Le motif de vagues du revers, réduit à quatre arcs : à 16 px,
+               plus de détail ne serait que du bruit. -->
+          <g fill="none" stroke="#6b5827" stroke-width="0.9" opacity="0.55">
+            <path d="M12 3.4a8.6 8.6 0 0 1 0 0" />
+            <path d="M5.5 8.2a7.4 7.4 0 0 1 13 0" />
+            <path d="M5.5 15.8a7.4 7.4 0 0 0 13 0" />
+          </g>
+          <!-- Le trou carré, la signature de la pièce -->
+          <rect x="9.1" y="9.1" width="5.8" height="5.8" rx="0.6" fill="#151a2c" />
+          <rect
+            x="9.1"
+            y="9.1"
+            width="5.8"
+            height="5.8"
+            rx="0.6"
+            fill="none"
+            stroke="#6b5827"
+            stroke-width="0.8"
+          />
+        </symbol>
+
+        <!-- 翡翠 Le hisui : un cabochon de jade poli -->
+        <symbol id="i-hisui" viewBox="0 0 24 24">
+          <ellipse cx="12" cy="12" rx="10.5" ry="9" fill="url(#g-hisui)" />
+          <ellipse
+            cx="12"
+            cy="12"
+            rx="10.5"
+            ry="9"
+            fill="none"
+            stroke="#0f4a30"
+            stroke-width="0.9"
+          />
+          <!-- LE reflet : c'est lui qui fait lire « pierre polie » plutôt que
+               « pastille verte ». Sans lui, l'icône est plate. -->
+          <ellipse cx="8.6" cy="8.4" rx="4.6" ry="2.7" fill="#eafff4" opacity="0.5"
+            transform="rotate(-18 8.6 8.4)" />
+          <ellipse cx="15.5" cy="15.2" rx="2.6" ry="1.4" fill="#bff2d8" opacity="0.25"
+            transform="rotate(-18 15.5 15.2)" />
+        </symbol>
+      </defs>
+    </svg>
+
     <canvas id="game"></canvas>
 
     <!-- Interface par-dessus le jeu (chrono, sort équipé, progression) -->
@@ -68,7 +134,7 @@
           <button id="btnBoutique" class="ghost grow">
             <span class="lines">
               <small>La bourse</small>
-              <b id="bourse">— 文 · — 翡翠</b>
+              <b id="bourse">—</b>
             </span>
             <span class="chev">🏪</span>
           </button>
@@ -83,8 +149,8 @@
         </header>
 
         <div class="bourse-grande">
-          <span id="bourseMon">0 文</span>
-          <span id="bourseHisui">0 翡翠</span>
+          <span id="bourseMon">—</span>
+          <span id="bourseHisui">—</span>
         </div>
 
         <p class="lead">

@@ -1344,3 +1344,28 @@ body {
 .swatch.paye {
   box-shadow: 0 0 0 2px rgba(214, 172, 90, 0.75);
 }
+
+/* ——— Les pièces : icône et texte sur la même ligne de base ——— */
+.piece {
+  vertical-align: -0.16em; /* aligne le rond sur le chiffre, pas sur le bas de ligne */
+  flex: none;
+}
+/* Les pavés de la bourse : icône + montant centrés ensemble */
+.bourse-grande span {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+}
+/* Lu par les lecteurs d'écran, invisible à l'œil : sans ça, l'icône seule ne
+   dirait pas de QUELLE monnaie il s'agit. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}

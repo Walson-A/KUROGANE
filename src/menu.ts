@@ -14,6 +14,7 @@ import {
 import { Anim, animerGuerrier } from './anims'
 import { CIBLAGE, EFFETS, PARCHEMINS, TIRAGE, type ParcheminKind } from './parchemin'
 import { cleanName, loadSettings, saveSettings, type Quality, type Settings } from './settings'
+import { montant } from './icones'
 import type { LobbyView, SalonInfo } from './net'
 
 type ScreenName =
@@ -523,9 +524,16 @@ export class Menu {
     const dispo = mon !== null && hisui !== null
     this.el.bourseRow.classList.toggle('hidden', !dispo)
     if (!dispo) return
-    this.el.bourse.textContent = `${mon} 文 · ${hisui} 翡翠`
-    this.el.bourseMon.textContent = `${mon} 文`
-    this.el.bourseHisui.textContent = `${hisui} 翡翠`
+
+    // Le bouton du titre : les deux monnaies côte à côte, en petit
+    this.el.bourse.replaceChildren(
+      montant(mon, 'mon', 15),
+      ' · ',
+      montant(hisui, 'hisui', 15)
+    )
+    // L'en-tête de la boutique : une monnaie par pavé, en plus gros
+    this.el.bourseMon.replaceChildren(montant(mon, 'mon', 20))
+    this.el.bourseHisui.replaceChildren(montant(hisui, 'hisui', 20))
   }
 
   /** Remplit la boutique. `articles` vient du serveur — lui seul dit les prix. */
@@ -548,11 +556,13 @@ export class Menu {
       // textContent : le nom vient de la base, on ne fabrique jamais de HTML avec
       nom.textContent = a.nom
       const prix = document.createElement('small')
-      prix.textContent = a.possede
-        ? 'Acquis'
-        : a.prix_mon !== null
-          ? `${a.prix_mon} 文`
-          : `${a.prix_hisui} 翡翠`
+      if (a.possede) {
+        prix.textContent = 'Acquis'
+      } else if (a.prix_mon !== null) {
+        prix.appendChild(montant(a.prix_mon, 'mon', 14))
+      } else {
+        prix.appendChild(montant(a.prix_hisui ?? 0, 'hisui', 14))
+      }
       lignes.append(nom, prix)
 
       const bouton = document.createElement('button')
