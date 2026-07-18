@@ -169,24 +169,40 @@ body {
   filter: drop-shadow(0 2px 6px rgba(0, 0, 0, 0.7));
 }
 
-/* ——— Les têtes des coureurs ———
-   Un disque à la couleur de l'armure, barré du bandeau du guerrier : c'est le
-   même langage que les corps en piste, donc on reconnaît qui est qui sans
-   légende. La tienne est plus grosse et cerclée d'or — en course, on doit se
-   trouver soi-même sans réfléchir. */
-.tete {
+/* ——— Les coureurs sur la colonne ———
+   Chacun est un point d'ancrage SANS taille, posé à sa hauteur de course. La
+   tête et l'étiquette s'y accrochent en absolu : sans ça, la largeur du nom
+   décalerait la tête, et les disques ne seraient plus alignés sur le rail.
+
+   Le nom et l'écart tiennent ICI, à côté de la tête, et non dans un panneau
+   séparé : ce panneau se posait sur la colonne et la masquait. Une seule
+   lecture, au même endroit. */
+.coureur {
   position: absolute;
   left: 50%;
   bottom: 0%;
+  width: 0;
+  height: 0;
+  transition: bottom 0.2s linear;
+}
+.coureur.hidden {
+  display: none;
+}
+
+/* La tête : un disque à la couleur de l'armure, barré du bandeau du guerrier —
+   le même langage que les corps en piste, donc on reconnaît qui est qui. */
+.tete {
+  position: absolute;
+  left: 50%;
+  top: 50%;
   width: 26px;
   height: 26px;
   border-radius: 50%;
-  transform: translate(-50%, 50%);
+  transform: translate(-50%, -50%);
   border: 2px solid rgba(13, 16, 28, 0.85);
   box-shadow: 0 0 0 1px var(--band), 0 2px 6px rgba(0, 0, 0, 0.6);
   background: var(--body);
   overflow: hidden;
-  transition: bottom 0.2s linear;
 }
 /* Le bandeau, en travers du front */
 .tete::after {
@@ -198,15 +214,38 @@ body {
   height: 26%;
   background: var(--band);
 }
-.tete.moi {
+
+/* Le nom et l'écart, posés à droite de la tête */
+.etiq {
+  position: absolute;
+  left: 20px;
+  top: 50%;
+  transform: translateY(-50%);
+  white-space: nowrap;
+  font-size: 0.72rem;
+  font-variant-numeric: tabular-nums;
+  color: #9aa4c0;
+  text-shadow: 0 2px 6px rgba(0, 0, 0, 0.85), 0 0 3px rgba(0, 0, 0, 0.9);
+}
+/* L'écart se lit d'un coup : doré s'il te devance, sobre s'il est derrière */
+.etiq .devant {
+  color: #d6ac5a;
+}
+/* La tienne ressort : plus grosse, cerclée d'or, au-dessus des autres —
+   en course, on doit se trouver soi-même sans réfléchir. */
+.coureur.moi {
+  z-index: 3;
+}
+.coureur.moi .tete {
   width: 34px;
   height: 34px;
-  z-index: 3;
   border-color: #d6ac5a;
   box-shadow: 0 0 0 2px rgba(214, 172, 90, 0.5), 0 2px 10px rgba(0, 0, 0, 0.7);
 }
-.tete.hidden {
-  display: none;
+.coureur.moi .etiq {
+  left: 24px;
+  color: #f0e8d8;
+  font-weight: 700;
 }
 #progressbar.hidden {
   display: none;
@@ -240,61 +279,6 @@ body {
   display: none;
 }
 
-
-/* ——— Le classement en direct ——— */
-/* Sous la barre de progression : au-dessus, il chevaucherait le chrono sur
-   les écrans étroits. */
-#rank {
-  position: fixed;
-  top: max(78px, calc(env(safe-area-inset-top) + 64px));
-  left: 14px;
-  width: 142px;
-  padding: 6px;
-  border-radius: 9px;
-  background: rgba(13, 16, 28, 0.55);
-  border: 1px solid rgba(61, 69, 96, 0.7);
-  font-size: 0.74rem;
-  font-variant-numeric: tabular-nums;
-  text-shadow: 0 2px 6px rgba(0, 0, 0, 0.7);
-  pointer-events: none;
-}
-#rank.hidden {
-  display: none;
-}
-.rankrow {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 2px 4px;
-  border-radius: 5px;
-  color: #9aa4c0;
-}
-/* Ta ligne ressort : en course, on doit la trouver sans la chercher */
-.rankrow.moi {
-  background: rgba(226, 75, 58, 0.22);
-  color: #f0e8d8;
-  font-weight: 700;
-}
-.rankpos {
-  width: 10px;
-  text-align: right;
-  opacity: 0.75;
-}
-.rankdot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  flex: none;
-}
-.rankname {
-  flex: 1;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.rankgap {
-  opacity: 0.9;
-}
 
 /* ——— Compte à rebours 3, 2, 1, GO ! ——— */
 #count {

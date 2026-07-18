@@ -279,7 +279,6 @@ const sprintEl = document.getElementById('sprint')!
 const sprintFillEl = document.getElementById('sprintfill')!
 const slotEls = [document.getElementById('slot0')!, document.getElementById('slot1')!]
 const progressbarEl = document.getElementById('progressbar')!
-const rankEl = document.getElementById('rank')!
 const sprintLabelEl = document.getElementById('sprintlabel')!
 const botRowEl = document.getElementById('botrow')!
 const botNamesEl = document.getElementById('botnames')!
@@ -312,7 +311,7 @@ let netTimer = 0 // pour n'envoyer notre position que 10 fois/s
 let sprintTaps: number[] = [] // instants des derniers taps → cadence
 let sprintCharge = 0 // la jauge de sprint, 0 → 1
 let sprintSeen = false // la bannière ne s'annonce qu'une fois
-let rankTimer = 0 // le classement se redessine 10 fois/s, pas 60
+let rankTimer = 0 // les tetes se redessinent 10 fois/s, pas 60
 let dernierChiffre = -1 // le dernier chiffre du décompte annoncé (pour ne biper qu'une fois)
 let ligneCharge = 0 // la jauge de course droite, 0 → 1
 let aspiCharge = 0 // la jauge d'aspiration, 0 → 1
@@ -332,19 +331,37 @@ let nbBots = Math.min(BOTS_MAX, Math.max(1, Number(localStorage.getItem(CLE_BOTS
  * les corps en piste, donc on reconnaît qui est qui sans légende. Elles
  * montent du bas (le départ) vers le haut (le torii).
  */
-function makeTete(corps: number, bandeau: number, titre: string, moi = false): HTMLElement {
-  const el = document.createElement('div')
-  el.className = moi ? 'tete moi' : 'tete hidden'
-  el.style.setProperty('--body', cssColor(corps))
-  el.style.setProperty('--band', cssColor(bandeau))
-  el.title = titre
-  progressbarEl.appendChild(el)
-  return el
+interface Coureur {
+  wrap: HTMLElement
+  tete: HTMLElement
+  etiq: HTMLElement
+}
+
+function makeCoureur(moi = false): Coureur {
+  const wrap = document.createElement('div')
+  wrap.className = moi ? 'coureur moi' : 'coureur hidden'
+  const tete = document.createElement('div')
+  tete.className = 'tete'
+  const etiq = document.createElement('span')
+  etiq.className = 'etiq'
+  wrap.append(tete, etiq)
+  progressbarEl.appendChild(wrap)
+  return { wrap, tete, etiq }
 }
 
 /** La tienne : toujours là, toujours au-dessus des autres. */
-const teteMoi = makeTete(0x23252d, 0xc33a2c, 'Toi', true)
-const botMarks = bots.map((b) => makeTete(b.profil.corps, b.profil.bandeau, b.profil.nom))
+const coureurMoi = makeCoureur(true)
+
+/**
+ * Un banc de têtes pour les rivaux, ASSIGNÉ à chaque rafraîchissement.
+ *
+ * Un banc plutôt qu'une tête par bot : en ligne, les rivaux vont et viennent
+ * et ne sont pas des bots. Le même banc sert donc les deux modes — sinon le
+ * duel n'aurait aucune tête sur la colonne, et perdrait l'information que le
+ * panneau de classement portait avant d'être supprimé.
+ */
+const TETES_RIVAUX = 9
+const tetesRivaux = Array.from({ length: TETES_RIVAUX }, () => makeCoureur())
 
 // ————— Les parchemins —————
 // Une FILE d'attente : on lance toujours le plus ancien ramassé. Impossible de
@@ -1551,54 +1568,53 @@ function botsEnCourse() {
  * écarts sont donnés EN SECONDES et non en mètres — c'est la seule unité qui
  * parle au joueur, celle de son chrono et de son record.
  */
-function drawRank() {
-  const coureurs = [
-    { nom: 'Toi', couleur: 0xc33a2c, d: distance, arrivee: -1, moi: true },
-    ...botsEnCourse().map((b) => ({
-      nom: b.profil.nom,
-      couleur: b.profil.bandeau,
-      d: b.distance,
-      arrivee: b.tempsArrivee,
-      moi: false,
-    })),
-  ]
+function majTetes() {
+  // Toi : ta tete et ton nom, a ta hauteur de course
+  coureurMoi.wrap.style.bottom = `${Math.min(100, (distance / COURSE_LENGTH) * 100)}%`
+  coureurMoi.etiq.textContent = menu.settings.name || 'Toi'
 
+  // Les rivaux : les bots en entrainement, les joueurs en ligne. Le meme banc
+  // sert les deux — un duel doit montrer ses rivaux comme une course solo.
+  const rivaux = botsEnCourse().map((b) => ({
+    nom: b.profil.nom,
+    corps: b.profil.corps,
+    band: b.profil.bandeau,
+    d: b.distance,
+    fini: b.tempsArrivee >= 0,
+  }))
   if (online) {
     for (const r of rivals.values()) {
-      coureurs.push({
+      rivaux.push({
         nom: r.name,
-        couleur: r.opp.currentFighter.band,
+        corps: r.opp.currentFighter.body,
+        band: r.opp.currentFighter.band,
         d: r.opp.distanceNow,
-        arrivee: r.finished ? r.rank : -1, // le rang sert juste à trier les arrivés
-        moi: false,
+        fini: r.finished,
       })
     }
   }
 
-  // Arrivés d'abord (départagés au chrono), puis les autres à la distance
-  coureurs.sort((a, b) => {
-    if (a.arrivee >= 0 && b.arrivee >= 0) return a.arrivee - b.arrivee
-    if (a.arrivee >= 0) return -1
-    if (b.arrivee >= 0) return 1
-    return b.d - a.d
-  })
+  tetesRivaux.forEach((c, i) => {
+    const r = rivaux[i]
+    c.wrap.classList.toggle('hidden', !r)
+    if (!r) return
+    c.tete.style.setProperty('--body', cssColor(r.corps))
+    c.tete.style.setProperty('--band', cssColor(r.band))
+    c.wrap.style.bottom = `${Math.min(100, (r.d / COURSE_LENGTH) * 100)}%`
 
-  rankEl.innerHTML = coureurs
-    .map((c, i) => {
-      // L'écart est compté à TA vitesse : « ce qu'il me faudrait pour y être »
-      const ecart = (c.d - distance) / Math.max(speed, 1)
-      let gap = ''
-      if (c.arrivee >= 0) gap = '⛩️'
-      else if (!c.moi) gap = `${ecart >= 0 ? '+' : ''}${ecart.toFixed(2)}`
-      const couleur = `#${c.couleur.toString(16).padStart(6, '0')}`
-      return `<div class="rankrow${c.moi ? ' moi' : ''}">
-        <span class="rankpos">${i + 1}</span>
-        <span class="rankdot" style="background:${couleur}"></span>
-        <span class="rankname">${c.nom}</span>
-        <span class="rankgap">${gap}</span>
-      </div>`
-    })
-    .join('')
+    // L'ecart est compte a TA vitesse : « ce qu'il me faudrait pour y etre ».
+    // ⚠️ Le pseudo vient d'un autre joueur : on l'echappe avant tout affichage.
+    const nom = escapeHtml(r.nom)
+    if (r.fini) {
+      c.etiq.innerHTML = `${nom} ⛩️`
+      return
+    }
+    const ecart = (r.d - distance) / Math.max(speed, 1)
+    const devant = ecart >= 0
+    c.etiq.innerHTML =
+      `${nom} <span class="${devant ? 'devant' : ''}">` +
+      `${devant ? '+' : ''}${ecart.toFixed(1)}</span>`
+  })
 }
 
 /**
@@ -2029,7 +2045,7 @@ function backToMenu(banner?: string) {
     b.actif = false
     b.cacher()
   }
-  for (const m of botMarks) m.classList.add('hidden')
+  for (const c of tetesRivaux) c.wrap.classList.add('hidden')
   progressbarEl.classList.add('hidden') // la colonne n'a de sens qu'en course
   // Une lame encore en l'air à l'arrivée resterait plantée dans le menu
   for (const p of projets) {
@@ -2049,7 +2065,6 @@ function backToMenu(banner?: string) {
   grueAnneau.visible = false
   miroirGroup.visible = false
   hideSpark()
-  rankEl.classList.add('hidden')
   gapEl.classList.add('hidden')
   aspiEl.classList.add('hidden')
   countEl.classList.remove('show')
@@ -2161,14 +2176,11 @@ function startRace(seed: number) {
     // sinon les 4 rateraient exactement les mêmes obstacles au même endroit.
     // Le joueur est l'indice 0 de la grille, les bots suivent (voie répartie).
     b.reset(rangees, rouleaux, (seed ^ ((i + 1) * 0x9e3779b1)) | 0, voieDe(i + 1))
-    botMarks[i].classList.toggle('hidden', !b.actif)
-    botMarks[i].style.bottom = '0%'
   })
 
   // Le classement en direct : visible dans les deux modes !
-  rankEl.classList.remove('hidden')
   rankTimer = 0
-  drawRank()
+  majTetes()
 
   countdown = 3
   state = 'depart'
@@ -2181,7 +2193,7 @@ function startRace(seed: number) {
   sprintFillEl.style.width = '0%'
   progressbarEl.classList.remove('hidden')
   progressEl.style.height = '0%'
-  teteMoi.style.bottom = '0%'
+  coureurMoi.wrap.style.bottom = '0%'
   // Le marqueur unique n'a plus de sens à 10 : c'est le classement en direct
   // qui montre où en est chacun. La bulle d'écart vise le plus proche devant.
   gapEl.classList.remove('hidden')
@@ -2358,8 +2370,7 @@ const net = new Net({
     state = 'fini'
     sprintEl.classList.add('hidden')
     gapEl.classList.add('hidden')
-    rankEl.classList.add('hidden')
-    showResults(view)
+      showResults(view)
   },
   onError(message) {
     net.leave()
@@ -2422,8 +2433,8 @@ const menu = new Menu({
     player.setFighter(f)
     // Ta tête sur la colonne porte TES couleurs : sans ça elle resterait celle
     // de Yasuke et tu te chercherais parmi les rivaux.
-    teteMoi.style.setProperty('--body', cssColor(f.body))
-    teteMoi.style.setProperty('--band', cssColor(f.band))
+    coureurMoi.tete.style.setProperty('--body', cssColor(f.body))
+    coureurMoi.tete.style.setProperty('--band', cssColor(f.band))
     // Et si on est dans un salon, on prévient les autres : sans ça, changer de
     // guerrier depuis le lobby ne se verrait que chez soi.
     if (online) net.sendIdentity(identity())
@@ -2663,11 +2674,10 @@ function tick(now?: number) {
     track.update(dt, speed, distance)
 
     // Chaque rival court sa propre course, sans jamais toucher à la nôtre
-    bots.forEach((b, i) => {
+    bots.forEach((b) => {
       if (!b.actif) return
       if (b.avance(dt, time, COURSE_LENGTH)) toast(`⛩️ ${b.profil.nom} a franchi le torii !`)
       b.placer(dt, distance)
-      botMarks[i].style.bottom = `${Math.min(100, (b.distance / COURSE_LENGTH) * 100)}%`
 
       // Ses parchemins. Un sort offensif part sur celui qui le précède — le
       // joueur compris : c'est ce qui rend l'entraînement mordant.
@@ -2929,7 +2939,7 @@ function tick(now?: number) {
     rankTimer += dt
     if (rankTimer >= 0.1) {
       rankTimer = 0
-      drawRank()
+      majTetes()
     }
 
     // 📜 Ramassage d'un rouleau — on découvre son contenu maintenant
@@ -3080,7 +3090,6 @@ function tick(now?: number) {
     // La colonne monte : le remplissage ET ta tete suivent ta distance
     const pct = Math.min(100, (distance / COURSE_LENGTH) * 100)
     progressEl.style.height = `${pct}%`
-    teteMoi.style.bottom = `${pct}%`
 
     // Interface du sprint : on annonce, puis la jauge suit le martèlement
     if (sprinting) {
