@@ -284,16 +284,180 @@ let miroirFin = 0 // 🪞 la parade est levée jusqu'ici
 let fumigeneFin = 0 // 💨 l'écran est noyé de fumée
 let senbonFin = 0 // ☠️ l'écran ondule
 
-/** 🔮 Le portail en vol : il file tout droit dans SA ligne jusqu'au 1er mur. */
-let portail: { d: number; lane: number } | null = null
+/**
+ * ————— 🔮 Le portail : un orbe ÉLECTRIQUE —————
+ *
+ * Une bille unie ne disait rien de la violence du sort le plus brutal du jeu.
+ * On le monte comme une boule de foudre : un cœur incandescent, un anneau qui
+ * tourne, et des arcs qui se redessinent À CHAQUE IMAGE. C'est ce redessin
+ * permanent qui fait l'électricité — des éclairs figés ne crépitent pas.
+ *
+ * La COULEUR appartient au portail et se propage à tout le reste : le halo,
+ * les arcs, et la trace laissée sur le mur. Elle est donc un paramètre et non
+ * une constante — un portail vert laissera une brûlure verte.
+ */
+const PORTAIL_BLEU = 0x4db8ff
+const PORTAIL_VERT = 0x5ef08a
+const PORTAIL_ORANGE = 0xffa23a
 
-// La bille du portail. Un seul maillage recyclé : il n'y en a jamais deux.
-const portailMesh = new THREE.Mesh(
-  new THREE.SphereGeometry(0.42, 14, 14),
-  new THREE.MeshBasicMaterial({ color: 0xb98cff })
+/**
+ * La couleur du portail suit le BANDEAU de celui qui le lance : ton portail
+ * est le tien, et la brûlure sur le mur dit qui s'y est cassé.
+ *
+ * On ramène la teinte du bandeau à la plus proche des trois couleurs
+ * électriques plutôt que de la prendre telle quelle : un portail « ivoire » ou
+ * « acier noir » ne se lirait pas comme de la foudre. Et comme c'est calculé
+ * depuis la teinte, le skin perso hérite de la règle sans une ligne de plus.
+ */
+function couleurPortail(bandeau: number): number {
+  const hsl = { h: 0, s: 0, l: 0 }
+  new THREE.Color(bandeau).getHSL(hsl)
+  // Teintes de référence : orange ≈ 0,08, vert ≈ 0,35, bleu ≈ 0,55
+  const cibles: [number, number][] = [
+    [0.08, PORTAIL_ORANGE],
+    [0.35, PORTAIL_VERT],
+    [0.55, PORTAIL_BLEU],
+  ]
+  // Un bandeau très pâle (ivoire, blanc cassé) n'a pas de teinte fiable : bleu
+  // par défaut, la couleur du portail « de base ».
+  if (hsl.s < 0.18) return PORTAIL_BLEU
+  let best = PORTAIL_BLEU
+  let dist = Infinity
+  for (const [h, c] of cibles) {
+    // La teinte est un cercle : 0,95 et 0,02 sont voisines, pas opposées
+    const d = Math.min(Math.abs(hsl.h - h), 1 - Math.abs(hsl.h - h))
+    if (d < dist) {
+      dist = d
+      best = c
+    }
+  }
+  return best
+}
+
+/** 🔮 Le portail en vol : il file tout droit dans SA ligne jusqu'au 1er mur. */
+let portail: { d: number; lane: number; couleur: number } | null = null
+
+const portailGroup = new THREE.Group()
+// Le cœur : presque blanc, c'est lui qui « brûle » au centre
+const portailCoeur = new THREE.Mesh(
+  new THREE.SphereGeometry(0.2, 12, 10),
+  new THREE.MeshBasicMaterial({ color: 0xf2fbff, blending: THREE.AdditiveBlending, depthWrite: false })
 )
-portailMesh.visible = false
-scene.add(portailMesh)
+// Le halo : la lueur diffuse autour du cœur
+const portailHalo = new THREE.Mesh(
+  new THREE.SphereGeometry(0.46, 14, 12),
+  new THREE.MeshBasicMaterial({
+    color: PORTAIL_BLEU,
+    transparent: true,
+    opacity: 0.4,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+  })
+)
+// L'anneau : le cercle net de la référence, qui tourne sur lui-même
+const portailAnneau = new THREE.Mesh(
+  new THREE.TorusGeometry(0.5, 0.055, 8, 28),
+  new THREE.MeshBasicMaterial({
+    color: PORTAIL_BLEU,
+    transparent: true,
+    opacity: 0.9,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+  })
+)
+portailGroup.add(portailCoeur, portailHalo, portailAnneau)
+portailGroup.visible = false
+scene.add(portailGroup)
+
+/**
+ * Les arcs électriques. Chacun est une polyligne de 6 points qu'on RELANCE au
+ * hasard à chaque image : c'est le seul moyen d'obtenir un crépitement, et
+ * c'est bien moins coûteux que d'animer une texture.
+ */
+const ARC_POINTS = 6
+function makeArc(couleur: number): THREE.Line {
+  const g = new THREE.BufferGeometry()
+  g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(ARC_POINTS * 3), 3))
+  return new THREE.Line(
+    g,
+    new THREE.LineBasicMaterial({
+      color: couleur,
+      transparent: true,
+      opacity: 0.95,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+    })
+  )
+}
+
+/** Redessine un arc : il part de l'anneau et gigote vers l'extérieur. */
+function jitterArc(arc: THREE.Line, rayon: number, ampleur: number) {
+  const pos = arc.geometry.getAttribute('position') as THREE.BufferAttribute
+  const a = Math.random() * Math.PI * 2
+  for (let i = 0; i < ARC_POINTS; i++) {
+    const t = i / (ARC_POINTS - 1)
+    const r = rayon * (0.45 + t * 0.95)
+    pos.setXYZ(
+      i,
+      Math.cos(a) * r + (Math.random() - 0.5) * ampleur,
+      Math.sin(a) * r + (Math.random() - 0.5) * ampleur,
+      (Math.random() - 0.5) * ampleur * 0.6
+    )
+  }
+  pos.needsUpdate = true
+}
+
+const PORTAIL_ARCS = 7
+const portailArcs = Array.from({ length: PORTAIL_ARCS }, () => {
+  const l = makeArc(0x9fe8ff)
+  portailGroup.add(l)
+  return l
+})
+
+/**
+ * ————— 💥 L'impact contre un mur —————
+ * Le portail ne se contente plus de disparaître : il ÉCLATE. Une gerbe d'arcs
+ * qui crépitent une fraction de seconde, puis une trace brûlée qui reste sur
+ * le mur — à la couleur du portail, pour qu'on sache lequel s'y est cassé.
+ */
+const IMPACT_ARCS = 9
+const IMPACT_CREPITE = 0.4 // durée du crépitement
+const IMPACT_TRACE = 1.8 // la brûlure s'efface bien après
+const impactGroup = new THREE.Group()
+const impactArcs = Array.from({ length: IMPACT_ARCS }, () => {
+  const l = makeArc(PORTAIL_BLEU)
+  impactGroup.add(l)
+  return l
+})
+// La brûlure laissée sur la paroi
+const impactTrace = new THREE.Mesh(
+  new THREE.CircleGeometry(0.75, 20),
+  new THREE.MeshBasicMaterial({
+    color: PORTAIL_BLEU,
+    transparent: true,
+    opacity: 0,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+  })
+)
+impactGroup.add(impactTrace)
+impactGroup.visible = false
+scene.add(impactGroup)
+let impactFin = 0
+
+/** Le portail s'écrase ici, dans SA couleur. */
+function portailImpact(pos: THREE.Vector3, couleur: number) {
+  impactGroup.position.copy(pos)
+  impactGroup.visible = true
+  impactFin = time + IMPACT_TRACE
+  for (const a of impactArcs) {
+    ;(a.material as THREE.LineBasicMaterial).color.setHex(couleur)
+    a.visible = true
+  }
+  const m = impactTrace.material as THREE.MeshBasicMaterial
+  m.color.setHex(couleur)
+  m.opacity = 0.85
+}
 
 /**
  * ————— Les projectiles : un sabotage, ça VOLE jusqu'à sa victime —————
@@ -1515,7 +1679,14 @@ function lancerParchemin() {
   }
   // ————— 🔮 Le portail : il part, il ne vise pas —————
   else if (kind === 'onmyoji') {
-    portail = { d: distance, lane: player.currentLane }
+    // Ta couleur vient de ton bandeau, et elle voyage avec le portail jusqu'à
+    // la brûlure qu'il laissera sur le mur.
+    const couleur = couleurPortail(menu.fighter.band)
+    portail = { d: distance, lane: player.currentLane, couleur }
+    for (const m of [portailHalo, portailAnneau]) {
+      ;(m.material as THREE.MeshBasicMaterial).color.setHex(couleur)
+    }
+    for (const a of portailArcs) (a.material as THREE.LineBasicMaterial).color.setHex(couleur)
   }
   // ————— Offensif : ça part chez quelqu'un —————
   else if (p.cible === 'adversaire') {
@@ -1768,7 +1939,9 @@ function startRace(seed: number) {
   fumigeneFin = 0
   senbonFin = 0
   portail = null
-  portailMesh.visible = false
+  portailGroup.visible = false
+  impactGroup.visible = false // ni orbe ni brûlure ne survivent à une course
+  impactFin = 0
   for (const p of projets) {
     p.actif = false
     p.mesh.visible = false
@@ -2302,14 +2475,20 @@ function tick(now?: number) {
       const dRival = rivalTouche ? rivalTouche.opp.distanceNow : Infinity
 
       if (dMur <= dBot && dMur <= dRival && dMur !== Infinity) {
+        // 💥 Il éclate SUR la paroi : on prend la position du mur, pas celle du
+        // portail — sinon la brûlure flotterait devant, dans le vide.
+        portailImpact(
+          new THREE.Vector3(LANES[portail.lane], 1.1, -(dMur - distance) + 0.3),
+          portail.couleur
+        )
         portail = null
-        portailMesh.visible = false
+        portailGroup.visible = false
         toast('🔮 Le portail se brise sur un mur…')
       } else if (botTouche && dBot <= dRival) {
         const sien = botTouche.distance
         botTouche.distance = distance
         portail = null
-        portailMesh.visible = false
+        portailGroup.visible = false
         echangerAvec(sien, botTouche.profil.nom, botTouche.mesh)
       } else if (rivalTouche) {
         // En ligne : on lui envoie NOTRE place, il prendra la sienne. Chacun
@@ -2317,17 +2496,44 @@ function tick(now?: number) {
         net.sendSpell('onmyoji', rivalTouche.id, distance)
         const sien = rivalTouche.opp.distanceNow
         portail = null
-        portailMesh.visible = false
+        portailGroup.visible = false
         echangerAvec(sien, rivalTouche.name, rivalTouche.opp.mesh)
       } else if (portail.d > COURSE_LENGTH) {
         // Aucun plafond de distance : sa portée est INFINIE. Seuls un rival ou
         // un mur l'arrêtent. Faute de quoi il finit par franchir le torii, et
         // il n'y a plus personne à échanger derrière.
         portail = null
-        portailMesh.visible = false
+        portailGroup.visible = false
       } else {
-        portailMesh.visible = true
-        portailMesh.position.set(LANES[portail.lane], 1.1, -(portail.d - distance))
+        // L'orbe file, l'anneau tourne, et les arcs se relancent à chaque image
+        portailGroup.visible = true
+        portailGroup.position.set(LANES[portail.lane], 1.1, -(portail.d - distance))
+        portailAnneau.rotation.z += dt * 5
+        portailCoeur.scale.setScalar(0.9 + Math.random() * 0.35) // le cœur palpite
+        for (const a of portailArcs) jitterArc(a, 0.62, 0.3)
+      }
+    }
+
+    // 💥 L'impact du portail : le crépitement claque, la brûlure s'attarde
+    if (impactGroup.visible) {
+      const reste = impactFin - time
+      if (reste <= 0) {
+        impactGroup.visible = false
+      } else {
+        impactGroup.position.z += speed * dt // elle reste collée à SA paroi
+        const age = IMPACT_TRACE - reste
+        // Les arcs ne crépitent qu'un instant, la trace lui survit
+        const crepite = age < IMPACT_CREPITE
+        for (const a of impactArcs) {
+          a.visible = crepite
+          if (crepite) {
+            jitterArc(a, 1.1, 0.55)
+            ;(a.material as THREE.LineBasicMaterial).opacity = 1 - age / IMPACT_CREPITE
+          }
+        }
+        const m = impactTrace.material as THREE.MeshBasicMaterial
+        m.opacity = 0.85 * (reste / IMPACT_TRACE) // la brûlure se refroidit
+        impactTrace.scale.setScalar(1 + (1 - reste / IMPACT_TRACE) * 0.4)
       }
     }
 
