@@ -1,6 +1,7 @@
 import * as THREE from 'three'
 import { LANES, MUR_X, JUMP_SPEED } from './player'
 import { tirerParchemin, TIRAGE, type ParcheminKind } from './parchemin'
+import { BIOMES, ambianceA } from './biomes'
 
 /**
  * Les 3 familles d'obstacles : comment les franchir.
@@ -92,6 +93,20 @@ interface Mur {
   active: boolean
 }
 
+/**
+ * Un élément de bordure (touffe de bambous, masure en flammes, rocher…).
+ * Il ne touche à RIEN : pas de collision, pas de réseau. C'est du paysage pur —
+ * ce qui veut dire qu'on peut en mettre beaucoup sans rien risquer.
+ *
+ * On recycle PAR BIOME (`biome`), comme les obstacles le font par type : une
+ * touffe de bambous ne peut pas se réincarner en rocher enneigé.
+ */
+interface Decor {
+  mesh: THREE.Group
+  biome: number
+  active: boolean
+}
+
 
 /**
  * Générateur de nombres pseudo-aléatoires AVEC GRAINE (algorithme mulberry32).
@@ -132,20 +147,59 @@ export class Track {
   private murIdx = 0
   private courseLength = 0
 
+  // ————— Les biomes —————
+  private decors: Decor[] = []
+  /** La prochaine distance où planter du décor (indépendante par côté). */
+  private prochainDecor = 0
+  /**
+   * Le compteur du HORS-COURSE (menu, écran de fin), où `distance` n'existe pas.
+   * La course, elle, ne s'en sert jamais : elle a sa distance réelle.
+   */
+  private odo = 0
+  /** Étions-nous en course à l'image précédente ? (pour resemer au bon moment) */
+  private enCoursePrec = false
+  private graineDecor: () => number = () => 0.5
+  /** Les matériaux qu'on repeint au fil des biomes. */
+  private matSol: THREE.MeshStandardMaterial
+  private matLigne: THREE.MeshBasicMaterial
+  private brume: THREE.Fog
+  private fond: THREE.Color
+
   constructor(scene: THREE.Scene) {
     this.scene = scene
 
+    /*
+     * La brume appartient à la PISTE, pas à la scène de main.ts.
+     *
+     * C'est elle qui porte l'identité de chaque biome — sa couleur EST le ciel,
+     * puisqu'on ne voit jamais l'horizon. La piste sait où l'on se trouve sur la
+     * course ; elle est donc la seule à pouvoir la repeindre au bon moment.
+     * main.ts n'a rien à savoir de tout ça.
+     */
+    this.brume = new THREE.Fog(BIOMES[0].brume, BIOMES[0].brumeNear, BIOMES[0].brumeFar)
+    scene.fog = this.brume
+
+    /*
+     * Le fond de scène suit la brume à l'identique — et ce n'est pas un détail.
+     *
+     * Là où la brume s'achève (brumeFar), tout est déjà de sa couleur ; si le
+     * fond en avait une autre, on verrait une ligne d'horizon nette barrer
+     * l'écran. En les gardant égaux, le décor se dissout dans le vide sans
+     * couture, et la piste semble n'avoir pas de fin.
+     */
+    this.fond = new THREE.Color(BIOMES[0].brume)
+    scene.background = this.fond
+
     // Le sol
-    const ground = new THREE.Mesh(
-      new THREE.PlaneGeometry(14, 240),
-      new THREE.MeshStandardMaterial({ color: 0x272d3f, roughness: 1 })
-    )
+    this.matSol = new THREE.MeshStandardMaterial({ color: BIOMES[0].sol, roughness: 1 })
+    const ground = new THREE.Mesh(new THREE.PlaneGeometry(14, 240), this.matSol)
     ground.rotation.x = -Math.PI / 2
     ground.position.z = -90
     scene.add(ground)
 
     // Pointillés entre les lignes → sensation de vitesse
-    const stripeMat = new THREE.MeshBasicMaterial({ color: 0x3d4560 })
+    this.matLigne = new THREE.MeshBasicMaterial({ color: BIOMES[0].ligne })
+    const stripeMat = this.matLigne
     for (let i = 0; i < 30; i++) {
       for (const x of [-1.1, 1.1]) {
         const s = new THREE.Mesh(new THREE.PlaneGeometry(0.12, 1.6), stripeMat)
@@ -202,6 +256,16 @@ export class Track {
     }
     this.murPlan = buildMurPlan(length, seed)
     this.murIdx = 0
+
+    // Le décor : même graine décalée que le reste, donc même paysage pour tous.
+    // Ça n'a aucune incidence sur le jeu, mais parler d'une course commune (« la
+    // masure en feu juste avant le pont ») demande qu'on ait vu la même chose.
+    for (const dec of this.decors) {
+      dec.active = false
+      dec.mesh.visible = false
+    }
+    this.graineDecor = mulberry32(seed ^ 0x1c4e9f23)
+    this.prochainDecor = 0
   }
 
   /**
@@ -323,6 +387,81 @@ export class Track {
       }
     }
 
+    // Le décor de bordure. Il part plus loin derrière que le reste : un bambou
+    // de 13 m de haut reste visible dans le rétroviseur bien après que la piste
+    // l'ait dépassé, et le voir s'évaporer casserait l'illusion.
+    for (const dec of this.decors) {
+      if (!dec.active) continue
+      dec.mesh.position.z += dz
+      if (dec.mesh.position.z > DESPAWN_Z + 30) {
+        dec.active = false
+        dec.mesh.visible = false
+      }
+    }
+
+    /*
+     * ————— Le biome —————
+     *
+     * Hors course (menu, écran de fin), `distance` vaut -1 : on n'est nulle part
+     * sur la piste. On retombe alors sur un compteur interne et sur le PREMIER
+     * biome — le menu est la forêt de bambous, c'est-à-dire la ligne de départ.
+     *
+     * Ce n'est pas cosmétique : sans ça, la brume gardait la couleur du dernier
+     * endroit traversé. Finir la course sur le Fuji laissait un menu tout blanc,
+     * et l'apparence du jeu dépendait d'où s'était arrêtée la partie d'avant.
+     */
+    const enCourse = distance >= 0
+    this.odo += speed * dt
+    const parcouru = enCourse ? distance : this.odo
+
+    /*
+     * Course et menu comptent sur deux échelles sans rapport : la course part de
+     * 0, le menu continue son compteur qui tourne depuis le chargement. Passer
+     * de l'une à l'autre sans resemer laissait le prochain semis à 1 900 m alors
+     * que le compteur du menu en était à 200 — et plus AUCUN décor n'apparaissait
+     * jusqu'à ce qu'il rattrape. On repart donc de zéro à chaque bascule.
+     */
+    if (enCourse !== this.enCoursePrec) {
+      this.enCoursePrec = enCourse
+      this.prochainDecor = 0
+      for (const dec of this.decors) {
+        dec.active = false
+        dec.mesh.visible = false
+      }
+    }
+
+    // On repeint d'après la distance PARCOURUE, jamais par accumulation : si une
+    // image saute ou si l'on rejoint une course en retard, la couleur est juste
+    // malgré tout. Même principe que la ligne d'arrivée plus bas.
+    const amb = enCourse ? ambianceA(distance, this.courseLength) : ambianceA(0, 1)
+    this.brume.color.copy(amb.brume)
+    this.brume.near = amb.brumeNear
+    this.brume.far = amb.brumeFar
+    this.fond.copy(amb.brume)
+    this.matSol.color.copy(amb.sol)
+    this.matLigne.color.copy(amb.ligne)
+
+    /*
+     * ⚠️ Le décor est peint d'après le point où il APPARAÎT (parcouru +
+     * LOOKAHEAD), pas d'après nos pieds : un bambou planté à 85 m devant alors
+     * qu'on entre déjà dans le village nous arriverait dessus en pleine
+     * fournaise. Le décor doit anticiper la frontière, les couleurs non.
+     */
+    const devant = enCourse
+      ? ambianceA(distance + LOOKAHEAD, this.courseLength).index
+      : 0
+    const biome = BIOMES[devant]
+    if (this.prochainDecor === 0) this.prochainDecor = parcouru + 20
+    while (this.prochainDecor <= parcouru + LOOKAHEAD) {
+      // Un élément de chaque côté, mais jamais à la même distance : deux rangées
+      // symétriques feraient une allée de cimetière, pas une forêt.
+      for (const cote of [-1, 1]) {
+        const d = this.prochainDecor + (cote < 0 ? 0 : biome.ecartDecor * 0.5)
+        this.spawnDecor(devant, cote, -(d - parcouru))
+      }
+      this.prochainDecor += biome.ecartDecor
+    }
+
     if (distance >= 0) {
       // La ligne d'arrivée est TOUJOURS placée d'après la distance parcourue :
       // impossible qu'elle se désynchronise.
@@ -369,6 +508,33 @@ export class Track {
         this.murIdx++
       }
     }
+  }
+
+  /**
+   * Plante un élément de bordure. `cote` vaut -1 (gauche) ou +1 (droite).
+   *
+   * On l'écarte de 7 m du centre : au-delà de la piste (14 m de large, donc
+   * 7 m de demi-largeur), pour qu'aucun décor ne vienne jamais masquer un
+   * obstacle. La règle est absolue — un élément de paysage qui cache une
+   * barrière transforme le joli en injuste.
+   */
+  private spawnDecor(biome: number, cote: number, z: number) {
+    let dec = this.decors.find((d) => !d.active && d.biome === biome)
+    if (!dec) {
+      dec = {
+        mesh: BIOMES[biome].fabriqueDecor(this.graineDecor),
+        biome,
+        active: false,
+      }
+      this.decors.push(dec)
+      this.scene.add(dec.mesh)
+    }
+    dec.mesh.position.set(cote * (7 + this.graineDecor() * 2.5), 0, z)
+    // On le retourne d'un côté à l'autre : la même touffe recyclée à droite
+    // puis à gauche ne doit pas se lire comme un copier-coller.
+    dec.mesh.scale.x = cote
+    dec.mesh.visible = true
+    dec.active = true
   }
 
   private spawnMur(p: PlannedMur, z: number) {

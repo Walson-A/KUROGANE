@@ -946,6 +946,51 @@ en test :
 
 Japon, ère Sengoku. Le pays brûle. Nobunaga convoque les meilleurs guerriers
 pour le **Tournoi des Voies** : une course à travers forêts de bambous,
-villages en flammes et ponts au clair de lune. Sur la route, des
-**parchemins de techniques** — pour se surpasser, ou saboter les rivaux.
-Premier au torii sacré, une lame légendaire à la clé.
+villages en flammes, ponts au clair de lune et flancs enneigés du Fuji. Sur la
+route, des **parchemins de techniques** — pour se surpasser, ou saboter les
+rivaux. Premier au torii sacré, une lame légendaire à la clé.
+
+### Les quatre biomes 🏞️
+
+La course traverse quatre décors, un par quart de piste (`src/biomes.ts`).
+Ce n'est pas que de l'habillage : sur 1 920 m de couloir uniforme, on perd la
+notion d'avancement. Le chrono dit qu'on progresse, l'œil dit qu'on fait du
+surplace. Quatre décors, c'est quatre repères — « je suis dans les flammes,
+donc à la moitié ».
+
+| Part | Biome | Brume | Portée | Décor |
+|---|---|---|---|---|
+| 0–25 % | **Forêt de bambous** 竹 | vert d'aube | 32 → 88 | Touffes de tiges hautes |
+| 25–50 % | **Village en flammes** 火 | orange, fumée | 26 → **72** | Masures et braises |
+| 50–75 % | **Pont au clair de lune** 月 | indigo | 30 → 92 | Rambardes, lanternes |
+| 75–100 % | **Flancs du Fuji** 雪 | **gris clair** | 38 → **105** | Rochers neigeux, pins |
+
+Trois réglages portent tout le sens :
+
+- **Le village voit le moins loin** (72 m). On y réagit plus vite : c'est le pic
+  de tension, placé quand le joueur maîtrise enfin ses contrôles.
+- **Le Fuji voit le plus loin** (105 m) et c'est le **seul biome clair**. Après
+  trois actes dans le noir, l'arrivée sur la neige est un coup de projecteur —
+  et pour la seule fois de la course, la brume cesse de cacher l'horizon : on
+  voit le torii sacré arriver. Il couvre exactement la zone de sprint final.
+- **Les frontières sont des fractions, pas des mètres.** Si la longueur de course
+  change, le découpage suit tout seul.
+
+Les couleurs se fondent sur les ~5 % précédant chaque frontière (≈ 4 s) : jamais
+de « claquement » de décor. Le **décor**, lui, bascule à mi-fondu et se plante
+d'après le point où il APPARAÎT (85 m devant), pas d'après nos pieds — sans quoi
+un bambou semé pendant qu'on entre dans le village nous arriverait dessus en
+pleine fournaise.
+
+⚠️ **La piste possède la brume, pas `main.ts`.** La couleur de la brume EST le
+ciel (on ne voit jamais l'horizon), et seule la piste sait où l'on se trouve sur
+la course. Le fond de scène la suit à l'identique : sinon une ligne d'horizon
+nette barrerait l'écran là où la brume s'achève.
+
+Hors course, `distance` vaut `-1` : le menu est explicitement la forêt de
+bambous — la ligne de départ. Sans ça, la brume gardait la couleur du dernier
+endroit traversé, et finir sur le Fuji laissait un menu tout blanc.
+
+🚧 **À venir, biome par biome** : les toits du village (chemin aérien =
+raccourci risqué) et les culs-de-sac à escalader (**1,0 s** perdue, le double
+d'un trébuchement).
