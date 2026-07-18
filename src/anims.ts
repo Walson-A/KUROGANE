@@ -64,7 +64,15 @@ interface Clip {
  */
 const CLIPS = new Map<string, Clip>()
 
-for (const [cle, brut] of Object.entries((cuites as any).clips as Record<string, any>)) {
+/*
+ * Le fichier cuit range les mouvements dans `motifs` et n'en garde qu'un
+ * ANNUAIRE dans `clips` : chaque dossier possédant son jeu complet, le même
+ * mouvement s'y trouvait cinq fois à l'identique. On décode donc chaque motif
+ * une seule fois, et plusieurs guerriers partagent le même objet en mémoire.
+ */
+const MOTIFS = new Map<string, Clip>()
+
+for (const [h, brut] of Object.entries((cuites as any).motifs as Record<string, any>)) {
   const pistes: Record<string, Float32Array> = {}
   for (const [joint, plat] of Object.entries(brut.q as Record<string, number[]>)) {
     const n = brut.n as number
@@ -80,12 +88,17 @@ for (const [cle, brut] of Object.entries((cuites as any).clips as Record<string,
     }
     pistes[joint] = out
   }
-  CLIPS.set(cle, {
+  MOTIFS.set(h, {
     duree: brut.d,
     images: brut.n,
     pistes,
     hauteur: Float32Array.from(brut.y as number[]),
   })
+}
+
+for (const [cle, h] of Object.entries((cuites as any).clips as Record<string, string>)) {
+  const motif = MOTIFS.get(h)
+  if (motif) CLIPS.set(cle, motif)
 }
 
 /**

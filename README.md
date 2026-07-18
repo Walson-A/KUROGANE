@@ -124,11 +124,24 @@ la même pose de repos ni les mêmes proportions que nos boîtes) : on lit la
 pointe notre boîte dans ce sens-là. Ça marche quelles que soient les
 proportions, et ça tient dans dix articulations.
 
+### Chaque mouvement n'est cuit qu'une fois
+
+Chaque dossier possède son jeu complet, donc le même `Defeated.fbx` s'y trouve
+sept fois à l'identique. Cuits tels quels, **36 clips sur 55 étaient des
+doublons stricts** et le poids compressé avait triplé — pour un rendu
+rigoureusement identique.
+
+Le fichier cuit range donc les mouvements dans `motifs`, et `clips` n'est plus
+qu'un **annuaire** qui y renvoie : **67 entrées pour 20 mouvements distincts**.
+Plusieurs guerriers partagent le même objet en mémoire. C'est invisible pour le
+reste du jeu, et c'est ce qui rend l'organisation par dossiers viable sans
+alourdir le téléchargement.
+
 ### Pourquoi cuire hors ligne
 
-Les 21 fichiers pèsent **8,7 Mo**, plus 200 Ko de `FBXLoader` dans le bundle.
-Une fois cuits : **26 Ko compressés** — 350 fois moins. Le jeu garde sa promesse,
-rien de lourd à télécharger sur mobile.
+Les 79 fichiers pèsent **37 Mo**, plus 200 Ko de `FBXLoader` dans le bundle.
+Une fois cuits et mutualisés : **34 Ko compressés** — plus de mille fois moins.
+Le jeu garde sa promesse, rien de lourd à télécharger sur mobile.
 
 ```bash
 npm run anims        # recuit animation/*.fbx → src/anims-cuites.json
@@ -175,11 +188,14 @@ donc il s'emballe quand même sous le vent et dans le sprint.
 dossier, ce qu'il fournit, ce qu'il emprunte à la racine, et ce qui retombe sur
 la foulée calculée. C'est lui qui manquait : un dossier vide passait inaperçu.
 
-> ⚠️ **En l'état, `yasuke/` et `oni/` n'ont pas de course**, et la racine n'en a
-> pas d'utilisable (`Running.fbx` est une roulade, cf. plus bas). Ces deux-là
-> courent donc avec la foulée calculée. Déposer un `.fbx` de course qui boucle
-> dans leur dossier — ou un seul à la racine pour tout le monde — suffit à les
-> rattraper.
+> ⚠️ **`Running.fbx` n'est pas une course**, malgré son nom. Mesuré : les
+> hanches tombent de 98 à 13 cm, le cap tourne de plus de 250°, et les deux
+> pieds décollent ensemble à 80 cm. C'est une roulade acrobatique. Il est donc
+> refusé partout où il se trouve — c'est le seul fichier du lot qui ne serve à
+> rien.
+
+Les huit guerriers ont aujourd'hui **11 mouvements sur 11**, y compris Kurokumo
+et les trois variantes du « + ».
 
 > Les **bots d'entraînement** (`bot.ts`) gardent leur maillage simple : ils n'ont
 > pas de corps articulé, donc rien à animer. Seuls le joueur et les rivaux en

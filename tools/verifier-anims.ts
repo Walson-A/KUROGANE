@@ -443,16 +443,23 @@ console.log('\n————— La course sur mur —————')
 
 console.log('\n————— Le repli quand le mouvement manque —————')
 {
-  // Le perso « + » n'a pas de saut : il doit retomber sur la foulée calculée
-  // plutôt que rester figé en l'air.
-  const f = customFighter(DEFAULT_CUSTOM)
-  verifier('le perso + n\'a effectivement pas de saut', clipDe(f, 'saut') === null)
+  /*
+   * Un guerrier SANS dossier doit continuer de courir, sur la foulée calculee.
+   *
+   * On ne peut plus se servir du perso « + » comme cobaye : il avait un trou
+   * au saut, on le lui a comble, et le controle tombait alors sur sa propre
+   * premisse. On fabrique donc un guerrier dont l'identifiant ne correspond a
+   * aucun dossier — le cas restera reproductible quoi qu'on depose ensuite
+   * dans animation/.
+   */
+  const f = { ...ROSTER[0], id: 'fantome-sans-dossier' } as unknown as Fighter
+  verifier('ce guerrier n\'a effectivement aucun clip', clipDe(f, 'course') === null)
   const { racine, corps } = corpsDe(f)
   const anim = new Anim()
   let bouge = 0
   let precedent = corps.jambeG.pivot.quaternion.clone()
   for (let i = 0; i < 60; i++) {
-    animerGuerrier(racine, f, anim, 'saut', 1 / 60, i / 60)
+    animerGuerrier(racine, f, anim, 'course', 1 / 60, i / 60)
     bouge += precedent.angleTo(corps.jambeG.pivot.quaternion)
     precedent = corps.jambeG.pivot.quaternion.clone()
   }

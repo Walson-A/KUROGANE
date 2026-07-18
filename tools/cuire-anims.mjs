@@ -149,6 +149,7 @@ const PERSOS = {
   hana: 'hana',
   oni: 'onimaru',
   tamea: 'tamae',
+  kurokumo: 'kurokumo', // le rival de toujours, et l'apparence par defaut en ligne
   // Le perso « + » : son ornement décide de son style (cf. CUSTOM_STYLE)
   'perso/aucun': 'perso-rien',
   'perso/kitsu': 'perso-oreilles',
@@ -431,7 +432,28 @@ for (const [cle, liste] of [...candidats].sort()) {
   }
 }
 
-fs.writeFileSync(SORTIE, JSON.stringify({ fps: FPS, clips }))
+/*
+ * ————— On ne cuit chaque mouvement QU'UNE FOIS —————
+ *
+ * Depuis que chaque dossier possède son jeu complet, le même fichier est cuit
+ * cinq fois : `Defeated.fbx` est identique chez tout le monde, et 36 des 55
+ * clips étaient des doublons stricts. Le poids compressé avait triplé pour un
+ * rendu rigoureusement identique.
+ *
+ * On range donc les mouvements dans `motifs`, et `clips` n'est plus qu'un
+ * annuaire qui y renvoie. C'est invisible pour le reste du jeu — anims.ts
+ * refait le lien au chargement — mais c'est ce qui garde le téléchargement
+ * léger sur mobile, la promesse du projet.
+ */
+const motifs = {}
+const annuaire = {}
+for (const [cle, cuit] of Object.entries(clips)) {
+  const h = crypto.createHash('md5').update(JSON.stringify(cuit)).digest('hex').slice(0, 10)
+  if (!motifs[h]) motifs[h] = cuit
+  annuaire[cle] = h
+}
+
+fs.writeFileSync(SORTIE, JSON.stringify({ fps: FPS, motifs, clips: annuaire }))
 const ko = (fs.statSync(SORTIE).size / 1024).toFixed(0)
 
 console.log(journal.join('\n'))
@@ -456,6 +478,7 @@ const GUERRIERS = [
   ['hana', 'hana'],
   ['oni', 'onimaru'],
   ['tamea', 'tamae'],
+  ['kurokumo', 'kurokumo'],
   ['perso/aucun', 'perso-rien', 'sasuke'],
   ['perso/Nouveau dossier', 'perso-oreilles', 'tamae'],
   ['perso/oni2', 'perso-cornes', 'onimaru'],
