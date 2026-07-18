@@ -418,6 +418,33 @@ body {
   opacity: 1;
 }
 
+/* ——— Le témoin d'aspiration ——— */
+#aspi {
+  position: fixed;
+  left: 50%;
+  transform: translateX(-50%);
+  top: max(84px, calc(env(safe-area-inset-top) + 70px));
+  font-size: 0.8rem;
+  font-weight: 800;
+  letter-spacing: 0.18em;
+  color: #bfd4ff;
+  text-shadow: 0 0 14px rgba(191, 212, 255, 0.7);
+  pointer-events: none;
+  animation: aspipulse 0.5s ease-in-out infinite alternate;
+}
+#aspi.hidden {
+  display: none;
+}
+/* Il respire : on sent qu'on est porté, pas qu'on lit une étiquette */
+@keyframes aspipulse {
+  from {
+    opacity: 0.55;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
 /* ——— Le curseur de volume (Options) ——— */
 #optVolumeVal {
   float: right;

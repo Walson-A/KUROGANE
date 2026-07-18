@@ -81,6 +81,42 @@ const CHAINE_FENETRE = 1.4 // s sans toucher → la chaîne retombe
 const JARRE_FREIN = 0.72
 
 /**
+ * ————— Les deux vitesses du 2ᵉ ACTE —————
+ * Elles n'existent QUE dans le corps de la course : ni pendant le départ
+ * canon, ni dans le sprint final, où seul le martèlement compte.
+ *
+ * **La ligne droite** récompense la course propre : tenir sa voie fait monter
+ * la vitesse. Changer de ligne remet le compteur à zéro — c'est le « très
+ * léger » coût d'un déplacement, une occasion manquée plutôt qu'une punition.
+ *
+ * **L'aspiration** est l'inverse : elle récompense celui qui est DERRIÈRE.
+ * Se glisser dans le sillage d'un rival, sur sa ligne, fait gagner du terrain.
+ * C'est la mécanique de rattrapage des jeux de course — elle garde les duels
+ * serrés jusqu'au bout au lieu de laisser filer celui qui mène.
+ *
+ * Les deux se cumulent, et c'est voulu : ça pose un choix permanent — tenir
+ * MA ligne pour l'élan, ou aller chercher SA ligne pour le sillage ?
+ *
+ * ⚠️ CALIBRAGE — la simulation a corrigé une erreur d'intuition. Ces bonus
+ * courent sur TOUT le 2ᵉ acte (~70 s), là où le sprint final ne dure que 4 s :
+ * des pourcentages qui semblent modestes y deviennent écrasants. À +6 % / +9 %,
+ * ils faisaient gagner 9,25 s — vingt fois le sprint final. Ramenés ici à :
+ *
+ *   · ligne droite tenue à fond ....... 1,25 s
+ *   · aspiration collée en permanence .. 2,07 s
+ *   · jeu réaliste (les deux à 50 %) ... 1,65 s
+ *
+ * Les étalons du jeu : un trébuchement coûte 0,53 s, un sprint final parfait
+ * en rapporte 0,42. Bien se placer sur toute une course vaut donc environ
+ * trois fautes évitées : ça compte, sans jamais remplacer l'esquive.
+ */
+const LIGNE_BOOST = 0.018 // +1,8 % de vitesse à jauge pleine
+const LIGNE_PLEIN = 3 // secondes de course droite pour la remplir
+const ASPI_BOOST = 0.03 // +3 % collé au rival
+const ASPI_MIN = 2 // plus près, on le double : le sillage n'a plus de sens
+const ASPI_MAX = 16 // plus loin, on est hors de son sillage
+
+/**
  * ————— ⚔️ Le duel au corps à corps —————
  * Frapper le rival, c'est la vraie raison d'être du combat. La portée doit
  * rester égale à celle du serveur (RaceRoom) : c'est lui qui tranche, nous ne
@@ -218,6 +254,7 @@ const fumeeEl = document.getElementById('fumee')!
 const progressEl = document.getElementById('progressfill')!
 const oppmarkEl = document.getElementById('oppmark')!
 const gapEl = document.getElementById('gap')!
+const aspiEl = document.getElementById('aspi')!
 const sprintEl = document.getElementById('sprint')!
 const sprintFillEl = document.getElementById('sprintfill')!
 const slotEls = [document.getElementById('slot0')!, document.getElementById('slot1')!]
@@ -256,6 +293,8 @@ let sprintCharge = 0 // la jauge de sprint, 0 → 1
 let sprintSeen = false // la bannière ne s'annonce qu'une fois
 let rankTimer = 0 // le classement se redessine 10 fois/s, pas 60
 let dernierChiffre = -1 // le dernier chiffre du décompte annoncé (pour ne biper qu'une fois)
+let ligneCharge = 0 // la jauge de course droite, 0 → 1
+let aspiCharge = 0 // la jauge d'aspiration, 0 → 1
 let chaine = 0 // coups enchaînés sans toucher le sol de la chaîne
 let chaineT = 0 // temps restant pour enchaîner (sinon la chaîne retombe)
 
@@ -1511,7 +1550,50 @@ function updateMeLabel() {
  * martèlement compte. Chaque acte a sa compétence, aucun ne déborde.
  */
 function combatActif() {
+  return acte2()
+}
+
+/**
+ * Le 2ᵉ ACTE : le corps de la course. C'est là que vivent le combat ET les
+ * deux systèmes de vitesse (ligne droite, aspiration). Avant, c'est le départ
+ * canon ; après, le sprint final — deux moments où seul le martèlement compte.
+ */
+function acte2() {
   return state === 'course' && distance < COURSE_LENGTH - SPRINT_ZONE
+}
+
+/**
+ * La force du sillage devant nous, de 0 (rien) à 1 (collé au rival).
+ *
+ * Il faut être sur SA ligne : c'est ce qui en fait une décision — aller
+ * chercher son sillage, c'est renoncer à sa propre trajectoire (et donc à
+ * l'élan de ligne droite). On prend le meilleur sillage disponible : en salon
+ * à 10, il peut y avoir plusieurs coureurs devant.
+ */
+function forceAspiration(): number {
+  if (!acte2()) return 0
+  let meilleur = 0
+
+  const jauger = (lane: number, d: number) => {
+    if (lane !== player.currentLane) return
+    const ecart = d - distance
+    if (ecart < ASPI_MIN || ecart > ASPI_MAX) return
+    // Plus on est près, plus ça tire — le sillage s'affaiblit avec la distance
+    const f = 1 - (ecart - ASPI_MIN) / (ASPI_MAX - ASPI_MIN)
+    if (f > meilleur) meilleur = f
+  }
+
+  if (online) {
+    for (const r of rivals.values()) {
+      if (r.opp.active && !r.finished) jauger(r.opp.laneNow, r.opp.distanceNow)
+    }
+  } else {
+    for (let i = 0; i < nbBots; i++) {
+      const b = bots[i]
+      if (b.actif) jauger(b.ligne, b.distance)
+    }
+  }
+  return meilleur
 }
 
 /** Range un parchemin dans une main libre. Partagé par les rouleaux et les jarres dorées. */
@@ -1671,6 +1753,7 @@ function backToMenu(banner?: string) {
   oppmarkEl.classList.add('hidden')
   rankEl.classList.add('hidden')
   gapEl.classList.add('hidden')
+  aspiEl.classList.add('hidden')
   countEl.classList.remove('show')
   sprintEl.classList.add('hidden')
   menu.showTitle(banner)
@@ -1705,6 +1788,8 @@ function startRace(seed: number) {
   chaine = 0
   chaineT = 0
   dernierChiffre = -1
+  ligneCharge = 0
+  aspiCharge = 0
   slots = []
   ventFin = 0
   kusarigamaFin = 0
@@ -2088,7 +2173,10 @@ new Input(document.body, {
     const de = player.currentLane
     frappe(player.currentLane - 1)
     player.moveLeft()
-    if (player.currentLane !== de && player.spark) flashSpark(LANES[de], LANES[player.currentLane])
+    if (player.currentLane !== de) {
+      ligneCharge = 0 // quitter sa voie coûte l'élan accumulé
+      if (player.spark) flashSpark(LANES[de], LANES[player.currentLane])
+    }
     if (online) net.sendAction({ t: 'lane', lane: player.currentLane })
   },
   right: () => {
@@ -2096,7 +2184,10 @@ new Input(document.body, {
     const de = player.currentLane
     frappe(player.currentLane + 1)
     player.moveRight()
-    if (player.currentLane !== de && player.spark) flashSpark(LANES[de], LANES[player.currentLane])
+    if (player.currentLane !== de) {
+      ligneCharge = 0
+      if (player.spark) flashSpark(LANES[de], LANES[player.currentLane])
+    }
     if (online) net.sendAction({ t: 'lane', lane: player.currentLane })
   },
   jump: () => {
@@ -2212,8 +2303,26 @@ function tick(now?: number) {
     const target = sprinting ? Math.min(1, rate / SPRINT_FULL_RATE) : 0
     sprintCharge += (target - sprintCharge) * Math.min(1, dt * 8)
 
+    // ————— Les deux vitesses du 2ᵉ acte —————
+    // La ligne droite se remplit tant qu'on tient sa voie (elle est remise à
+    // zéro au changement de ligne, cf. les contrôles). L'aspiration suit le
+    // sillage, en douceur : entrer et sortir d'un sillage ne doit pas claquer.
+    if (acte2()) {
+      ligneCharge = Math.min(1, ligneCharge + dt / LIGNE_PLEIN)
+      aspiCharge += (forceAspiration() - aspiCharge) * Math.min(1, dt * 3)
+    } else {
+      // Départ canon et sprint final : tout s'éteint, seul le martèlement compte.
+      ligneCharge = 0
+      aspiCharge = 0
+    }
+    // Le témoin n'apparaît qu'une fois vraiment dans le sillage : le faire
+    // clignoter au moindre frôlement le rendrait illisible.
+    aspiEl.classList.toggle('hidden', aspiCharge < 0.25)
+
     // La vitesse de croisière augmente au fil de la course…
     let cruise = 22 + 8 * (distance / COURSE_LENGTH)
+    // …la course propre et le sillage la portent dans le corps de course…
+    cruise *= 1 + LIGNE_BOOST * ligneCharge + ASPI_BOOST * aspiCharge
     // …le martèlement la pousse encore un peu dans les derniers mètres…
     if (sprinting) cruise *= 1 + SPRINT_BOOST * sprintCharge
     // …et les parchemins par-dessus. Un dash sous entrave reste bride : les
@@ -2623,6 +2732,15 @@ function tick(now?: number) {
   player.tag.follow(player.mesh, camera, racing && player.mesh.visible)
   for (const r of rivals.values()) {
     r.opp.tag.follow(r.opp.mesh, camera, racing && r.opp.active && r.opp.mesh.visible)
+  }
+
+  // La caméra s'ouvre avec la vitesse. C'est le seul retour qui rende TOUS les
+  // gains sensibles d'un coup — ligne droite, sillage, sprint, chaîne — sans
+  // rien afficher à lire. On la referme au menu, où la vitesse ne veut rien dire.
+  const fovVoulu = state === 'course' ? 70 + Math.min(11, Math.max(0, (speed - 24) * 1.1)) : 70
+  if (Math.abs(camera.fov - fovVoulu) > 0.01) {
+    camera.fov += (fovVoulu - camera.fov) * Math.min(1, dt * 2.5)
+    camera.updateProjectionMatrix()
   }
 
   renderer.render(scene, camera)

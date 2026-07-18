@@ -20,6 +20,9 @@ avec Claude Code comme développeur.
   perdant est celui qui arrive 2ᵉ
 - **⚔️ Combat** : le même swipe sert à bouger ET à frapper — jarres et rivaux.
   Frappe en l'air pour rebondir et enchaîner ([voir le combat](#-le-combat--le-2ᵉ-acte))
+- **🏃 Ligne droite & aspiration** : tenir sa voie fait monter la vitesse, et
+  se glisser dans le sillage d'un rival tire vers l'avant
+  ([voir le calibrage](#-les-deux-vitesses-du-2ᵉ-acte))
 - **🔥 Sprint final** : sur les 120 derniers mètres, martèle l'écran pour
   accélérer et voler la victoire sur le fil ([voir le calibrage](#-le-sprint-final--départager-sans-refaire-la-course))
 - **🚀 Départ canon** : martèle pendant le 3-2-1 — à fond, tu pars directement
@@ -359,6 +362,46 @@ Les réglages sont en tête de [`src/main.ts`](src/main.ts) : `COUP_COUT`,
 `COUP_GAIN`, `CHAINE_FENETRE`, `JARRE_FREIN`, `PVP_PORTEE`, `PVP_FREIN`.
 ⚠️ `PVP_PORTEE` doit rester égal à celui de
 [`RaceRoom.ts`](server/src/RaceRoom.ts).
+
+## 🏃 Les deux vitesses du 2ᵉ acte
+
+Dans le corps de la course — ni au départ canon, ni au sprint final — deux
+systèmes récompensent le **placement** :
+
+- **La ligne droite** : tenir sa voie fait monter la vitesse (jauge pleine en
+  3 s). Changer de ligne remet le compteur à zéro — c'est le coût « très
+  léger » d'un déplacement : une occasion manquée, pas une punition.
+- **L'aspiration** : se glisser dans le sillage d'un rival, **sur sa ligne**,
+  entre 2 et 16 m derrière lui. Plus on est près, plus ça tire. C'est la
+  mécanique de rattrapage des jeux de course : elle garde les duels serrés au
+  lieu de laisser filer celui qui mène.
+
+Les deux se cumulent, et ça pose un choix permanent : tenir **ma** ligne pour
+l'élan, ou aller chercher **sa** ligne pour le sillage ?
+
+### Le calibrage, corrigé par la simulation
+
+L'intuition se trompe lourdement ici, et la simulation l'a rattrapée. Ces
+bonus courent sur **tout le 2ᵉ acte (~70 s)**, là où le sprint final ne dure
+que 4 s : des pourcentages qui semblent modestes y deviennent écrasants. À
++6 % / +9 %, mes premières valeurs faisaient gagner **9,25 s** — vingt fois le
+sprint final. Ramenées à +1,8 % / +3 % :
+
+| Situation | Gain |
+|---|---|
+| Ligne droite tenue à fond | 1,25 s |
+| Aspiration collée en permanence | 2,07 s |
+| **Jeu réaliste (les deux à 50 %)** | **1,65 s** |
+| *Un trébuchement (étalon)* | *−0,53 s* |
+| *Sprint final parfait (étalon)* | *0,42 s* |
+
+Bien se placer sur toute une course vaut donc environ **trois fautes
+évitées** : ça compte, sans jamais remplacer l'esquive.
+
+Le retour au joueur passe par deux signaux : le témoin **🌀 ASPIRATION** dans
+le HUD (sans lui, on accélère sans comprendre pourquoi), et le **champ de
+vision qui s'ouvre avec la vitesse** — celui-là rend sensibles d'un coup tous
+les gains (ligne, sillage, sprint, chaîne) sans rien donner à lire.
 
 ## 🔥 Le sprint final : départager sans refaire la course
 
