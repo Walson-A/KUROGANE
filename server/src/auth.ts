@@ -48,11 +48,21 @@ if (!secret && process.env.NODE_ENV === 'production') {
   throw new Error('AUTH_SECRET manquante — refus de démarrer en production.')
 }
 
+/**
+ * L'adresse PUBLIQUE de ce serveur.
+ *
+ * ⚠️ En local, laisser `PUBLIC_URL` vide : y mettre l'adresse de production
+ * ferait croire à Better Auth qu'il tourne sur Railway. Il refuserait alors le
+ * relais de retour (qui, lui, pointe bien sur localhost) et enverrait Google
+ * rediriger vers la production. Symptôme : le bouton Google « ne fait rien ».
+ */
+export const BASE_URL = process.env.PUBLIC_URL ?? `http://localhost:${process.env.PORT ?? 2567}`
+
 export const auth = pool
   ? betterAuth({
       database: pool,
       secret: secret ?? 'secret-de-developpement-local-uniquement',
-      baseURL: process.env.PUBLIC_URL ?? `http://localhost:${process.env.PORT ?? 2567}`,
+      baseURL: BASE_URL,
 
       emailAndPassword: {
         enabled: true,
@@ -102,9 +112,17 @@ export const auth = pool
         bearer(),
       ],
 
-      // Le jeu est servi depuis un autre domaine (Vercel) que le serveur
-      // (Railway) : sans cette liste, le navigateur refuserait les échanges.
+      /*
+       * Le jeu est servi depuis un autre domaine (Vercel) que le serveur
+       * (Railway) : sans cette liste, le navigateur refuserait les échanges.
+       *
+       * ⚠️ `BASE_URL` en fait partie : le retour de Google passe par notre
+       * propre relais (`/api/relais`), donc par NOTRE domaine. Sans lui dans la
+       * liste, Better Auth refuse sa propre adresse — « Invalid callbackURL »,
+       * et le bouton Google semble ne rien faire.
+       */
       trustedOrigins: [
+        BASE_URL,
         'http://localhost:5173',
         ...(process.env.ORIGINES_AUTORISEES?.split(',').map((o) => o.trim()) ?? []),
       ],

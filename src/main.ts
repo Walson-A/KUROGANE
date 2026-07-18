@@ -2491,10 +2491,25 @@ const menu = new Menu({
 
   // ————— Le compte —————
   onGoogle() {
-    toast('🔗 Redirection vers Google…')
     void connexionGoogle().then((r) => {
-      // Si ça marche, on quitte la page : ce message n'apparaît qu'en cas d'échec.
-      if (!r.ok) toast(r.raison === 'hors-ligne' ? '📡 Hors ligne' : '⚠️ Connexion indisponible')
+      if (r.ok) return // on quitte la page vers Google : rien à afficher
+
+      /*
+       * Un échec ici doit se VOIR. Le bouton qui ne fait rien est le pire des
+       * cas : le joueur reclique, croit à un écran gelé, et abandonne. On écrit
+       * donc le refus dans l'écran du compte, sous les yeux du joueur, et pas
+       * seulement dans un toast fugace.
+       */
+      const messages: Record<string, string> = {
+        'hors-ligne': 'Serveur injoignable.',
+        INVALID_CALLBACK_URL:
+          "Le serveur n'accepte pas l'adresse de retour. (Configuration : PUBLIC_URL)",
+      }
+      const brut = r.raison ?? ''
+      const connu = Object.entries(messages).find(([code]) => brut.includes(code))
+      menu.erreurCompte(
+        connu ? connu[1] : `Connexion Google indisponible${brut ? ` (${brut})` : ''}.`
+      )
     })
   },
 

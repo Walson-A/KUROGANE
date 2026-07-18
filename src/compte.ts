@@ -258,7 +258,11 @@ export async function connexionGoogle(): Promise<{ ok: boolean; raison?: string 
       body: JSON.stringify({ provider: 'google', callbackURL: relais }),
     })
     const data = await r.json().catch(() => null)
-    if (!r.ok || !data?.url) return { ok: false, raison: data?.message ?? 'indisponible' }
+    // Le CODE d'abord (stable, traduisible), le message ensuite — comme pour
+    // l'inscription par email.
+    if (!r.ok || !data?.url) {
+      return { ok: false, raison: data?.code ?? data?.message ?? 'indisponible' }
+    }
 
     // On quitte le jeu vers Google. Le retour se fera par le relais.
     location.href = data.url
