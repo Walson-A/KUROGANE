@@ -138,9 +138,22 @@ npm run anims:test   # contrôle anatomique (à lancer après toute recuisson)
 ### La règle des dossiers, sans exception
 
 `animation/hana/` n'anime **que** Hana ; à la **racine**, ça sert à tout le
-monde. **Rien ne circule d'un dossier à l'autre.** Le perso « + » cherche
-d'abord son ornement (`perso/aucun`, `perso/kitsu`, `perso/oni2`), puis le
-fonds commun `perso/`, puis la racine.
+monde. **Rien ne circule d'un dossier à l'autre.**
+
+Le perso « + » descend quatre marches :
+
+| # | On cherche dans | Exemple, s'il porte les cornes |
+|---|---|---|
+| 1 | son ornement | `animation/perso/oni2/` |
+| 2 | le fonds commun du « + » | `animation/perso/` |
+| 3 | **le guerrier de son style** | `animation/oni/` |
+| 4 | la racine | `animation/` |
+
+La 3ᵉ marche n'est pas un emprunt sauvage : c'est [`CUSTOM_STYLE`](src/roster.ts)
+qui décide déjà de ses **réglages de jeu** et de son **allure** — cornes →
+Oni-Maru, oreilles → Tamae, rien → Sasuke. L'ornement choisit un style, et ce
+style va désormais jusqu'au mouvement. Le code lit la même table que le reste
+du jeu : impossible que les deux divergent.
 
 > On a essayé plus malin, et c'était une erreur : quand un fichier était
 > identique dans plusieurs dossiers, on le promouvait en commun pour que

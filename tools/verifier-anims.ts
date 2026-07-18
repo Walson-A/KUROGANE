@@ -17,7 +17,7 @@ import { Anim, animerGuerrier, clipDe, type Action } from '../src/anims.ts'
 
 /** La pose de garde attendue pour l'épaule armée (cf. ARME_EPAULE dans anims). */
 const ARME_EPAULE_ATTENDUE = new THREE.Quaternion().setFromEuler(new THREE.Euler(-0.3, 0, 0))
-import { ROSTER, buildFighter, customFighter, DEFAULT_CUSTOM, type Corps, type Fighter } from '../src/roster.ts'
+import { ROSTER, buildFighter, customFighter, fighterById, DEFAULT_CUSTOM, type Corps, type Fighter } from '../src/roster.ts'
 
 let echecs = 0
 function verifier(titre: string, ok: boolean, detail = '') {
@@ -381,6 +381,29 @@ console.log('\n————— L\'attaque tient dans le verrou du jeu ———�
   // begaierait des qu'on enchaine les jarres.
   const clip = clipDe(PERSOS[0], 'attaque')!
   verifier('le geste ne depasse pas ATTACK_TIME', clip.duree <= 0.261, `${clip.duree.toFixed(3)} s`)
+}
+
+console.log('\n————— Le perso « + » herite du guerrier de son style —————')
+{
+  /*
+   * L'ornement decide du style (CUSTOM_STYLE) : cornes → Oni-Maru, oreilles
+   * → Tamae. Ce style va jusqu'au MOUVEMENT. On le prouve en comparant les
+   * clips obtenus : la variante doit jouer EXACTEMENT le meme objet que son
+   * modele, pas un equivalent venu de la racine.
+   */
+  for (const [head, modele] of [['cornes', 'onimaru'], ['oreilles', 'tamae']] as const) {
+    const variante = customFighter({ ...DEFAULT_CUSTOM, head })
+    const source = fighterById(modele)
+    // Le saut n'existe ni dans perso/ ni a la racine : s'il est la, il ne peut
+    // venir que du guerrier du style.
+    const a = clipDe(variante, 'saut')
+    const b = clipDe(source, 'saut')
+    verifier(
+      `perso(${head}) saute comme ${modele}`,
+      a !== null && a === b,
+      a === null ? 'aucun saut' : a === b ? '' : 'ce n\'est pas le meme clip'
+    )
+  }
 }
 
 console.log('\n————— Le repli quand le mouvement manque —————')

@@ -440,29 +440,37 @@ console.log(`\n${Object.keys(clips).length} clips → ${SORTIE} (${ko} Ko)`)
  * le trou en douce avec le fichier d'un autre.
  */
 const ROLES = ['course', 'courseGenee', 'saut', 'glissade', 'virageG', 'virageD']
+/*
+ * `style` = le guerrier dont le perso « + » hérite, d'après son ornement
+ * (cf. CUSTOM_STYLE dans roster.ts) : les cornes prennent Oni-Maru, les
+ * oreilles prennent Tamae. C'est la 3ᵉ marche de sa chaîne de résolution.
+ */
 const GUERRIERS = [
   ['yasuke', 'yasuke'],
   ['hana', 'hana'],
   ['oni', 'onimaru'],
   ['tamea', 'tamae'],
-  ['perso/aucun', 'perso-rien'],
-  ['perso/Nouveau dossier', 'perso-oreilles'],
-  ['perso/oni2', 'perso-cornes'],
+  ['perso/aucun', 'perso-rien', 'sasuke'],
+  ['perso/Nouveau dossier', 'perso-oreilles', 'tamae'],
+  ['perso/oni2', 'perso-cornes', 'onimaru'],
 ]
 
 console.log('\n————— Couverture —————')
-console.log('  à lui · de la racine (tous) · MANQUE = foulée calculée\n')
-console.log(`  ${''.padEnd(22)}${ROLES.map((r) => r.slice(0, 6).padEnd(8)).join('')}`)
+console.log('  à lui · son style · perso · racine · MANQUE = foulée calculée\n')
+console.log(`  ${''.padEnd(22)}${ROLES.map((r) => r.slice(0, 6).padEnd(9)).join('')}`)
 
 const manquants = []
-for (const [dossier, id] of GUERRIERS) {
+for (const [dossier, id, style] of GUERRIERS) {
   const cases = ROLES.map((r) => {
-    if (clips[`${id}/${r}`]) return 'à lui'.padEnd(8)
-    // Le perso « + » passe par son fonds commun avant la racine
-    if (id.startsWith('perso-') && clips[`perso/${r}`]) return 'perso'.padEnd(8)
-    if (clips[`tous/${r}`]) return 'racine'.padEnd(8)
+    if (clips[`${id}/${r}`]) return 'à lui'.padEnd(9)
+    // La chaîne du perso « + » : fonds commun, puis le guerrier de son style
+    if (style) {
+      if (clips[`perso/${r}`]) return 'perso'.padEnd(9)
+      if (clips[`${style}/${r}`]) return style.slice(0, 7).padEnd(9)
+    }
+    if (clips[`tous/${r}`]) return 'racine'.padEnd(9)
     manquants.push(`${dossier}/ → ${r}`)
-    return '—'.padEnd(8)
+    return '—'.padEnd(9)
   })
   console.log(`  ${dossier.padEnd(22)}${cases.join('')}`)
 }

@@ -15,7 +15,7 @@ import * as THREE from 'three'
 // L'attribut `type: json` n'est pas décoratif : sans lui, Node refuse le
 // module. Vite l'accepte aussi, donc le même fichier sert au jeu et aux tests.
 import cuites from './anims-cuites.json' with { type: 'json' }
-import { animerCourse, type Corps, type Fighter } from './roster'
+import { CUSTOM_STYLE, animerCourse, type Corps, type Fighter } from './roster'
 
 export type Action =
   | 'course'
@@ -89,11 +89,21 @@ for (const [cle, brut] of Object.entries((cuites as any).clips as Record<string,
 
 /**
  * Où chercher les mouvements d'un guerrier, du plus personnel au plus commun.
- * Le perso « + » passe d'abord par son ornement (c'est lui qui décide du
- * style), puis par le fonds commun des trois variantes.
+ *
+ * Le perso « + » descend quatre marches :
+ *   1. son ornement           `perso/oni2`, `perso/kitsu`, `perso/aucun`
+ *   2. le fonds commun        `perso/`
+ *   3. LE GUERRIER DE SON STYLE — Oni-Maru s'il porte les cornes, Tamae s'il
+ *      porte les oreilles, Sasuke sinon
+ *   4. la racine              `animation/`
+ *
+ * La 3ᵉ marche n'est pas un emprunt sauvage : `CUSTOM_STYLE` décide déjà de
+ * ses réglages de jeu ET de son allure. L'ornement choisit un style, et ce
+ * style va maintenant jusqu'au mouvement. On lit la même table que le reste
+ * du jeu — impossible que les deux divergent.
  */
 function chaine(f: Fighter): string[] {
-  if (f.id === 'perso') return [`perso-${f.head}`, 'perso', 'tous']
+  if (f.id === 'perso') return [`perso-${f.head}`, 'perso', CUSTOM_STYLE[f.head], 'tous']
   return [f.id, 'tous']
 }
 
