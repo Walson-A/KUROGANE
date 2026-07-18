@@ -74,6 +74,25 @@ const CHAINE_MAX = 5 // au-delà, le rang ne compte plus (anti-spam)
 const CHAINE_FENETRE = 1.4 // s sans toucher → la chaîne retombe
 
 /**
+ * Ce qu'on appelle « toucher » un coureur : il faut être SUR lui, pas devant.
+ * Les jarres, elles, passent par une vraie intersection de boîtes — un rival
+ * n'a pas de corps physique de notre côté, d'où ces deux marges.
+ */
+const CONTACT_Z = 1.8 // écart de distance toléré, en mètres
+const CONTACT_Y = 1.8 // écart de hauteur toléré
+
+/**
+ * L'allonge de la lame SOUS les pieds. Un sabre tranche ce qu'on survole de
+ * peu — sans cette allonge il faudrait heurter la jarre du corps, et la
+ * fenêtre de frappe se réduirait à deux mètres : injouable au doigt.
+ *
+ * Elle ne rouvre PAS la porte à la montée infinie : on rebondit toujours
+ * depuis le sommet de la jarre (rebondSur), donc chaque bond repart du même
+ * niveau quoi qu'il arrive.
+ */
+const PORTEE_LAME = 1.3
+
+/**
  * Percuter une jarre au lieu de la frapper : on garde 72 % de sa vitesse.
  * Bien moins qu'un obstacle (35 %) — c'est une poterie, pas un mur — mais
  * assez pour qu'une grappe sur sa ligne ne s'ignore jamais.
@@ -118,15 +137,17 @@ const ASPI_MAX = 16 // plus loin, on est hors de son sillage
 
 /**
  * ————— ⚔️ Le duel au corps à corps —————
- * Frapper le rival, c'est la vraie raison d'être du combat. La portée doit
- * rester égale à celle du serveur (RaceRoom) : c'est lui qui tranche, nous ne
- * faisons qu'anticiper le geste pour que la lame ne soit pas molle.
+ * Frapper le rival, c'est la vraie raison d'être du combat.
+ *
+ * Le client n'a plus de « portée » : il exige un vrai CONTACT (cf. CONTACT_Z /
+ * CONTACT_Y). Les 5 m que le serveur revérifie deviennent donc un simple
+ * garde-fou — largement au-dessus de ce que le jeu autorise, il ne rejettera
+ * jamais un coup honnête, mais il coupe court à un client bidouillé.
  *
  * Encaisser coûte plus cher qu'une jarre (72 %) mais moins qu'un mur (35 %) :
  * un coup du rival fait mal sans décider la course à lui seul — et le serveur
  * laisse 1,5 s de répit à la victime, on ne matraque pas un joueur à terre.
  */
-const PVP_PORTEE = 5 // ⚠️ à garder égal à PVP_PORTEE dans server/src/RaceRoom.ts
 const PVP_FREIN = 0.55
 
 // ————— La scène 3D —————
@@ -1617,14 +1638,17 @@ function gagneParchemin(kind: ParcheminKind) {
  * Le rival est-il à portée de lame sur cette ligne ? On se fie à sa position
  * ESTIMÉE (extrapolée), la seule honnête — mais le serveur revérifiera.
  */
-function rivalAPortee(lane: number): boolean {
-  if (!online) return false
+function rivalAuContact() {
+  if (!online) return null
   for (const r of rivals.values()) {
-    if (!r.opp.active || r.opp.laneNow !== lane || r.finished) continue
-    const ecart = r.opp.distanceNow - distance
-    if (ecart > -2 && ecart <= PVP_PORTEE) return true
+    if (!r.opp.active || r.finished) continue
+    if (r.opp.laneNow !== player.currentLane) continue
+    // Un contact, pas une portée : il faut être sur lui, à sa hauteur.
+    if (Math.abs(r.opp.distanceNow - distance) > CONTACT_Z) continue
+    if (Math.abs(r.opp.mesh.position.y - player.mesh.position.y) > CONTACT_Y) continue
+    return r
   }
-  return false
+  return null
 }
 
 /**
@@ -1654,13 +1678,14 @@ function tenteMur(cote: -1 | 1): boolean {
   return true
 }
 
-function botAPortee(lane: number): Bot | null {
+function botAuContact(): Bot | null {
   if (online) return null
   for (let i = 0; i < nbBots; i++) {
     const b = bots[i]
-    if (!b.actif || b.ligne !== lane) continue
-    const ecart = b.distance - distance
-    if (ecart > -2 && ecart <= PVP_PORTEE) return b
+    if (!b.actif || b.ligne !== player.currentLane) continue
+    if (Math.abs(b.distance - distance) > CONTACT_Z) continue
+    if (Math.abs(b.mesh.position.y - player.mesh.position.y) > CONTACT_Y) continue
+    return b
   }
   return null
 }
@@ -1676,58 +1701,72 @@ function encaisseGain() {
 }
 
 /**
- * Tente de frapper sur la ligne `lane` — une jarre, ou le rival. Renvoie true
- * si le swipe a été consommé par une attaque.
+ * ————— Donner un coup de lame —————
+ * Le swipe ne fait que SORTIR LA LAME. Ce qu'elle touche est réglé image par
+ * image dans la boucle de jeu (cf. resoudCoup), au CONTACT des corps.
+ *
+ * C'est ce découplage qui répare la montée infinie : avant, la lame frappait
+ * tout ce qui se trouvait devant, à n'importe quelle altitude — on cassait une
+ * jarre restée au sol depuis dix mètres de haut, on empochait le rebond, et
+ * l'on grimpait sans jamais redescendre. Maintenant il faut aller la toucher.
+ *
+ * Le geste est donc toujours gratuit : c'est le contact qui coûte et rapporte.
  */
-function frappe(lane: number): boolean {
-  if (lane < 0 || lane > 2 || !combatActif()) return false
+function donneCoup() {
+  if (!combatActif() || player.surMur !== 0) return
+  player.attaquer() // refusé si un coup est déjà en cours : pas de moulinet
+}
 
-  // La jarre passe en premier : c'est la cible posée là exprès par le niveau,
-  // alors qu'un rival peut dériver sur la ligne par hasard — perdre sa chaîne
-  // parce qu'un bot est passé au mauvais moment serait injuste.
-  const jarre = track.jarreDevant(lane)
-  const rival = rivalAPortee(lane)
-  const bot = botAPortee(lane)
-  if (!jarre && !rival && !bot) return false
+/**
+ * Le coup en cours touche-t-il quelque chose ? Appelé à chaque image tant que
+ * la lame est sortie. Une seule cible par coup — on ne fauche pas une grappe
+ * entière d'un seul geste.
+ */
+function resoudCoup() {
+  if (!player.enAttaque || !combatActif()) return
 
-  // Un coup est déjà en cours : le swipe est avalé, mais rien ne part. C'est ce
-  // verrou qui empêche de gagner en martelant l'écran sans viser.
-  if (!player.attaquer()) return true
-
-  // Le rebond ne récompense QUE les coups donnés en vol. Il faut donc décider
-  // de sauter avant d'aborder la grappe : c'est ce choix, pris à l'avance, qui
-  // sépare celui qui casse une jarre au passage de celui qui enchaîne.
+  // Le rebond ne récompense QUE les coups donnés en vol : au sol, on casse la
+  // jarre et l'on continue à courir, sans tremplin.
   const enLAir = !player.onGround
+  const box = player.hitbox()
+  // La lame balaie SOUS les pieds : on tranche ce qu'on survole de peu. Sans
+  // cette allonge, il faudrait toucher la jarre du corps — la fenêtre serait
+  // de deux mètres à peine, injouable au doigt sur un écran qui défile.
+  box.min.y -= PORTEE_LAME
 
-  if (jarre) {
-    const { touchee, parchemin } = track.casseJarre(lane)
-    if (!touchee) return true
-    // La dorée sonne autrement : on sait ce qu'on a cassé avant de lire le HUD
+  // 🏺 Une jarre, d'abord : c'est la cible posée là exprès par le niveau.
+  const { touchee, parchemin, sommet } = track.casseAuContact(box)
+  if (touchee) {
     jouerBruit(parchemin ? 'jarreDoree' : 'jarre')
     encaisseGain()
-    if (enLAir) player.rebond() // relancé vers la jarre suivante
+    // On rebondit DEPUIS le sommet de la jarre : chaque bond repart du même
+    // niveau, donc la chaîne ne dérive ni vers le haut ni vers le bas.
+    if (enLAir) player.rebondSur(sommet)
     if (parchemin) gagneParchemin(parchemin)
     else if (chaine >= 2) toast(`⚔️ Chaîne ×${chaine}`)
-    return true
+    return
   }
 
   // ⚔️ Un bot (entraînement) : tout est local, le coup porte immédiatement.
+  const bot = botAuContact()
   if (bot) {
     bot.encaisseCoup(PVP_FREIN)
     jouerBruit('coup')
     encaisseGain()
     if (enLAir) player.rebond()
     toast(chaine >= 2 ? `⚔️ ${bot.profil.nom} ! Chaîne ×${chaine}` : `⚔️ ${bot.profil.nom} touché !`)
-    return true
+    return
   }
 
   // ⚔️ Le rival en ligne : on joue le geste (et le rebond) TOUT DE SUITE, mais
   // les dégâts sont tranchés par le serveur, qui rejuge le coup à l'instant où
   // on l'a porté. Attendre sa réponse pour bouger rendrait la lame molle.
-  net.sendPvp(lane)
-  jouerBruit('coup') // le geste s'entend tout de suite ; le serveur tranche les dégâts
-  if (enLAir) player.rebond()
-  return true
+  const rival = rivalAuContact()
+  if (rival) {
+    net.sendPvp(player.currentLane)
+    jouerBruit('coup')
+    if (enLAir) player.rebond()
+  }
 }
 
 /**
@@ -2193,7 +2232,7 @@ new Input(document.body, {
     if (player.surMur === 1) return player.lacheMur()
     if (tenteMur(-1)) return
     const de = player.currentLane
-    frappe(player.currentLane - 1)
+    donneCoup()
     player.moveLeft()
     if (player.currentLane !== de) {
       ligneCharge = 0 // quitter sa voie coûte l'élan accumulé
@@ -2206,7 +2245,7 @@ new Input(document.body, {
     if (player.surMur === -1) return player.lacheMur()
     if (tenteMur(1)) return
     const de = player.currentLane
-    frappe(player.currentLane + 1)
+    donneCoup()
     player.moveRight()
     if (player.currentLane !== de) {
       ligneCharge = 0
@@ -2218,7 +2257,7 @@ new Input(document.body, {
     if (state !== 'course') return
     // Sur la paroi, sauter c'est s'en détacher — elle nous relance en l'air
     if (player.surMur !== 0) return player.lacheMur()
-    if (frappe(player.currentLane)) return // le coup d'en haut : il lance la chaîne
+    donneCoup() // la lame sort ; elle frappera ce qu'on touchera en montant
     const v = player.jump(time < grueFin)
     // ⚡ Le style de Sasuke crépite aussi au décollage, en plus petit
     if (v > 0 && player.spark) flashSparkSaut()
@@ -2228,7 +2267,7 @@ new Input(document.body, {
   slide: () => {
     if (state !== 'course') return
     if (player.surMur !== 0) return // on ne s'accroupit pas sur une paroi
-    if (frappe(player.currentLane)) return
+    donneCoup()
     const d = player.slide()
     if (d > 0) jouerBruit('glissade')
     if (online && d > 0) net.sendAction({ t: 'slide', d })
@@ -2572,6 +2611,11 @@ function tick(now?: number) {
     // ⚔️ La chaîne retombe si on laisse passer trop de temps entre deux coups
     chaineT = Math.max(0, chaineT - dt)
     if (chaineT <= 0) chaine = 0
+
+    // ⚔️ La lame est-elle en train de toucher quelque chose ? Résolu ICI, au
+    // contact, et non au moment du swipe : c'est ce qui interdit de frapper
+    // une jarre qu'on survole sans jamais la rejoindre.
+    resoudCoup()
 
     // Le pan de mur s'achève : il nous relance en l'air, même si l'on aurait
     // pu tenir plus longtemps. On ne court pas sur du vide.

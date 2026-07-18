@@ -71,13 +71,6 @@ interface Jarre {
 }
 
 /**
- * La portée de frappe, en mètres devant soi. Généreuse exprès : une attaque
- * ratée de peu est bien plus frustrante qu'une attaque un peu assistée, et on
- * vise au doigt sur un écran qui bouge.
- */
-const PORTEE_FRAPPE = 5.5
-
-/**
  * ————— Les murs qu'on longe —————
  * Des pans de mur bordent la piste par tronçons. On s'y accroche depuis la
  * voie extérieure, on y court quelques instants à l'abri des obstacles, et on
@@ -400,23 +393,41 @@ export class Track {
     j.active = true
   }
 
-  /** La jarre à portée de frappe sur cette ligne, s'il y en a une. */
-  private jarreAPortee(lane: number): Jarre | null {
+  /**
+   * La lame en mouvement touche-t-elle une jarre ?
+   *
+   * On teste un vrai CONTACT entre les corps, jamais une portée devant soi :
+   * passer au-dessus d'une jarre sans la frôler ne doit rien casser. C'est ce
+   * qui rend la montée de rebond en rebond impossible — pour frapper, il faut
+   * redescendre au niveau de la jarre, donc payer le temps de chute.
+   *
+   * La boîte est élargie de 35 cm : on vise au doigt sur un écran qui défile,
+   * un coup raté d'un cheveu serait injuste.
+   */
+  casseAuContact(playerBox: THREE.Box3): {
+    touchee: boolean
+    parchemin: ParcheminKind | null
+    /** Le sommet de la jarre : c'est de LÀ qu'on rebondit. */
+    sommet: number
+  } {
+    const box = new THREE.Box3()
     for (const j of this.jarres) {
       if (!j.active) continue
-      if (Math.abs(j.mesh.position.x - LANES[lane]) > 1.1) continue
-      const z = j.mesh.position.z
-      if (z > -PORTEE_FRAPPE && z < 1.5) return j
+      if (Math.abs(j.mesh.position.z) > 4) continue
+      box.setFromObject(j.mesh)
+      const sommet = box.max.y
+      box.expandByScalar(0.35)
+      if (box.intersectsBox(playerBox)) {
+        j.active = false
+        j.mesh.visible = false
+        return {
+          touchee: true,
+          parchemin: j.kind === 'doree' ? j.parchemin : null,
+          sommet,
+        }
+      }
     }
-    return null
-  }
-
-  /**
-   * Y a-t-il quelque chose à frapper sur cette ligne ?
-   * C'est CE test qui décide si un swipe est un déplacement ou une attaque.
-   */
-  jarreDevant(lane: number): boolean {
-    return this.jarreAPortee(lane) !== null
+    return { touchee: false, parchemin: null, sommet: 0 }
   }
 
   /**
@@ -443,19 +454,6 @@ export class Track {
       }
     }
     return false
-  }
-
-  /**
-   * Casse la jarre à portée sur cette ligne. Renvoie ce qu'elle contenait :
-   * `null` si rien à frapper, sinon le parchemin libéré (ou `null` pour une
-   * jarre vide, qui ne donne que l'élan et le maillon de chaîne).
-   */
-  casseJarre(lane: number): { touchee: boolean; parchemin: ParcheminKind | null } {
-    const j = this.jarreAPortee(lane)
-    if (!j) return { touchee: false, parchemin: null }
-    j.active = false
-    j.mesh.visible = false
-    return { touchee: true, parchemin: j.kind === 'doree' ? j.parchemin : null }
   }
 
   private spawnRouleau(lane: number, z: number) {
@@ -601,9 +599,12 @@ function buildParcheminPlan(
  * Une jarre isolée ne vaut rien : frapper coûte de la vitesse, et un coup seul
  * ne la rembourse pas. Ce qui paie, c'est la CHAÎNE. Il faut donc que les
  * cibles se suivent d'assez près pour qu'on aille de l'une à l'autre sans
- * retomber : un rebond est un vrai saut, donc ~0,67 s en l'air, soit environ
- * 17 m à vitesse de croisière. D'où l'espacement de 12 à 15 m — on atteint la
- * suivante avec un peu de marge, mais frapper trop tôt fait retomber court.
+ * retomber.
+ *
+ * ⚠️ L'espacement ne peut PAS être un chiffre fixe : il doit valoir exactement
+ * la période du rebond, et celle-ci s'allonge au fil de la course puisque la
+ * vitesse de croisière monte (22 → 30 m/s). Un écart constant marcherait au
+ * début et raterait à la fin. Voir periodeRebond().
  *
  * Une grappe tient sur UNE ligne : on enchaîne tout droit, et le choix « je
  * prends la grappe ou je garde ma trajectoire » reste lisible en une seconde.
@@ -611,6 +612,26 @@ function buildParcheminPlan(
  * Graine décalée (`^`) : sinon les jarres tomberaient toujours sur les mêmes
  * points que les obstacles et les rouleaux.
  */
+/**
+ * La distance parcourue pendant UN rebond, à cet endroit de la course.
+ *
+ * Un rebond est un vrai saut : 2 × 14 / 42 = 0,667 s en l'air. La distance
+ * couverte dépend donc de la vitesse du moment — et comme on accélère au fil
+ * des mètres, elle passe d'environ 15 m au départ à 20 m à l'arrivée.
+ *
+ * Espacer les jarres de cette distance, c'est garantir qu'on retombe PILE sur
+ * la suivante. Un écart plus court fait arriver en pleine montée (et l'on ne
+ * touche rien) ; un écart plus long fait retomber au sol avant.
+ *
+ * ⚠️ La formule de croisière est celle de main.ts. Elle est recopiée ici parce
+ * que main importe track (l'inverse ferait un cycle) : si l'une bouge, l'autre
+ * doit suivre.
+ */
+function periodeRebond(d: number, length: number): number {
+  const croisiere = 22 + 8 * (d / length)
+  return (2 * 14) / 42 * croisiere
+}
+
 export function buildJarrePlan(
   length: number,
   seed: number,
@@ -618,11 +639,16 @@ export function buildJarrePlan(
 ): PlannedJarre[] {
   const rng = mulberry32(seed ^ 0x2b91e6a7)
   const plan: PlannedJarre[] = []
+  /** Les jarres qui POURRAIENT devenir dorées (jamais la 1re d'une grappe). */
+  const eligibles: number[] = []
 
   let d = 90 // le temps d'avoir pris sa vitesse
   while (d < length - SPRINT_ZONE - 30) {
     const taille = 2 + Math.floor(rng() * 3) // 2 à 4 jarres
-    const ecart = 12 + rng() * 3
+    // L'écart SUIT la période du rebond à cet endroit de la course : on
+    // retombe pile sur la jarre suivante. Comme la vitesse de croisière monte
+    // au fil des mètres, l'écart s'élargit avec elle.
+    const ecart = periodeRebond(d, length)
 
     // On cherche une ligne libre sur TOUTE la longueur de la grappe : une
     // grappe coupée par un mur serait un piège, pas un choix.
@@ -661,9 +687,18 @@ export function buildJarrePlan(
           kind: i === doree ? 'doree' : 'vide',
           parchemin: TIRAGE[Math.floor(rng() * TIRAGE.length)],
         })
+        if (i > 0) eligibles.push(plan.length - 1)
       }
     }
     d += 90 + rng() * 60
+  }
+
+  // Au moins UNE dorée par course. Le tirage à 1 grappe sur 3 en donne 2,9 en
+  // moyenne, mais laissait 5 % des courses sans aucune — or c'est l'objet
+  // qu'on se dispute en duel : une course sans en compter une seule raterait
+  // tout l'intérêt. On en promeut donc une au besoin.
+  if (eligibles.length > 0 && !plan.some((j) => j.kind === 'doree')) {
+    plan[eligibles[Math.floor(rng() * eligibles.length)]].kind = 'doree'
   }
   return plan
 }

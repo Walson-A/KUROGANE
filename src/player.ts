@@ -168,6 +168,20 @@ export class Player {
     this.vy = JUMP_SPEED * this.fighter.jump
   }
 
+  /**
+   * Le rebond SUR une cible : on se pose dessus avant de repartir, comme on
+   * rebondit sur la tête d'un ennemi.
+   *
+   * Ce recalage de hauteur est ce qui rend la chaîne stable : chaque bond
+   * repart exactement du même niveau, donc décrit exactement le même arc.
+   * Sans lui, la moindre différence de hauteur au contact s'accumulerait d'un
+   * bond à l'autre et l'on finirait par dériver — vers le ciel ou vers le sol.
+   */
+  rebondSur(hauteur: number) {
+    this.mesh.position.y = hauteur
+    this.vy = JUMP_SPEED * this.fighter.jump
+  }
+
   get enAttaque() {
     return this.attackT > 0
   }

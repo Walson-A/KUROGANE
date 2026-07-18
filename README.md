@@ -365,6 +365,36 @@ Les réglages sont en tête de [`src/main.ts`](src/main.ts) : `COUP_COUT`,
 ⚠️ `PVP_PORTEE` doit rester égal à celui de
 [`RaceRoom.ts`](server/src/RaceRoom.ts).
 
+### Frapper, c'est TOUCHER
+
+Un coup ne part pas « vers l'avant » : le swipe sort la lame pendant 0,26 s, et
+c'est le **contact des corps** qui décide de ce qu'elle tranche.
+
+La première version frappait tout ce qui se trouvait devant, à n'importe quelle
+altitude. On cassait donc une jarre restée au sol depuis dix mètres de haut, on
+empochait le rebond, et **on grimpait sans jamais redescendre** — la simulation
+donnait 0,23 → 3,49 → 5,30 → 7,11 → 8,91 m, sans fin.
+
+Trois corrections, et **il fallait les trois** :
+
+1. **Le contact obligatoire.** Sans lui, rien ne bornait l'altitude.
+2. **Le rebond depuis le sommet de la jarre** — on se pose dessus avant de
+   repartir, comme on rebondit sur la tête d'un ennemi. À lui seul le contact
+   ne suffisait pas : la simulation dérivait encore de +2,1 m sur dix jarres,
+   parce que chaque bond repartait d'un poil plus haut. Ce recalage verrouille
+   la hauteur — mesurée à `1,06 → 1,06 → 1,06 → …`, à tous les points de la
+   course.
+3. **L'espacement accordé à la période du rebond.** Un rebond dure 0,667 s ; la
+   distance qu'il couvre dépend donc de la vitesse, qui monte de 22 à 30 m/s au
+   fil de la course. Un écart fixe marchait au début et ratait à la fin : les
+   jarres sont désormais espacées de `0,667 × vitesse à cet endroit` (15 m au
+   départ, 19 m à l'arrivée).
+
+La lame a une **allonge de 1,3 m sous les pieds** — un sabre tranche ce qu'on
+survole de peu. Sans elle, il faudrait heurter la jarre du corps et la fenêtre
+de frappe tomberait à deux mètres : injouable au doigt. Elle ne rouvre pas la
+porte à la montée, puisque le rebond repart toujours du sommet de la jarre.
+
 ## 🧱 Les murs qu'on longe
 
 Des pans de mur bordent la piste par tronçons (un tous les 160 à 280 m, longs
