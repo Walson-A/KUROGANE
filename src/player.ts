@@ -1,6 +1,6 @@
 import * as THREE from 'three'
 import { NameTag } from './nametag'
-import { ROSTER, buildFighter, clearFighter, cssColor, type Fighter } from './roster'
+import { ROSTER, animerCourse, buildFighter, clearFighter, cssColor, type Fighter } from './roster'
 
 /** Les 3 lignes de course (positions X dans le monde 3D) */
 export const LANES = [-2.2, 0, 2.2]
@@ -30,6 +30,8 @@ export class Player {
   private sliding = 0 // temps de glissade restant
   private attackT = 0 // temps restant du coup en cours (0 = libre de frapper)
   private rabSaut = 0 // 🕊️ sauts en réserve pour le vol (Saut de la Grue)
+  private racine?: THREE.Object3D // le corps articulé, cf. roster.buildFighter
+  private tAnim = 0 // l'horloge de la foulée
 
   constructor(scene: THREE.Scene) {
     scene.add(this.mesh)
@@ -41,7 +43,9 @@ export class Player {
   setFighter(f: Fighter) {
     this.fighter = f
     clearFighter(this.mesh)
-    this.mesh.add(...buildFighter(f))
+    const parts = buildFighter(f)
+    this.racine = parts[0] // c'est elle que la foulée anime
+    this.mesh.add(...parts)
   }
 
   /**
@@ -160,6 +164,10 @@ export class Player {
   }
 
   update(dt: number) {
+    // La foulée. En l'air on fige le cycle : on ne pédale pas dans le vide.
+    this.tAnim += dt
+    animerCourse(this.racine, this.tAnim, this.onGround ? 1 : 0.25)
+
     // Glisse en douceur vers la ligne choisie
     const targetX = LANES[this.lane]
     const k = Math.min(1, dt * LANE_LERP * this.fighter.laneSpeed)

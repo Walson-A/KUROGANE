@@ -126,10 +126,11 @@ en ligne) : **[docs/NETCODE.md](docs/NETCODE.md)**.
 
 ## 🥷 Le roster : un choix, pas un piège
 
-Quatre guerriers, choisis depuis l'écran-titre. **Yasuke est la référence** :
-tout est à 1 chez lui. Les trois autres ont **un bonus ET un malus** — sinon un
-seul perso serait le bon choix, et le menu ne serait qu'un piège à débutants.
-Yasuke, lui, n'a aucun point faible : c'est ça, son intérêt.
+Cinq guerriers, choisis depuis l'écran-titre — **Kurokumo, le champion
+invaincu, est jouable comme les autres** (il garde juste sa dégaine). **Yasuke
+est la référence** : tout est à 1 chez lui. Les autres ont **un bonus ET un
+malus** — sinon un seul perso serait le bon choix, et le menu ne serait qu'un
+piège à débutants. Yasuke, lui, n'a aucun point faible : c'est ça, son intérêt.
 
 | Guerrier | Saut | Esquive | Glissade | Vitesse gardée si on trébuche |
 |---|---|---|---|---|
@@ -137,6 +138,7 @@ Yasuke, lui, n'a aucun point faible : c'est ça, son intérêt.
 | 花 **Hana** — agile, fragile | **1,18** | **1,3** | 1 | *0,28* |
 | 鬼丸 **Oni-Maru** — lourd, tenace | *0,88* | *0,8* | 1 | **52 %** |
 | 玉恵 **Tamae** — rusée, glissante | *0,9* | **1,15** | **1,6** | 35 % |
+| 黒雲 **Kurokumo** — le champion | 1 | 1 | 1 | 35 % |
 
 Tout est dans [`src/roster.ts`](src/roster.ts). Deux règles d'équité s'appliquent :
 
@@ -156,6 +158,28 @@ permet de le distinguer même si vous avez choisi le même perso.
 > serait la rendre strictement moins bonne que les autres. Elle a donc un passif
 > qui marche *maintenant* (la glissade), et héritera de l'autre le jour où les
 > sorts arriveront.
+
+### Le corps articulé
+
+Les guerriers ne sont plus deux boîtes empilées : `buildFighter()` construit
+un corps en Group imbriqués (bassin → torse → tête, deux bras, deux jambes),
+chacun pivotable. `animerCourse()` fait tourner tout ça en sinusoïdes — bras
+et jambes en opposition, rebond à chaque appui, buste penché — sans importer
+la moindre animation.
+
+Le **look** de chaque guerrier (silhouette, arme, ce qui traîne derrière) est
+décrit à part dans `LOOKS` (toujours `roster.ts`) : la fiche décrit le JEU
+(passifs, réglages), `LOOKS` décrit l'APPARENCE. On retouche l'un sans
+risquer de casser l'autre.
+
+Règle de lisibilité : on voit les coureurs **de dos**, à 20 m, de nuit — donc
+chacun doit se reconnaître à sa silhouette seule (la bannière de Yasuke, les
+cornes d'Oni-Maru, les queues de Tamae, la cape de Kurokumo), pas qu'à sa
+couleur, qui se noie dans la brume.
+
+Un guerrier qui tient une arme (katana, kanabō, tessen…) verrouille son bras
+droit contre le buste en courant — laissé libre, il balançait de 40° et
+promenait la lame dans les jambes.
 
 ## 🎌 Le menu & les réglages
 
