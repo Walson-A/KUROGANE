@@ -2,7 +2,7 @@ import * as THREE from 'three'
 import './style.css'
 import { Player, LANES } from './player'
 import { Opponent } from './opponent'
-import { Track, SPRINT_ZONE } from './track'
+import { Track, SPRINT_ZONE, PLATEFORME_H } from './track'
 import { Input } from './input'
 import { Net, type RemotePlayer, type LobbyView } from './net'
 import { Bot, PROFILS, BOTS_MAX, construireRangees } from './bot'
@@ -112,6 +112,22 @@ const PORTEE_LAME = 1.3
  * assez pour qu'une grappe sur sa ligne ne s'ignore jamais.
  */
 const JARRE_FREIN = 0.72
+
+/**
+ * ————— Le prix d'une escalade —————
+ *
+ * Percuter une plateforme sans rampe fait perdre **1,0 s** : le double d'un
+ * trébuchement (0,53 s), et de loin la plus lourde erreur du jeu. C'est
+ * volontaire — ce n'est pas une maladresse mais un mauvais itinéraire, et il
+ * faut que la rampe VAILLE le détour. Ça reste rattrapable : un sprint final
+ * parfait rend 0,42 s.
+ *
+ * Le freinage dure plus longtemps que la montée elle-même (0,45 s) : on se
+ * hisse, puis on repart mollement. Les deux chiffres sont calibrés ensemble par
+ * simulation — cf. test-escalade.
+ */
+const ESCALADE_FREIN = 0.16
+const ESCALADE_FREIN_DUREE = 1.12
 
 /**
  * ————— Les deux vitesses du 2ᵉ ACTE —————
@@ -322,6 +338,7 @@ let distance = 0 // mètres parcourus
 let speed = 0
 let countdown = 0 // secondes avant le GO !
 let stumble = 0 // invincibilité après un trébuchement
+let escaladeT = 0 // temps de freinage restant après une escalade
 let stumblePrec = 0 // sa valeur à l'image d'avant : sert à repérer le choc
 let netTimer = 0 // pour n'envoyer notre position que 10 fois/s
 let sprintTaps: number[] = [] // instants des derniers taps → cadence
@@ -2765,6 +2782,9 @@ function tick(now?: number) {
     // deux effets se multiplient au lieu de s'annuler.
     if (time < ventFin) cruise *= 1 + VENT_BOOST
     if (time < kusarigamaFin) cruise *= KUSARIGAMA_FACTEUR
+    // 🧗 On se hisse : la course est presque à l'arrêt le temps de passer.
+    escaladeT = Math.max(0, escaladeT - dt)
+    if (escaladeT > 0) cruise *= ESCALADE_FREIN
     speed += (cruise - speed) * Math.min(1, dt * 1.2)
 
     distance += speed * dt
@@ -3108,10 +3128,29 @@ function tick(now?: number) {
      * l'assimile donc à `mur` : même sanction, et l'Armure de Fer y laisse une
      * plaque entière, puisque c'est bien une masse pleine qu'on vient d'emboutir.
      */
-    const flanc =
+    /*
+     * 🧗 Percuter une plateforme sans rampe : on l'ESCALADE.
+     *
+     * À 2,40 m, aucun saut ne passe (apex 2,07 m) : sans rampe, la rencontre est
+     * inévitable dès qu'on est sur cette ligne. Ce n'est donc pas une faute
+     * d'inattention qu'on sanctionne, c'est un choix d'itinéraire — d'où une
+     * mécanique à part plutôt qu'un trébuchement.
+     *
+     * On passe TOUJOURS : on se hisse, on perd une seconde, et on se retrouve
+     * en haut, sur la route rapide. Rester bloqué contre un mur en pleine
+     * course serait insupportable.
+     */
+    if (
       player.surMur === 0 &&
-      track.supportSous(player.mesh.position.x, player.mesh.position.y).heurte
-    const touche = player.surMur === 0 ? (flanc ? 'mur' : track.hits(player.hitbox())) : null
+      !player.escalade &&
+      track.supportSous(player.mesh.position.x, player.mesh.position.y).heurte &&
+      player.escalader(PLATEFORME_H)
+    ) {
+      escaladeT = ESCALADE_FREIN_DUREE
+      jouerBruit('chute')
+      toast('🧗 Escalade !')
+    }
+    const touche = player.surMur === 0 ? track.hits(player.hitbox()) : null
     if (stumble <= 0 && touche) {
       if (armure > 0) {
         // 🛡️ L'armure avale le choc : on garde toute sa vitesse. Mais un mur

@@ -141,10 +141,18 @@ export interface PlannedPlateforme {
   longueur: number
   lane: number
   hauteur: number
+  /** Longueur de la rampe d'accès, en mètres. 0 = pas de rampe : il faut grimper. */
+  rampe: number
 }
 
 interface Plateforme {
   mesh: THREE.Object3D
+  /**
+   * La rampe a SON maillage, jamais un enfant du plateau : celui-ci est étiré
+   * en Z à la longueur du wagon, et un enfant hériterait de cet étirement — une
+   * rampe de 6 m deviendrait une rampe de 25 m.
+   */
+  rampe: THREE.Mesh
   plan: PlannedPlateforme
   biome: number
   active: boolean
@@ -153,21 +161,21 @@ interface Plateforme {
 /** Largeur d'une plateforme : une ligne, exactement comme un obstacle. */
 export const PLATEFORME_LARG = 1.7
 /**
- * Le premier niveau, à 1,6 m.
+ * La hauteur d'une plateforme : celle d'un MUR, 2,40 m.
  *
- * Calibré sur le saut : à JUMP_SPEED = 13,2 et g = 42, l'apex est à
- * 13,2² / 84 = 2,07 m. On monte donc dessus sans effort particulier, mais il
- * FAUT sauter — on ne l'escalade pas par inadvertance.
- */
-export const PLATEFORME_H1 = 1.6
-/**
- * Le second niveau, à 2,8 m — le début du chemin en l'air.
+ * Ce n'est pas un chiffre décoratif, c'est la règle du jeu tout entière. À
+ * JUMP_SPEED = 13,2 et g = 42, l'apex du saut vaut 13,2² / 84 = **2,07 m**.
+ * Donc on ne peut PAS sauter sur une plateforme. Jamais.
  *
- * Inatteignable depuis la piste (2,07 m d'apex) : il faut être déjà sur le
- * premier niveau, d'où l'on culmine à 1,6 + 2,07 = 3,67 m. C'est ce qui en fait
- * une vraie route à part, et pas un obstacle plus haut.
+ * Il n'existe que deux façons de monter :
+ *  · la RAMPE, quand il y en a une — on court dessus, c'est gratuit ;
+ *  · l'ESCALADE, sinon — on lui rentre dedans et on passe par-dessus, en
+ *    payant une seconde pleine.
+ *
+ * Aucun cas limite, aucune zone grise : la hauteur seule interdit le saut, donc
+ * le joueur n'a jamais à deviner s'il « aurait pu passer ».
  */
-export const PLATEFORME_H2 = 2.8
+export const PLATEFORME_H = TAILLE_OBSTACLE.mur.haut
 
 /**
  * Un élément de bordure (touffe de bambous, masure en flammes, rocher…).
@@ -366,6 +374,7 @@ export class Track {
     for (const p of this.plateformes) {
       p.active = false
       p.mesh.visible = false
+      p.rampe.visible = false
     }
     for (const m of this.murs) {
       m.active = false
@@ -428,17 +437,35 @@ export class Track {
     let heurte = false
     for (const p of this.plateformes) {
       if (!p.active) continue
-      // Le joueur est en z = 0 ; la plateforme s'étend de son bord avant
-      // (mesh.userData.zAvant) sur `longueur` mètres vers l'avant.
-      const zAvant = p.mesh.userData.zAvant as number
-      if (zAvant < -0.2 || zAvant > p.plan.longueur + 0.2) continue
       if (Math.abs(x - LANES[p.plan.lane]) > PLATEFORME_LARG / 2) continue
 
+      // Le joueur est en z = 0 ; le bord avant du plateau est en `zAvant`, et
+      // le plateau s'étend de là vers l'avant (z décroissant).
+      const zAvant = p.mesh.userData.zAvant as number
+
+      /*
+       * ————— La rampe —————
+       * Elle occupe les `rampe` mètres AVANT le plateau, et monte du sol
+       * jusqu'à lui. On y est porté à hauteur proportionnelle : c'est ce qui
+       * permet d'arriver en haut en courant, sans jamais sauter.
+       *
+       * Elle ne heurte jamais — une rampe qu'on percute n'aurait aucun sens.
+       */
+      const r = p.plan.rampe
+      if (r > 0 && zAvant <= 0 && 0 <= zAvant + r) {
+        sol = Math.max(sol, (p.plan.hauteur * (zAvant + r)) / r)
+        continue
+      }
+
+      if (zAvant < -0.2 || zAvant > p.plan.longueur + 0.2) continue
+
       if (pieds >= p.plan.hauteur - 0.3) {
-        // On garde la PLUS HAUTE : deux niveaux peuvent se chevaucher au moment
-        // où l'on passe de l'un à l'autre.
+        // On garde la PLUS HAUTE : deux plateaux peuvent se chevaucher d'un
+        // cheveu au moment où l'on passe de l'un à l'autre.
         sol = Math.max(sol, p.plan.hauteur)
       } else {
+        // Les pieds sous le plateau : on lui rentre dedans. À 2,40 m, c'est
+        // forcément le cas quand il n'y a pas de rampe — d'où l'escalade.
         heurte = true
       }
     }
@@ -548,10 +575,12 @@ export class Track {
     for (const p of this.plateformes) {
       if (!p.active) continue
       p.mesh.position.z += dz
+      p.rampe.position.z += dz
       p.mesh.userData.zAvant = (p.mesh.userData.zAvant as number) + dz
       if (p.mesh.userData.zAvant > DESPAWN_Z + p.plan.longueur) {
         p.active = false
         p.mesh.visible = false
+        p.rampe.visible = false
       }
     }
 
@@ -729,21 +758,24 @@ export class Track {
 
   private spawnPlateforme(p: PlannedPlateforme, z: number) {
     const biome = indexBiome(p.d, this.courseLength)
-    // On recycle par biome ET par hauteur : un plateau bas et un plateau haut
-    // n'ont pas la même silhouette.
-    let pf = this.plateformes.find(
-      (q) => !q.active && q.biome === biome && q.plan.hauteur === p.hauteur
-    )
+    let pf = this.plateformes.find((q) => !q.active && q.biome === biome)
     if (!pf) {
       const habille = BIOMES[biome].fabriquePlateforme
       pf = {
         mesh: habille ? habille(p.hauteur) : makePlateformeMesh(p.hauteur),
+        rampe: new THREE.Mesh(
+          GEO_RAMPE,
+          new THREE.MeshStandardMaterial({
+            color: BIOMES[biome].murCorps,
+            roughness: 0.9,
+          })
+        ),
         plan: p,
         biome,
         active: false,
       }
       this.plateformes.push(pf)
-      this.scene.add(pf.mesh)
+      this.scene.add(pf.mesh, pf.rampe)
     }
     pf.plan = p
     // Le maillage est bâti sur 1 m de long, centré : on l'étire et on le recule
@@ -752,6 +784,14 @@ export class Track {
     pf.mesh.position.set(LANES[p.lane], 0, z - p.longueur / 2)
     pf.mesh.userData.zAvant = z
     pf.mesh.visible = true
+
+    // La rampe monte vers le bord avant du plateau : son sommet doit tomber
+    // exactement sur `z`, donc son centre une demi-rampe plus près.
+    pf.rampe.visible = p.rampe > 0
+    if (p.rampe > 0) {
+      pf.rampe.scale.set(PLATEFORME_LARG, p.hauteur, p.rampe)
+      pf.rampe.position.set(LANES[p.lane], 0, z + p.rampe / 2)
+    }
     pf.active = true
   }
 
@@ -1162,29 +1202,63 @@ export function buildPlateformePlan(
 
   let d = 200 // le temps d'avoir compris la course avant d'en changer les règles
   while (d < length - SPRINT_ZONE - 40) {
-    const longueur = 15 + rng() * 10
     /*
-     * On décide de la paire AVANT de chercher la ligne, et on réserve alors
-     * l'espace des deux niveaux d'un coup.
+     * Un CONVOI : une à trois plateformes à la suite, toutes à hauteur de mur,
+     * séparées de trous qu'on franchit d'un saut.
      *
-     * L'ordre compte. En posant d'abord le niveau 1 puis en cherchant la place
-     * du niveau 2, la ligne se trouvait déjà bloquée neuf fois sur dix : il faut
-     * ~44 m de libre, or les obstacles tombent tous les 10 à 17 m. Deux courses
-     * sur trois n'avaient aucun chemin en l'air. En réservant l'ensemble dès le
-     * départ, la recherche de ligne libre travaille sur le vrai besoin.
+     * C'est ça, le chemin en l'air — on ne monte pas d'étage en étage, on
+     * saute de wagon en wagon comme dans Subway Surfers. Toutes à la même
+     * hauteur, la lecture est immédiate : on voit tout de suite jusqu'où va la
+     * route.
+     *
+     * ⚠️ La ligne doit être libre sur TOUT le convoi, réservé d'un bloc avant
+     * même de chercher où le mettre. Poser les wagons un par un laissait une
+     * barrière au milieu une fois sur deux — et en l'air on ne change plus de
+     * voie pour l'éviter. C'était le pire piège possible.
      */
-    const veutPaire = rng() < 0.45
-    const ecart = 6 + rng() * 5
-    const l2 = 12 + rng() * 8
-    const portee = veutPaire ? longueur + ecart + l2 : longueur
+    /*
+     * Un convoi de trois wagons réclame une ligne libre sur plus de 110 m — or
+     * les obstacles tombent tous les 10 à 17 m. À force d'en demander autant, la
+     * recherche échouait entièrement dans 4 % des courses, qui se retrouvaient
+     * SANS AUCUNE plateforme. On penche donc franchement vers les convois
+     * courts, et les longs restent une rareté qu'on croise de temps en temps.
+     */
+    const tirage = rng()
+    const wagons = tirage < 0.5 ? 1 : tirage < 0.85 ? 2 : 3
+    const longs: number[] = []
+    const trous: number[] = []
+    let portee = 0
+    for (let i = 0; i < wagons; i++) {
+      const l = 15 + rng() * 10
+      longs.push(l)
+      portee += l
+      if (i < wagons - 1) {
+        // 6 à 11 m : franchissable d'un saut depuis le wagon précédent, et
+        // jamais assez large pour qu'on tombe malgré soi (cf. test).
+        const t = 6 + rng() * 5
+        trous.push(t)
+        portee += t
+      }
+    }
 
-    // Une ligne libre sur TOUTE la portée : une plateforme coupée par une
-    // barrière serait un piège, pas un choix — et en l'air on ne peut plus
-    // changer de voie pour l'éviter.
+    /*
+     * La rampe, une fois sur deux.
+     *
+     * Avec rampe, le convoi est un cadeau : on y monte en courant, on file à
+     * l'abri de tout ce qui traîne au sol. Sans rampe, c'est un mur — il faut
+     * l'escalader et payer une seconde. La même structure est donc tantôt une
+     * récompense, tantôt un piège, et c'est ce qui oblige à REGARDER la piste
+     * au lieu d'apprendre un réflexe.
+     */
+    const rampe = rng() < 0.5 ? 5 + rng() * 3 : 0
+    const besoin = portee + rampe
+
     let lane = -1
     for (let essai = 0; essai < 12; essai++) {
       const occupees = new Set(
-        obstacles.filter((o) => o.d > d - 12 && o.d < d + portee + 12).map((o) => o.lane)
+        obstacles
+          .filter((o) => o.d > d - rampe - 12 && o.d < d + portee + 12)
+          .map((o) => o.lane)
       )
       const libres = [0, 1, 2].filter((l) => !occupees.has(l))
       if (libres.length > 0) {
@@ -1194,19 +1268,57 @@ export function buildPlateformePlan(
       d += 8 // ce tronçon est bouché : on décale
     }
 
-    // Tout doit tenir hors de la zone de sprint, où l'on ne peut plus swiper
-    // pour sauter.
+    // Tout doit tenir hors de la zone de sprint, où l'on ne peut plus swiper.
     if (d + portee >= length - SPRINT_ZONE) break
 
     if (lane >= 0) {
-      plan.push({ d, longueur, lane, hauteur: PLATEFORME_H1 })
-      // Le second niveau : la route en l'air. Même ligne, sinon il faudrait
-      // sauter ET changer de voie en un seul geste.
-      if (veutPaire) {
-        plan.push({ d: d + longueur + ecart, longueur: l2, lane, hauteur: PLATEFORME_H2 })
+      let dd = d
+      for (let i = 0; i < wagons; i++) {
+        plan.push({
+          d: dd,
+          longueur: longs[i],
+          lane,
+          hauteur: PLATEFORME_H,
+          // Seul le PREMIER wagon porte la rampe : les suivants s'atteignent
+          // en sautant depuis celui d'avant.
+          rampe: i === 0 ? rampe : 0,
+        })
+        dd += longs[i] + (trous[i] ?? 0)
       }
     }
-    d += 150 + rng() * 110
+    // On repart APRÈS le convoi qu'on vient de poser (`besoin`), plus un
+    // intervalle : une plateforme toutes les ~9 s de course.
+    d += 105 + rng() * 75 + besoin
+  }
+
+  /*
+   * Au moins UNE plateforme par course.
+   *
+   * Le tirage en donne 5,5 en moyenne, mais laissait 0,5 % des courses sans la
+   * moindre — et une course sans plateforme est une course où la mécanique
+   * n'existe pas, ce qui est pire qu'un déséquilibre : en multi, deux joueurs
+   * feraient l'expérience de deux jeux différents. On en pose donc une de
+   * secours, la plus modeste possible, au premier endroit qui l'accepte.
+   *
+   * Même filet que pour la jarre dorée, et pour la même raison.
+   */
+  if (plan.length === 0) {
+    for (let d2 = 250; d2 < length - SPRINT_ZONE - 60; d2 += 10) {
+      const occupees = new Set(
+        obstacles.filter((o) => o.d > d2 - 20 && o.d < d2 + 40).map((o) => o.lane)
+      )
+      const libres = [0, 1, 2].filter((l) => !occupees.has(l))
+      if (libres.length > 0) {
+        plan.push({
+          d: d2,
+          longueur: 16,
+          lane: libres[0],
+          hauteur: PLATEFORME_H,
+          rampe: 6, // avec rampe : la course de secours ne doit pas punir
+        })
+        break
+      }
+    }
   }
   return plan
 }
@@ -1234,6 +1346,41 @@ function makePlateformeMesh(hauteur: number): THREE.Object3D {
   g.add(corps, liser)
   return g
 }
+
+/**
+ * Le coin d'une rampe : un prisme triangulaire bâti sur 1 × 1 × 1, qu'on met à
+ * l'échelle (largeur, hauteur, longueur) à l'apparition.
+ *
+ * Il est construit à la main plutôt qu'avec une boîte inclinée : une boîte
+ * tournée dépasse par en dessous et se déforme dès qu'on l'étire dans un seul
+ * axe. Un vrai coin, lui, se met à l'échelle sans jamais mentir sur sa pente —
+ * et cette pente EST la surface sur laquelle on court.
+ *
+ * Profil dans le plan (z, y) : (+0,5 ; 0) au ras du sol, montant jusqu'à
+ * (−0,5 ; 1) où il rejoint le plateau.
+ */
+function makeRampeGeo(): THREE.BufferGeometry {
+  const X = 0.5
+  // 6 sommets : 3 par flanc
+  const s = [
+    [-X, 0, 0.5], [-X, 0, -0.5], [-X, 1, -0.5], // flanc gauche
+    [X, 0, 0.5], [X, 0, -0.5], [X, 1, -0.5], // flanc droit
+  ]
+  const tri = [
+    [0, 2, 1], [3, 4, 5], // les deux flancs triangulaires
+    [0, 3, 5], [0, 5, 2], // la pente, celle qu'on foule
+    [1, 2, 5], [1, 5, 4], // le dos vertical, contre le plateau
+    [0, 1, 4], [0, 4, 3], // le dessous
+  ]
+  const pos: number[] = []
+  for (const t of tri) for (const i of t) pos.push(...s[i])
+  const g = new THREE.BufferGeometry()
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3))
+  g.computeVertexNormals()
+  return g
+}
+
+const GEO_RAMPE = makeRampeGeo()
 
 /**
  * Place les pans de mur : un tous les 160 à 280 m, de 26 à 42 m de long.

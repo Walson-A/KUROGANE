@@ -270,21 +270,34 @@ const BAMBOUS: Biome = {
   sol: 0x24301f,
   ligne: 0x40573f,
   murCorps: 0x2c3a23, // une palissade de bambou serré, sombre
-  ecartDecor: 12,
+  /*
+   * 9 m entre deux massifs, et chaque massif s'étale sur ~18 m de profondeur :
+   * ils se CHEVAUCHENT donc largement.
+   *
+   * C'est le point qui manquait. Avec des massifs espacés de 12 m mais larges
+   * de 7, on voyait le vide entre eux — une haie de bosquets, pas une forêt.
+   * Le recouvrement est ce qui ferme complètement le regard.
+   *
+   * Et il ne coûte rien : chaque massif reste UN appel de dessin quel que soit
+   * le nombre de tiges, puisque tout est soudé. Le seul vrai coût, c'est le
+   * nombre de massifs — d'où le choix de charger chacun plutôt que d'en
+   * multiplier.
+   */
+  ecartDecor: 9,
   fabriqueDecor: (rng) => {
     const corps: Piece[] = []
     const feuilles: Piece[] = []
 
     // ————— Plan rapproché : les tiges qu'on voit vraiment —————
-    const proches = 4 + Math.floor(rng() * 4)
+    const proches = 9 + Math.floor(rng() * 7)
     for (let i = 0; i < proches; i++) {
       const h = 7 + rng() * 6
       const r = 0.085 + rng() * 0.05
-      const x = rng() * 4
-      const z = (rng() - 0.5) * 7
+      const x = rng() * 4.5
+      const z = (rng() - 0.5) * 18
       // Plus la tige est loin, plus elle est sombre : la profondeur se lit à la
       // valeur avant de se lire à la taille.
-      const recul = Math.min(1, x / 4)
+      const recul = Math.min(1, x / 4.5)
       const vert = teinte(0x6d8a42, 0x2f4423, recul * 0.65 + rng() * 0.2)
       const penche = (rng() - 0.5) * 0.14
 
@@ -332,42 +345,45 @@ const BAMBOUS: Biome = {
     // ————— Plan lointain : la masse de la forêt —————
     // Deux fois plus hautes, quasi noires, sans le moindre détail. C'est elles
     // qui ferment l'horizon et donnent l'impression qu'on traverse quelque chose.
-    const loin = 5 + Math.floor(rng() * 5)
+    // Elles sont NOMBREUSES : c'est le rideau du fond, et le moindre trou
+    // dedans se voit comme un manque. Une tige lointaine ne coûte que quelques
+    // triangles, alors on en met beaucoup.
+    const loin = 16 + Math.floor(rng() * 10)
     for (let i = 0; i < loin; i++) {
-      const h = 13 + rng() * 9
+      const h = 13 + rng() * 10
       const r = 0.11 + rng() * 0.08
       corps.push({
         geo: GEO.tige.clone().scale(r, h, r),
         couleur: teinte(0x2b3d22, 0x141d12, rng()),
-        x: 5 + rng() * 11,
+        x: 5 + rng() * 14,
         y: h / 2,
-        z: (rng() - 0.5) * 13,
+        z: (rng() - 0.5) * 20,
         rz: (rng() - 0.5) * 0.1,
       })
     }
 
     // ————— Le sol : litière et jeunes pousses —————
-    const litiere = 3 + Math.floor(rng() * 4)
+    const litiere = 7 + Math.floor(rng() * 6)
     for (let i = 0; i < litiere; i++) {
       feuilles.push({
-        geo: GEO.feuille.clone().scale(0.5 + rng() * 1.1, 0.3 + rng() * 0.5, 1),
+        geo: GEO.feuille.clone().scale(0.5 + rng() * 1.3, 0.3 + rng() * 0.6, 1),
         couleur: teinte(0x4a4a24, 0x26301a, rng()),
-        x: rng() * 5,
+        x: rng() * 6,
         y: 0.03, // à ras du sol, sinon ça scintille contre lui
-        z: (rng() - 0.5) * 9,
+        z: (rng() - 0.5) * 18,
         rx: -Math.PI / 2,
         ry: rng() * Math.PI,
       })
     }
-    const pousses = 2 + Math.floor(rng() * 3)
+    const pousses = 5 + Math.floor(rng() * 5)
     for (let i = 0; i < pousses; i++) {
-      const h = 0.8 + rng() * 1.6
+      const h = 0.8 + rng() * 1.8
       corps.push({
         geo: GEO.tige.clone().scale(0.05, h, 0.05),
         couleur: teinte(0x86a352, 0x4e6a30, rng()),
-        x: rng() * 5,
+        x: rng() * 6,
         y: h / 2,
-        z: (rng() - 0.5) * 9,
+        z: (rng() - 0.5) * 18,
         rz: (rng() - 0.5) * 0.4,
       })
     }

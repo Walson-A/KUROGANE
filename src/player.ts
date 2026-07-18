@@ -39,6 +39,13 @@ const ATTACK_TIME = 0.26 // durée d'un coup : on ne peut pas réenchaîner avan
 const MUR_DUREE = 0.95 // combien de temps on tient sur une paroi (secondes)
 const MUR_HAUTEUR = 1.6 // à quelle hauteur on y court
 const SLIDE_TIME = 0.55 // durée d'une glissade (secondes)
+/**
+ * Durée de la montée quand on escalade une plateforme sans rampe.
+ *
+ * C'est le temps du GESTE, pas le coût en course : le freinage, lui, vit dans
+ * main.ts et dure plus longtemps que la montée (on repart lancé mollement).
+ */
+const ESCALADE_MONTEE = 0.45
 const LANE_LERP = 12 // vitesse de glissement vers la ligne visée
 /**
  * Combien de temps on penche dans le virage.
@@ -160,6 +167,31 @@ export class Player {
    * tient dans cette seule valeur.
    */
   sol = 0
+
+  /** Temps restant de l'escalade en cours, et le sommet qu'on vise. */
+  private escaladeT = 0
+  private escaladeVers = 0
+
+  /** Est-on en train d'escalader ? (main.ts s'en sert pour freiner) */
+  get escalade() {
+    return this.escaladeT > 0
+  }
+
+  /**
+   * Se hisser par-dessus une plateforme sans rampe.
+   *
+   * On ne rebondit pas, on ne trébuche pas : on PASSE, mais lentement. C'est le
+   * prix de n'avoir pas pris la ligne de la rampe — et à l'arrivée on se
+   * retrouve tout de même en haut, sur la route rapide. La sanction est
+   * temporelle, jamais un cul-de-sac : rester bloqué contre un mur dans une
+   * course serait insupportable.
+   */
+  escalader(hauteur: number): boolean {
+    if (this.escaladeT > 0) return false
+    this.escaladeT = ESCALADE_MONTEE
+    this.escaladeVers = hauteur
+    return true
+  }
 
   get onGround() {
     return this.mesh.position.y <= this.sol + 0.001
@@ -323,6 +355,19 @@ export class Player {
         return // ni voie, ni gravité, ni glissade tant qu'on tient
       }
       this.lacheMur()
+    }
+
+    // ————— L'escalade —————
+    // On se hisse : la gravité ne s'applique plus, on monte jusqu'au sommet.
+    // Le corps se redresse contre la paroi le temps de passer.
+    if (this.escaladeT > 0) {
+      this.escaladeT -= dt
+      this.vy = 0
+      this.sliding = 0
+      const k = Math.min(1, dt * 9)
+      this.mesh.position.y += (this.escaladeVers - this.mesh.position.y) * k
+      if (this.escaladeT <= 0) this.mesh.position.y = this.escaladeVers
+      return // ni voie, ni gravité tant qu'on se hisse
     }
 
     // Glisse en douceur vers la ligne choisie
