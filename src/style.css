@@ -315,6 +315,54 @@ body {
   }
 }
 
+/* ——— 💨 Le rideau de vitesse (sprint final + dash) ———
+   Des traits blancs qui filent sur les deux bords, plus denses vers l'extérieur
+   (masque en dégradé) et défilant en boucle. L'opacité est pilotée par main.ts :
+   0 au repos, elle monte avec le martèlement et à fond sur un dash. `screen`
+   pour que les traits brillent sur la nuit indigo sans la salir. */
+#speedlines {
+  position: fixed;
+  inset: 0;
+  z-index: 4;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.12s linear;
+  mix-blend-mode: screen;
+}
+#speedlines::before,
+#speedlines::after {
+  content: "";
+  position: absolute;
+  top: -10%;
+  bottom: -10%;
+  width: 42%;
+  background: repeating-linear-gradient(
+    0deg,
+    transparent 0 9px,
+    rgba(233, 240, 255, 0.5) 9px 11px,
+    transparent 11px 22px
+  );
+  animation: speedrush 0.4s linear infinite;
+}
+#speedlines::before {
+  left: 0;
+  -webkit-mask: linear-gradient(90deg, #000, transparent);
+  mask: linear-gradient(90deg, #000, transparent);
+}
+#speedlines::after {
+  right: 0;
+  -webkit-mask: linear-gradient(270deg, #000, transparent);
+  mask: linear-gradient(270deg, #000, transparent);
+}
+@keyframes speedrush {
+  from {
+    background-position: 0 0;
+  }
+  to {
+    background-position: 0 66px;
+  }
+}
+
 /* ——— ☠️ Senbon empoisonné : tout tangue ———
    On fait onduler le CANVAS et non le HUD : le chrono et les slots doivent
    rester lisibles, sinon c'est le joueur qu'on rend malade, pas Yasuke. */
