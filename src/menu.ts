@@ -26,6 +26,7 @@ type ScreenName =
   | 'salon'
   | 'lobby'
   | 'results'
+  | 'boutique'
 
 export interface MenuCallbacks {
   onSolo(): void
@@ -51,6 +52,10 @@ export interface MenuCallbacks {
   onChat(text: string): void
   onReplay(): void
   onLeaveSalon(): void
+  /** Le joueur veut ouvrir la boutique (le jeu ira chercher le catalogue) */
+  onBoutique(): void
+  /** Le joueur achete un article — le serveur tranche */
+  onAcheter(code: string): void
 }
 
 /**
@@ -63,6 +68,21 @@ export function escapeHtml(s: string): string {
   const div = document.createElement('div')
   div.textContent = s
   return div.innerHTML
+}
+
+/**
+ * Un article tel que la boutique l'AFFICHE.
+ * Le menu ne calcule aucun prix : il ne fait que montrer ce que le serveur
+ * envoie, et renvoyer le code cliqué.
+ */
+export interface ArticleVu {
+  code: string
+  nom: string
+  categorie: string
+  prix_mon: number | null
+  prix_hisui: number | null
+  valeur: string | null
+  possede: boolean
 }
 
 /** L'aperçu 3D du guerrier sélectionné : sa propre petite scène, son propre canvas. */
@@ -95,6 +115,8 @@ export class Menu {
   private apercu?: THREE.Object3D
   /** Le guerrier montré dans la vignette — il a sa propre foulée. */
   private fighterAffiche: Fighter = ROSTER[0]
+  /** Les couleurs achetées (0xrrggbb), ajoutées aux palettes du vestiaire. */
+  private couleursAchetees: number[] = []
   private anim = new Anim()
 
   private el = {
@@ -134,6 +156,13 @@ export class Menu {
     // ————— Résultats —————
     resultsBody: document.getElementById('resultsBody')!,
     replay: document.getElementById('btnReplay')!,
+    // ————— Boutique —————
+    bourseRow: document.getElementById('bourseRow')!,
+    bourse: document.getElementById('bourse')!,
+    bourseMon: document.getElementById('bourseMon')!,
+    bourseHisui: document.getElementById('bourseHisui')!,
+    boutiqueListe: document.getElementById('boutiqueListe')!,
+    boutiqueVide: document.getElementById('boutiqueVide')!,
   }
 
   constructor(cb: MenuCallbacks) {
@@ -150,6 +179,7 @@ export class Menu {
       salon: document.getElementById('scr-salon')!,
       lobby: document.getElementById('scr-lobby')!,
       results: document.getElementById('scr-results')!,
+      boutique: document.getElementById('scr-boutique')!,
     }
 
     // — Écran-titre —
@@ -158,6 +188,7 @@ export class Menu {
     document.getElementById('btnRoster')!.addEventListener('click', () => this.show('roster'))
     document.getElementById('btnOptions')!.addEventListener('click', () => this.show('options'))
     document.getElementById('btnHelp')!.addEventListener('click', () => this.show('help'))
+    document.getElementById('btnBoutique')!.addEventListener('click', () => cb.onBoutique())
     this.el.cancel.addEventListener('click', () => cb.onCancel())
 
     /*
@@ -427,16 +458,36 @@ export class Menu {
 
   /** Câble les deux palettes et le choix d'ornement. */
   private buildForge() {
+    this.remplirPalettes()
+    for (const b of this.el.forgeHead.querySelectorAll<HTMLElement>('button')) {
+      b.addEventListener('click', () => {
+        this.settings.custom.head = b.dataset.h as Head
+        this.editCustom()
+      })
+    }
+  }
+
+  /**
+   * (Re)fabrique les deux palettes : les 18 couleurs libres, puis les couleurs
+   * ACHETÉES à la suite.
+   *
+   * Appelée à nouveau après un achat, pour que la couleur payée apparaisse
+   * tout de suite — sans quoi il faudrait relancer le jeu pour en profiter.
+   */
+  private remplirPalettes() {
     for (const [pal, key] of [
       [this.el.palBody, 'body'],
       [this.el.palBand, 'band'],
     ] as const) {
-      for (const c of SKIN_PALETTE) {
+      pal.replaceChildren()
+      for (const c of [...SKIN_PALETTE, ...this.couleursAchetees]) {
         const sw = document.createElement('button')
         sw.className = 'swatch'
         sw.dataset.c = String(c)
         sw.style.background = cssColor(c)
         sw.setAttribute('aria-label', cssColor(c))
+        // Les couleurs achetées portent une marque : on doit voir ce qu'on a payé
+        if (this.couleursAchetees.includes(c)) sw.classList.add('paye')
         sw.addEventListener('click', () => {
           this.settings.custom[key] = c
           this.editCustom()
@@ -444,12 +495,79 @@ export class Menu {
         pal.appendChild(sw)
       }
     }
-    for (const b of this.el.forgeHead.querySelectorAll<HTMLElement>('button')) {
-      b.addEventListener('click', () => {
-        this.settings.custom.head = b.dataset.h as Head
-        this.editCustom()
-      })
+    this.markForge()
+  }
+
+  /**
+   * Les couleurs débloquées, reçues du serveur en '#rrggbb'.
+   *
+   * ⚠️ C'est le SERVEUR qui dit ce que le joueur possède. Cette liste n'est
+   * qu'un affichage : ajouter une couleur ici à la main ne la ferait
+   * apparaître que sur son propre écran, sans rien débloquer nulle part.
+   */
+  setCouleursDebloquees(hex: string[]) {
+    this.couleursAchetees = hex
+      .map((h) => Number.parseInt(h.replace('#', ''), 16))
+      .filter((n) => Number.isInteger(n) && n >= 0 && n <= 0xffffff)
+    this.remplirPalettes()
+  }
+
+  // ————— La boutique —————
+
+  /**
+   * Affiche la bourse partout où elle se montre : le bouton de l'écran-titre et
+   * l'en-tête de la boutique. `null` = on n'a pas joint le serveur ; on cache
+   * alors la ligne plutôt que d'afficher un faux zéro.
+   */
+  setBourse(mon: number | null, hisui: number | null) {
+    const dispo = mon !== null && hisui !== null
+    this.el.bourseRow.classList.toggle('hidden', !dispo)
+    if (!dispo) return
+    this.el.bourse.textContent = `${mon} 文 · ${hisui} 翡翠`
+    this.el.bourseMon.textContent = `${mon} 文`
+    this.el.bourseHisui.textContent = `${hisui} 翡翠`
+  }
+
+  /** Remplit la boutique. `articles` vient du serveur — lui seul dit les prix. */
+  setBoutique(articles: ArticleVu[]) {
+    const liste = this.el.boutiqueListe
+    liste.replaceChildren()
+    this.el.boutiqueVide.classList.toggle('hidden', articles.length > 0)
+
+    for (const a of articles) {
+      const carte = document.createElement('div')
+      carte.className = 'article' + (a.possede ? ' possede' : '')
+
+      const pastille = document.createElement('span')
+      pastille.className = 'pastille'
+      if (a.valeur) pastille.style.background = a.valeur
+
+      const lignes = document.createElement('span')
+      lignes.className = 'lines'
+      const nom = document.createElement('b')
+      // textContent : le nom vient de la base, on ne fabrique jamais de HTML avec
+      nom.textContent = a.nom
+      const prix = document.createElement('small')
+      prix.textContent = a.possede
+        ? 'Acquis'
+        : a.prix_mon !== null
+          ? `${a.prix_mon} 文`
+          : `${a.prix_hisui} 翡翠`
+      lignes.append(nom, prix)
+
+      const bouton = document.createElement('button')
+      bouton.className = 'ghost'
+      bouton.textContent = a.possede ? '✓' : 'Acheter'
+      bouton.disabled = a.possede
+      if (!a.possede) bouton.addEventListener('click', () => this.cb.onAcheter(a.code))
+
+      carte.append(pastille, lignes, bouton)
+      liste.appendChild(carte)
     }
+  }
+
+  showBoutique() {
+    this.show('boutique')
   }
 
   /** Une retouche du skin : on sauve et on réapplique (aperçu + jeu en direct). */

@@ -5,6 +5,7 @@ import { RaceRoom } from './RaceRoom.js'
 import { auth } from './auth.js'
 import { baseDispo, migrer } from './db.js'
 import { assureProfil } from './profil.js'
+import { acheter, catalogue } from './boutique.js'
 
 /**
  * Le serveur de jeu KUROGANE.
@@ -38,6 +39,96 @@ function enTetes(req: IncomingMessage): Headers {
     else if (Array.isArray(valeur)) for (const v of valeur) h.append(nom, v)
   }
   return h
+}
+
+/**
+ * ————— CORS : autoriser le jeu à parler au serveur —————
+ *
+ * Le jeu (Vercel, ou localhost:5173 en dev) et le serveur (Railway) vivent sur
+ * deux domaines différents. Sans ces en-têtes, le navigateur BLOQUE l'appel —
+ * et il le bloque en silence, après une requête préparatoire « OPTIONS » à
+ * laquelle il faut savoir répondre. (curl, lui, ne fait pas ce préalable :
+ * c'est pourquoi un test en ligne de commande peut réussir là où le vrai jeu
+ * échoue.)
+ *
+ * ⚠️ On renvoie l'origine EXACTE de l'appelant, jamais `*` : avec `*`, un
+ * navigateur refuse d'envoyer les identifiants, et surtout n'importe quel site
+ * pourrait interroger l'API au nom d'un joueur connecté.
+ */
+const ORIGINES = new Set(
+  [
+    'http://localhost:5173',
+    'http://127.0.0.1:5173',
+    ...(process.env.ORIGINES_AUTORISEES?.split(',').map((o) => o.trim()) ?? []),
+  ].filter(Boolean)
+)
+
+function entetesCors(req: IncomingMessage): Record<string, string> {
+  const origine = req.headers.origin
+  // Une origine inconnue ne reçoit AUCUN en-tête : le navigateur bloquera.
+  if (!origine || !ORIGINES.has(origine)) return {}
+  return {
+    'access-control-allow-origin': origine,
+    'access-control-allow-credentials': 'true',
+    // `vary` : sans lui, un cache pourrait resservir la réponse d'une origine
+    // à une autre, ce qui reviendrait à ouvrir l'API à tout le monde.
+    vary: 'Origin',
+  }
+}
+
+function repondre(res: ServerResponse, code: number, corps: unknown, req?: IncomingMessage) {
+  res.writeHead(code, {
+    'content-type': 'application/json',
+    ...(req ? entetesCors(req) : {}),
+  })
+  res.end(JSON.stringify(corps))
+}
+
+/** Lit un corps JSON, borné : personne ne nous fera avaler 100 Mo. */
+async function lireCorps(req: IncomingMessage): Promise<any> {
+  const morceaux: Buffer[] = []
+  let taille = 0
+  for await (const m of req) {
+    taille += m.length
+    if (taille > 4096) throw new Error('corps trop gros')
+    morceaux.push(m as Buffer)
+  }
+  if (!morceaux.length) return {}
+  try {
+    return JSON.parse(Buffer.concat(morceaux).toString('utf8'))
+  } catch {
+    return {}
+  }
+}
+
+/**
+ * Exécute `suite` seulement si la requête porte une session valide.
+ *
+ * Le refus ne dit jamais POURQUOI (jeton absent, expiré, inventé…) : un
+ * message précis n'aiderait que celui qui essaie des jetons au hasard.
+ */
+function avecSession(
+  req: IncomingMessage,
+  res: ServerResponse,
+  suite: (joueur: string, nom?: string) => Promise<void>
+) {
+  if (!auth) {
+    repondre(res, 503, { erreur: 'comptes indisponibles' }, req)
+    return
+  }
+  auth.api
+    .getSession({ headers: enTetes(req) })
+    .then(async (session) => {
+      if (!session?.user) {
+        repondre(res, 401, { erreur: 'non connecté' }, req)
+        return
+      }
+      await suite(session.user.id, session.user.name)
+    })
+    .catch((e) => {
+      console.error('api :', e)
+      repondre(res, 500, { erreur: 'erreur serveur' }, req)
+    })
 }
 
 /**
@@ -81,6 +172,21 @@ gameServer.listen(port).then(() => {
   httpServer.removeAllListeners('request')
 
   httpServer.on('request', (req, res) => {
+    // ————— La requête préparatoire du navigateur —————
+    // Elle précède tout appel un peu riche (en-tête Authorization, JSON…) et
+    // demande « ai-je le droit ? ». Y répondre est la condition pour que le
+    // vrai appel parte ensuite.
+    if (req.method === 'OPTIONS' && req.url?.startsWith('/api/')) {
+      res.writeHead(204, {
+        ...entetesCors(req),
+        'access-control-allow-methods': 'GET, POST, OPTIONS',
+        'access-control-allow-headers': 'content-type, authorization',
+        'access-control-max-age': '86400', // 24 h : on évite un aller-retour par appel
+      })
+      res.end()
+      return
+    }
+
     // ————— Les comptes —————
     if (req.url?.startsWith('/api/auth')) {
       if (!authHandler) {
@@ -88,6 +194,9 @@ gameServer.listen(port).then(() => {
         res.end(JSON.stringify({ erreur: 'comptes indisponibles (pas de base)' }))
         return
       }
+      // Better Auth ecrit lui-meme sa reponse : on pose les en-teres CORS
+      // AVANT de lui passer la main (setHeader survit a son writeHead).
+      for (const [k, v] of Object.entries(entetesCors(req))) res.setHeader(k, v)
       authHandler(req, res)
       return
     }
@@ -96,30 +205,40 @@ gameServer.listen(port).then(() => {
     // Le jeu ne fait que LIRE ici. Aucun solde n'est jamais accepté depuis le
     // navigateur : c'est le serveur qui crédite, à la fin d'une course.
     if (req.url === '/api/profil') {
-      if (!auth) {
-        res.writeHead(503, { 'content-type': 'application/json' })
-        res.end(JSON.stringify({ erreur: 'comptes indisponibles' }))
-        return
-      }
-      auth.api
-        .getSession({ headers: enTetes(req) })
-        .then(async (session) => {
-          // Pas de session valide = pas de profil. On ne dit pas POURQUOI :
-          // un message précis aiderait surtout qui essaie des jetons au hasard.
-          if (!session?.user) {
-            res.writeHead(401, { 'content-type': 'application/json' })
-            res.end(JSON.stringify({ erreur: 'non connecté' }))
-            return
-          }
-          const profil = await assureProfil(session.user.id, session.user.name)
-          res.writeHead(200, { 'content-type': 'application/json' })
-          res.end(JSON.stringify(profil))
-        })
-        .catch((e) => {
-          console.error('profil :', e)
-          res.writeHead(500, { 'content-type': 'application/json' })
-          res.end(JSON.stringify({ erreur: 'erreur serveur' }))
-        })
+      avecSession(req, res, async (joueur, nom) => {
+        const profil = await assureProfil(joueur, nom)
+        repondre(res, 200, profil, req)
+      })
+      return
+    }
+
+    // ————— La boutique : le catalogue —————
+    // On renvoie AUSSI ce que le joueur possède déjà : le jeu a besoin des deux
+    // pour griser ce qui est acquis et débloquer les couleurs au vestiaire.
+    if (req.url === '/api/boutique') {
+      avecSession(req, res, async (joueur, nom) => {
+        // assureProfil d'abord : un compte tout neuf n'a pas encore de ligne,
+        // et la boutique doit pouvoir s'ouvrir dès la première seconde de jeu.
+        const profil = await assureProfil(joueur, nom)
+        repondre(res, 200, { profil, articles: await catalogue(joueur) }, req)
+      })
+      return
+    }
+
+    // ————— La boutique : acheter —————
+    if (req.url === '/api/acheter' && req.method === 'POST') {
+      avecSession(req, res, async (joueur) => {
+        const corps = await lireCorps(req)
+        const code = typeof corps?.code === 'string' ? corps.code : ''
+        // ⚠️ On ne reçoit QUE le code. Le prix, la monnaie et le solde sont
+        // relus dans la base — un client modifié n'a rien à négocier ici.
+        const r = await acheter(joueur, code)
+        if (!r.ok) {
+          repondre(res, 400, { erreur: r.raison }, req)
+          return
+        }
+        repondre(res, 200, { profil: r.profil, articles: await catalogue(joueur) }, req)
+      })
       return
     }
 

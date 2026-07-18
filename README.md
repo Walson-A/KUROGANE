@@ -859,14 +859,71 @@ Le schéma est partagé : Better Auth gère `user`, `session`, `account`,
    d'expliquer un solde qui semble faux, et de repérer après coup un joueur qui
    gagnerait trop vite.
 
+### Gagner des Mon
+
+| Place à l'arrivée | Gain |
+|---|---|
+| 🏆 1ᵉʳ | **100 文** |
+| Tous les autres arrivants | **25 文** |
+| Abandon (pas franchi la ligne) | rien |
+
+C'est le **serveur** qui paie, à la clôture de la course
+([`RaceRoom.payer()`](server/src/RaceRoom.ts)). Le jeu ne demande jamais « donne-moi
+100 Mon » : il relit son solde ensuite et se contente de l'afficher.
+
+Deux garde-fous contre la ferme à monnaie : seuls ceux qui **franchissent la
+ligne** touchent quelque chose (abandonner pour relancer ne rapporte rien), et
+le serveur refuse déjà toute arrivée plus rapide que physiquement possible — une
+course payée coûte donc forcément ses ~35 s minimum.
+
+**Le lien entre la course et le portefeuille** : Colyseus identifie un joueur par
+un `sessionId` qui ne vaut que le temps de la connexion. Le jeu envoie donc son
+jeton de session en entrant dans le salon ; le serveur le vérifie une fois et
+range l'identifiant du compte dans une **Map privée**, jamais dans l'état
+synchronisé — le compte d'un joueur ne regarde pas ses adversaires. Sans jeton
+(hors-ligne), on court quand même : on ne gagne simplement rien.
+
+### La boutique
+
+Elle ne vend **que des couleurs** — huit teintes traditionnelles, de 500 文 à
+1 500 文, plus deux qui ne s'obtiennent qu'en jade
+([migration 002](server/migrations/002_boutique.sql)). Les 18 couleurs de la
+palette libre restent gratuites : la boutique n'a **rien retiré** à personne,
+elle ajoute.
+
+> ⚠️ **Pourquoi pas les ornements de tête ?** Parce que dans ce jeu ils ne sont
+> pas décoratifs : ils **décident du style** du guerrier perso (les cornes
+> donnent la peau d'oni, les oreilles la ruse du renard — cf. `CUSTOM_STYLE`).
+> Les vendre reviendrait à vendre un passif, donc de la puissance.
+
+**Le client n'envoie qu'un code.** Jamais un prix, jamais une monnaie, jamais un
+solde : tout est relu dans la base au moment de l'achat, dans une seule
+transaction. C'est la base qui refuse — `where mon >= prix` pour les fonds, la
+clé primaire `(joueur, article)` pour le doublon. *Vérifié* : deux achats du même
+article lancés simultanément → **un seul passe**, un seul déblocage, solde exact.
+
+La valeur d'une couleur (`#rrggbb`) vit **dans la base**, pas dans le jeu :
+ajouter une couleur à vendre est une simple ligne de SQL, sans redéployer le
+client.
+
 ### Le serveur HTTP partagé
 
 Les courses (websocket) et les comptes (HTTP) tiennent sur **un seul port**,
-donc un seul service à déployer. Piège rencontré : Colyseus installe ses
-propres routes HTTP sur le même serveur, et Node appelle tous les écouteurs à la
-suite **sans attendre** un gestionnaire asynchrone — Colyseus répondait 404
-pendant que Better Auth interrogeait encore la base. D'où l'aiguilleur unique
-installé après le `listen()` dans [server/src/index.ts](server/src/index.ts).
+donc un seul service à déployer. Deux pièges rencontrés, tous deux invisibles
+en test :
+
+1. **Colyseus installe ses propres routes HTTP** sur le même serveur, et Node
+   appelle tous les écouteurs à la suite **sans attendre** un gestionnaire
+   asynchrone — Colyseus répondait 404 pendant que Better Auth interrogeait
+   encore la base. D'où l'aiguilleur unique installé après le `listen()`
+   ([server/src/index.ts](server/src/index.ts)).
+2. **CORS.** Le jeu (Vercel) et le serveur (Railway) sont sur deux domaines. Le
+   navigateur envoie donc une requête préparatoire `OPTIONS` avant tout appel
+   authentifié, et bloque en silence si personne n'y répond. `curl` ne fait pas
+   ce préalable : **les tests en ligne de commande passaient alors que le vrai
+   jeu échouait.** On répond désormais à `OPTIONS`, et on renvoie l'origine
+   exacte de l'appelant — jamais `*`, qui ouvrirait l'API à n'importe quel site
+   au nom d'un joueur connecté.
 
 ## 🗺️ Roadmap
 

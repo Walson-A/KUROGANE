@@ -25,6 +25,16 @@ import {
   type ParcheminKind,
 } from './parchemin'
 import { Menu, escapeHtml } from './menu'
+import {
+  connecter,
+  monProfil,
+  monJeton,
+  rafraichirProfil,
+  chargerBoutique,
+  mesArticles,
+  couleursDebloquees,
+  acheter as acheterArticle,
+} from './compte'
 import { souffleDeVent, jouerBruit, setVolumeSfx, sonDeSoin } from './sfx'
 import type { Quality } from './settings'
 import { Musique } from './audio'
@@ -2348,6 +2358,10 @@ const net = new Net({
     gapEl.classList.add('hidden')
     rankEl.classList.add('hidden')
     showResults(view)
+    // Le serveur vient de payer les arrivants : on relit notre bourse. Elle est
+    // créditée LÀ-BAS, on ne fait que la constater — d'où la relecture plutôt
+    // qu'une addition côté jeu, qui pourrait mentir.
+    void majBourse()
   },
   onError(message) {
     net.leave()
@@ -2356,7 +2370,19 @@ const net = new Net({
 })
 
 // ————— Les menus —————
-const identity = () => ({ name: menu.settings.name, fighter: menu.settings.fighter })
+/**
+ * Qui l'on est, pour le salon de course.
+ *
+ * Le `token` sert au serveur à savoir quel PORTEFEUILLE créditer à l'arrivée —
+ * il ne circule jamais vers les autres joueurs, et le serveur le range à part
+ * de l'état partagé. Sans jeton (hors-ligne, base en panne), on court quand
+ * même : on ne gagne simplement pas de Mon.
+ */
+const identity = () => ({
+  name: menu.settings.name,
+  fighter: menu.settings.fighter,
+  token: monJeton(),
+})
 
 const menu = new Menu({
   onSolo() {
@@ -2426,6 +2452,74 @@ const menu = new Menu({
     net.leave()
     backToMenu()
   },
+
+  // ————— La boutique —————
+  onBoutique() {
+    menu.showBoutique()
+    // On ouvre TOUT DE SUITE avec ce qu'on a déjà, puis on rafraîchit : ouvrir
+    // un écran vide en attendant le réseau donne l'impression que ça rame.
+    menu.setBoutique(mesArticles())
+    void chargerBoutique().then((articles) => {
+      menu.setBoutique(articles)
+      majAffichageBourse()
+    })
+  },
+
+  onAcheter(code) {
+    void acheterArticle(code).then((r) => {
+      if (r.ok) {
+        jouerBruit('parchemin')
+        toast('🏪 Acquis !')
+        menu.setBoutique(mesArticles())
+        majAffichageBourse()
+        // La couleur payée doit rejoindre le vestiaire immédiatement
+        menu.setCouleursDebloquees(couleursDebloquees())
+        return
+      }
+      // Chaque refus vient du SERVEUR : on ne fait que le traduire.
+      const messages: Record<string, string> = {
+        fonds: '💰 Pas assez de monnaie',
+        possede: '✓ Tu le possèdes déjà',
+        inconnu: '⚠️ Article introuvable',
+        indisponible: '⚠️ Article indisponible',
+        'hors-ligne': '📡 Hors ligne',
+      }
+      toast(messages[r.raison] ?? '⚠️ Achat refusé')
+    })
+  },
+})
+
+/**
+ * ————— La bourse —————
+ * Le solde n'est JAMAIS calculé ici : il est relu chez le serveur, qui seul
+ * l'a écrit. Ce module ne fait que l'afficher.
+ */
+function majAffichageBourse() {
+  const p = monProfil()
+  menu.setBourse(p?.mon ?? null, p?.hisui ?? null)
+}
+
+/** Relit le solde auprès du serveur, puis rafraîchit l'affichage. */
+async function majBourse() {
+  await rafraichirProfil()
+  majAffichageBourse()
+}
+
+/**
+ * La connexion au démarrage : compte anonyme si c'est la première fois, sinon
+ * on reprend celui de l'appareil. Silencieuse et sans blocage — si le serveur
+ * ne répond pas, le jeu reste parfaitement jouable, simplement sans bourse.
+ */
+void connecter().then(async () => {
+  majAffichageBourse()
+  if (monProfil()) {
+    // On charge le catalogue en fond : c'est lui qui porte les couleurs
+    // achetées, et le vestiaire doit les proposer sans attendre une visite
+    // en boutique.
+    menu.setCouleursDebloquees(couleursDebloquees())
+    await chargerBoutique()
+    menu.setCouleursDebloquees(couleursDebloquees())
+  }
 })
 
 btnGo.addEventListener('click', () => {

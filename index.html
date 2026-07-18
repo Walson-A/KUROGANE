@@ -62,6 +62,41 @@
           <button id="btnOptions" class="ghost" aria-label="Options">⚙️</button>
           <button id="btnHelp" class="ghost" aria-label="Comment jouer">❓</button>
         </div>
+
+        <!-- La bourse : masquée tant qu'on n'a pas joint le serveur -->
+        <div class="row hidden" id="bourseRow">
+          <button id="btnBoutique" class="ghost grow">
+            <span class="lines">
+              <small>La bourse</small>
+              <b id="bourse">— 文 · — 翡翠</b>
+            </span>
+            <span class="chev">🏪</span>
+          </button>
+        </div>
+      </section>
+
+      <!-- La boutique — les vignettes sont fabriquées par menu.ts -->
+      <section id="scr-boutique" class="screen hidden">
+        <header class="head">
+          <button class="back" data-back aria-label="Retour">‹</button>
+          <h2>Boutique</h2>
+        </header>
+
+        <div class="bourse-grande">
+          <span id="bourseMon">0 文</span>
+          <span id="bourseHisui">0 翡翠</span>
+        </div>
+
+        <p class="lead">
+          Des couleurs de maître pour ton guerrier perso. <b>Uniquement de
+          l'apparence</b> : rien de ce qui se vend ici ne te fera courir plus
+          vite.
+        </p>
+
+        <div id="boutiqueListe" class="boutique"></div>
+        <p id="boutiqueVide" class="lead hidden">Boutique indisponible hors ligne.</p>
+
+        <button class="primary" data-back>OK</button>
       </section>
 
       <!-- Le choix du guerrier — les vignettes sont fabriquées par menu.ts -->

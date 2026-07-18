@@ -1258,3 +1258,89 @@ body {
   font-size: 0.85rem;
   color: #9aa4c0;
 }
+
+/* ═══════════════ La boutique ═══════════════ */
+
+/* La bourse dans le bouton de l'écran-titre */
+.chev {
+  font-size: 1.2rem;
+  opacity: 0.85;
+}
+
+/* Les deux soldes, en tête de boutique */
+.bourse-grande {
+  display: flex;
+  gap: 10px;
+  width: 100%;
+}
+.bourse-grande span {
+  flex: 1;
+  padding: 10px;
+  text-align: center;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  border-radius: 9px;
+  background: rgba(61, 69, 96, 0.3);
+  border: 1px solid #3d4560;
+}
+/* Le jade a sa couleur : on distingue les deux monnaies d'un coup d'œil */
+#bourseHisui {
+  color: #74dba6;
+  border-color: rgba(116, 219, 166, 0.45);
+}
+#bourseMon {
+  color: #d6ac5a;
+  border-color: rgba(214, 172, 90, 0.45);
+}
+
+.boutique {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+}
+.article {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: rgba(61, 69, 96, 0.22);
+  border: 1px solid #3d4560;
+}
+/* Ce qu'on possède déjà s'efface : l'œil doit aller vers ce qui reste à prendre */
+.article.possede {
+  opacity: 0.55;
+}
+/* La pastille montre la couleur telle qu'elle sera en piste */
+.article .pastille {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  flex: none;
+  border: 2px solid rgba(240, 232, 216, 0.25);
+}
+.article .lines {
+  flex: 1;
+}
+.article .lines small {
+  color: #d6ac5a;
+  text-transform: none;
+  letter-spacing: 0.02em;
+  font-size: 0.8rem;
+}
+#overlay .article button {
+  flex: none;
+  padding: 8px 14px;
+  font-size: 0.85rem;
+}
+#overlay .article button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+/* Une couleur achetée, dans les palettes du vestiaire : un liseré doré la
+   distingue des 18 couleurs libres. */
+.swatch.paye {
+  box-shadow: 0 0 0 2px rgba(214, 172, 90, 0.75);
+}

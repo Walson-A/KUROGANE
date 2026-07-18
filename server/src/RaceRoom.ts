@@ -1,5 +1,7 @@
 import { Room, Client, updateLobby } from 'colyseus'
 import { Schema, MapSchema, type } from '@colyseus/schema'
+import { compteDe } from './auth.js'
+import { assureProfil, crediter, GAIN_COURSE } from './profil.js'
 
 /**
  * ————— Le salon de course KUROGANE —————
@@ -144,6 +146,12 @@ export class RaceRoom extends Room<{ state: RaceState }> {
 
   /** Quand chaque joueur a encaissé son dernier coup (anti-matraquage) */
   private dernierCoupSubi = new Map<string, number>()
+
+  /**
+   * sessionId Colyseus → identifiant du compte Better Auth.
+   * PRIVÉE, jamais synchronisée : le compte d'un joueur ne regarde que lui.
+   */
+  private comptes = new Map<string, string>()
 
   onCreate(options: any) {
     this.state.seed = Math.floor(Math.random() * 2 ** 31)
@@ -342,10 +350,28 @@ export class RaceRoom extends Room<{ state: RaceState }> {
     })
   }
 
-  onJoin(client: Client, options: any) {
+  async onJoin(client: Client, options: any) {
     const p = new PlayerState()
     p.name = cleanName(options?.name)
     p.fighter = cleanFighter(options?.fighter)
+
+    /*
+     * ————— À quel COMPTE appartient ce joueur ? —————
+     *
+     * Colyseus l'identifie par un `sessionId` qui ne vaut que le temps de la
+     * connexion. Pour créditer le bon portefeuille, il faut son identifiant
+     * Better Auth : on vérifie donc ici le jeton qu'il a envoyé.
+     *
+     * ⚠️ L'identifiant reste dans une Map PRIVÉE, jamais dans l'état
+     * synchronisé : les autres joueurs du salon n'ont rien à savoir du compte
+     * de leurs adversaires.
+     *
+     * Un jeton absent ou invalide ne REFUSE PAS l'entrée : on peut courir sans
+     * compte, on ne gagne simplement rien. Mieux vaut une course sans gain
+     * qu'un joueur bloqué à la porte parce que la base a hoqueté.
+     */
+    const joueur = await compteDe(options?.token)
+    if (joueur) this.comptes.set(client.sessionId, joueur)
     // Grille de départ : on répartit sur les 3 lignes (10 joueurs → chevauchement)
     p.startLane = this.state.players.size % 3
     p.lane = p.startLane
@@ -383,6 +409,48 @@ export class RaceRoom extends Room<{ state: RaceState }> {
     }
     this.state.phase = 'results'
     this.refreshMetadata()
+    void this.payer()
+  }
+
+  /**
+   * ————— La paie —————
+   * Les Mon sont crédités ICI, par le serveur, à la clôture de la course. Le
+   * jeu ne demande jamais « donne-moi 100 Mon » : il ne fait que constater son
+   * solde ensuite. C'est la seule façon d'empêcher un client modifié de
+   * s'enrichir tout seul.
+   *
+   * Seuls ceux qui ont FRANCHI la ligne touchent quelque chose : abandonner à
+   * mi-parcours pour relancer une course ne rapporte rien, donc rien à gagner à
+   * enchaîner les faux départs. Et comme le serveur a déjà refusé toute arrivée
+   * plus rapide que physiquement possible (cf. 'finished'), une course payée
+   * coûte forcément ses ~75 secondes.
+   */
+  private async payer() {
+    for (const [sessionId, p] of this.state.players.entries()) {
+      if (!p.finished) continue
+      const joueur = this.comptes.get(sessionId)
+      if (!joueur) continue // il court sans compte : pas de portefeuille à créditer
+
+      const gain = p.rank === 1 ? GAIN_COURSE.victoire : GAIN_COURSE.participation
+      try {
+        /*
+         * ⚠️ On s'assure que la ligne de profil EXISTE avant de créditer.
+         *
+         * `crediter` fait un `update` : sans ligne, il ne remonterait aucune
+         * erreur et ne créditerait simplement rien. Or un joueur peut très bien
+         * arriver ici sans jamais avoir appelé /api/profil (un client qui va
+         * droit à la course). La paie ne doit dépendre d'aucun effet de bord
+         * survenu ailleurs.
+         */
+        await assureProfil(joueur, p.name)
+        await crediter(joueur, 'mon', gain, p.rank === 1 ? 'course:victoire' : 'course')
+        console.log(`💰 ${p.name || sessionId} : +${gain} Mon (${p.rank}ᵉ)`)
+      } catch (e) {
+        // Une panne de base ne doit pas faire tomber le salon : la course est
+        // finie et jouée, seul le gain est perdu.
+        console.error('paie :', e)
+      }
+    }
   }
 
   /** Rouvre le salon pour rejouer ensemble : on repart d'un lobby propre. */
@@ -431,6 +499,7 @@ export class RaceRoom extends Room<{ state: RaceState }> {
     this.state.players.delete(client.sessionId)
     this.history.delete(client.sessionId)
     this.dernierCoupSubi.delete(client.sessionId)
+    this.comptes.delete(client.sessionId)
 
     // L'hôte est parti : on confie le salon à quelqu'un d'autre.
     if (client.sessionId === this.state.hostId) {

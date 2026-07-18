@@ -74,3 +74,23 @@ export const auth = pool
 export function authDispo() {
   return auth !== null
 }
+
+/**
+ * À quel compte appartient ce jeton ? `null` s'il est absent, expiré ou inventé.
+ *
+ * Sert au salon de course, qui reçoit le jeton par websocket et non par un
+ * en-tête HTTP : on le remet donc en forme d'en-tête `Authorization` pour que
+ * Better Auth le vérifie exactement comme n'importe quelle requête — même
+ * chemin de code, donc même niveau de contrôle.
+ */
+export async function compteDe(token: unknown): Promise<string | null> {
+  if (!auth || typeof token !== 'string' || !token) return null
+  try {
+    const session = await auth.api.getSession({
+      headers: new Headers({ authorization: `Bearer ${token}` }),
+    })
+    return session?.user?.id ?? null
+  } catch {
+    return null
+  }
+}
