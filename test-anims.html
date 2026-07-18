@@ -44,7 +44,8 @@
     <div class="panneau" id="aide">
       <kbd>o</kbd> / <kbd>i</kbd> action · <kbd>p</kbd> / <kbd>m</kbd> guerrier<br />
       <kbd>espace</kbd> rejouer · <kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd> geste superposé<br />
-      <kbd>w</kbd> côté du mur (action « mur »)
+      <kbd>w</kbd> côté du mur (action « mur »)<br />
+      <kbd>j</kbd> / <kbd>k</kbd> tourner · <kbd>g</kbd> rapprocher · <kbd>b</kbd> éloigner
     </div>
 
     <script type="module">
@@ -66,8 +67,29 @@
       scene.background = new THREE.Color(0x151a2c)
 
       const camera = new THREE.PerspectiveCamera(42, 1, 0.1, 60)
-      camera.position.set(2.6, 2.1, 4.2)
-      camera.lookAt(0, 0.95, 0)
+
+      /* ————— La caméra tourne AUTOUR du corps —————
+       *
+       * C'est la caméra qui orbite, pas le modèle. Faire pivoter le corps sous
+       * des lumières fixes change son ombrage à chaque angle : on finirait par
+       * juger l'éclairage autant que la pose. En déplaçant l'œil, la lumière
+       * reste accrochée au personnage et seule la vue change.
+       *
+       * `angle` part de la position d'origine (2,6 ; 4,2), soit ~0,55 rad.
+       */
+      let angle = Math.atan2(2.6, 4.2)
+      let dist = Math.hypot(2.6, 4.2)
+      const HAUTEUR_OEIL = 2.1
+      const DIST_MIN = 1.6
+      const DIST_MAX = 12
+
+      /** Vrai dès que le joueur prend la main : le balayage auto s'arrête. */
+      let manuel = false
+
+      function placerCamera(cibleY) {
+        camera.position.set(Math.sin(angle) * dist, HAUTEUR_OEIL, Math.cos(angle) * dist)
+        camera.lookAt(0, cibleY, 0)
+      }
 
       // Même éclairage que la course, sinon les couleurs mentent
       scene.add(new THREE.HemisphereLight(0xbfd4ff, 0x30281e, 1.0))
@@ -157,9 +179,28 @@
             .join('')
       }
 
+      /* Les touches de caméra sont tenues, pas tapées : on retient celles qui
+       * sont enfoncées et on applique le mouvement à chaque image. Passer par
+       * la répétition du clavier donnerait une rotation saccadée, au rythme du
+       * système et non du rendu. */
+      const tenues = new Set()
+      const CAMERA = ['j', 'k', 'b', 'g']
+      addEventListener('keydown', (e) => {
+        const k = e.key.toLowerCase()
+        if (CAMERA.includes(k)) {
+          tenues.add(k)
+          manuel = true // le balayage automatique rend la main
+          e.preventDefault()
+        }
+      })
+      addEventListener('keyup', (e) => tenues.delete(e.key.toLowerCase()))
+      // Fenêtre qui perd le focus : sinon une touche reste « tenue » à vie
+      addEventListener('blur', () => tenues.clear())
+
       addEventListener('keydown', (e) => {
         if (e.repeat) return
         const k = e.key.toLowerCase()
+        if (CAMERA.includes(k)) return // déjà traité au-dessus
         if (k === 'o') iAction = (iAction + 1) % ACTIONS.length
         else if (k === 'i') iAction = (iAction - 1 + ACTIONS.length) % ACTIONS.length
         else if (k === 'p') { iGuerrier = (iGuerrier + 1) % jouables.length; habiller() }
@@ -195,8 +236,22 @@
         corps.position.y = auMur ? MUR_HAUTEUR : 0
         corps.rotation.z += ((auMur ? murCote * MUR_PENCHE : 0) - corps.rotation.z) * Math.min(1, dt * 14)
 
-        // Le corps tourne lentement : un mouvement se juge de tous les côtés
-        groupe.rotation.y = Math.sin(t * 0.25) * 0.8
+        // ————— La caméra —————
+        const VITESSE_TOUR = 1.8 // rad/s
+        const VITESSE_ZOOM = 4.5 // unités/s
+        if (tenues.has('k')) angle += VITESSE_TOUR * dt // vers la droite
+        if (tenues.has('j')) angle -= VITESSE_TOUR * dt // vers la gauche
+        if (tenues.has('g')) dist -= VITESSE_ZOOM * dt // grossir : on se rapproche
+        if (tenues.has('b')) dist += VITESSE_ZOOM * dt
+        dist = Math.min(DIST_MAX, Math.max(DIST_MIN, dist))
+
+        // Tant que personne n'a touché au clavier, la vue balaie doucement :
+        // on voit le mouvement sous tous les angles sans rien faire.
+        if (!manuel) angle = Math.atan2(2.6, 4.2) + Math.sin(t * 0.25) * 0.8
+
+        // On vise la POITRINE, qui monte avec le corps sur la paroi — sinon le
+        // coureur sortait du cadre dès qu'on passait sur le mur.
+        placerCamera((auMur ? MUR_HAUTEUR : 0) + 0.95)
         renderer.render(scene, camera)
       }
 
