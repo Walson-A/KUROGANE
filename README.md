@@ -518,6 +518,18 @@ générateur d'obstacles pour que les deux ne puissent pas se désynchroniser.
 
 ## 📜 Les parchemins
 
+### 📖 L'aide, qui ne peut pas mentir
+
+Les dix fiches s'affichent dans l'écran **Comment jouer** — depuis le ❓ du menu
+principal, et depuis le **📜 du salon**, où l'on revient en refermant : personne
+n'a à quitter la partie pour aller lire une fiche.
+
+Elles ne sont **pas écrites dans le HTML**. `EFFETS`, dans
+[`parchemin.ts`](src/parchemin.ts), vit sous les constantes de calibrage et les
+**calcule** au lieu de les recopier : « +35 % pendant 1,5 s » sort de
+`VENT_BOOST` et `VENT_DUREE`. Retoucher un réglage corrige donc l'aide toute
+seule — un texte figé aurait menti au joueur dès le premier ajustement.
+
 On ramasse des rouleaux sur la piste (environ un toutes les **7 secondes**).
 **Tous les rouleaux se ressemblent** : on ne sait ce qu'on a décroché qu'une
 fois dans la main — comme les boîtes de Mario Kart.

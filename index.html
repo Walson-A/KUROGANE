@@ -179,6 +179,18 @@
           🔥 Sur les <b>120 derniers mètres</b>, plus tu martèles vite, plus tu
           accélères — de quoi voler la victoire sur le fil.
         </p>
+
+        <h3 class="sorttitre">📜 Les dix parchemins</h3>
+        <p class="lead">
+          Les jarres <b>dorées</b> en cachent un. Tous les rouleaux se
+          ressemblent : on ne sait ce qu'on a décroché qu'une fois dans la main.
+          On en porte <b>deux</b> au maximum, et le <b>plus ancien part
+          d'abord</b>.
+        </p>
+        <!-- La liste est construite en JS depuis parchemin.ts : les chiffres
+             affichés sont ceux du calibrage, jamais une copie qui vieillit. -->
+        <div id="helpSorts" class="sorts"></div>
+
         <button class="primary" data-back>OK</button>
       </section>
 
@@ -233,6 +245,9 @@
         <header class="head">
           <button class="back" id="btnLeaveLobby" aria-label="Quitter le salon">‹</button>
           <h2>Salon <span id="lobbyCode" class="code"></span></h2>
+          <!-- L'aide depuis le salon : on y revient en refermant, on ne quitte
+               pas la partie pour aller lire une fiche. -->
+          <button id="btnLobbyHelp" class="ghost aidebtn" aria-label="Voir les sorts">📜</button>
         </header>
         <div id="lobbyHint" class="lobbyhint"></div>
         <div id="lobbyList" class="lobbylist"></div>

@@ -12,6 +12,7 @@ import {
   type Head,
 } from './roster'
 import { Anim, animerGuerrier } from './anims'
+import { CIBLAGE, EFFETS, PARCHEMINS, TIRAGE, type ParcheminKind } from './parchemin'
 import { cleanName, loadSettings, saveSettings, type Quality, type Settings } from './settings'
 import type { LobbyView, SalonInfo } from './net'
 
@@ -85,6 +86,8 @@ export class Menu {
   private spin = 0
   /** La dernière vue du salon reçue — pour savoir qui je suis, si je suis prêt… */
   private view: LobbyView | null = null
+  /** D'où l'on a ouvert l'aide, pour y revenir. null = depuis le titre. */
+  private retourAide: ScreenName | null = null
   private apercu?: THREE.Object3D
   /** Le guerrier montré dans la vignette — il a sa propre foulée. */
   private fighterAffiche: Fighter = ROSTER[0]
@@ -149,10 +152,27 @@ export class Menu {
     document.getElementById('btnHelp')!.addEventListener('click', () => this.show('help'))
     this.el.cancel.addEventListener('click', () => cb.onCancel())
 
-    // Tous les boutons « retour » / « OK » ramènent au titre
+    /*
+     * Les boutons « retour » / « OK » ramènent au titre — SAUF quand on est
+     * venu du salon. Un joueur qui ouvre les fiches depuis le lobby veut y
+     * revenir : le renvoyer au titre lui donnerait l'impression d'avoir quitté
+     * la partie, alors qu'il y est toujours.
+     */
     for (const b of document.querySelectorAll('[data-back]')) {
-      b.addEventListener('click', () => this.show('title'))
+      b.addEventListener('click', () => {
+        const vers = this.retourAide
+        this.retourAide = null
+        this.show(vers ?? 'title')
+      })
     }
+
+    // 📜 L'aide depuis le salon, sans quitter le salon
+    document.getElementById('btnLobbyHelp')?.addEventListener('click', () => {
+      this.retourAide = 'lobby'
+      this.show('help')
+    })
+
+    this.buildAideSorts()
 
     this.buildRoster()
     this.buildOptions()
@@ -309,6 +329,11 @@ export class Menu {
   // ————— Les écrans —————
 
   private show(name: ScreenName) {
+    // La provenance de l'aide ne vaut QUE pour la visite en cours. Sans cette
+    // remise à zéro, quitter le salon autrement que par « retour » laisserait
+    // le repère en place, et un retour plus tard — depuis les options, par
+    // exemple — renverrait vers un salon qu'on a déjà quitté.
+    if (name !== 'help') this.retourAide = null
     this.current = name
     for (const [key, el] of Object.entries(this.screens)) {
       el.classList.toggle('hidden', key !== name)
@@ -450,6 +475,59 @@ export class Menu {
 
     this.showInPreview(f)
     this.cb.onFighter(f)
+  }
+
+  // ————— 📜 Les fiches des sorts —————
+
+  /**
+   * Construit la liste des dix parchemins dans l'écran d'aide.
+   *
+   * Tout vient de `parchemin.ts` : nom, icône, ciblage et chiffres. Rien n'est
+   * écrit en dur dans le HTML — une fiche recopiée à la main aurait menti au
+   * joueur dès le premier réglage de calibrage.
+   *
+   * On construit une fois, au démarrage : le contenu ne change jamais.
+   */
+  private buildAideSorts() {
+    const hote = document.getElementById('helpSorts')
+    if (!hote) return
+
+    // Rangés par usage : ce qu'on se lance à soi, puis ce qu'on envoie.
+    const groupes: [string, ParcheminKind[]][] = [
+      ['🧘 Pour toi', TIRAGE.filter((k) => PARCHEMINS[k].cible === 'soi')],
+      ['⚔️ Contre les autres', TIRAGE.filter((k) => PARCHEMINS[k].cible !== 'soi')],
+    ]
+
+    hote.replaceChildren()
+    for (const [titre, kinds] of groupes) {
+      const h = document.createElement('h4')
+      h.className = 'sortgroupe'
+      h.textContent = titre
+      hote.append(h)
+
+      for (const k of kinds) {
+        const p = PARCHEMINS[k]
+        const carte = document.createElement('div')
+        carte.className = 'sort'
+
+        const ic = document.createElement('span')
+        ic.className = 'sortic'
+        ic.textContent = p.icone
+
+        const corps = document.createElement('div')
+        const nom = document.createElement('b')
+        nom.textContent = p.nom
+        const ou = document.createElement('span')
+        ou.className = 'sortcible'
+        ou.textContent = CIBLAGE[p.cible]
+        const quoi = document.createElement('p')
+        quoi.textContent = EFFETS[k]
+
+        corps.append(nom, ou, quoi)
+        carte.append(ic, corps)
+        hote.append(carte)
+      }
+    }
   }
 
   // ————— L'aperçu 3D —————

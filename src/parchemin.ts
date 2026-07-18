@@ -158,3 +158,40 @@ export const ONMYOJI_VITESSE = 55 // m/s, en plus de la vitesse du lanceur
 
 /** La lueur jaune autour des deux échangés. Assez longue pour qu'on comprenne. */
 export const LUEUR_DUREE = 1.4
+
+// ————————————————————————————————————————————————————————————————
+//  Ce que chaque parchemin FAIT, dit au joueur
+// ————————————————————————————————————————————————————————————————
+
+/** Un nombre à la française : 1.5 → « 1,5 ». */
+const n = (x: number) => String(x).replace('.', ',')
+
+/**
+ * La fiche de chaque sort, telle qu'elle s'affiche dans l'aide.
+ *
+ * ⚠️ Elle vit ICI, sous les constantes qu'elle cite, et elle les CALCULE au
+ * lieu de les recopier. C'est tout l'intérêt : si un jour on retouche le
+ * calibrage, l'aide se corrige d'elle-même. Un texte écrit en dur dans le HTML
+ * aurait menti au joueur dès le premier réglage.
+ */
+export const EFFETS: Record<ParcheminKind, string> = {
+  vent: `Un dash : +${Math.round(VENT_BOOST * 100)} % de vitesse pendant ${n(VENT_DUREE)} s.`,
+  grue: `Un second saut en plein vol, pendant ${n(GRUE_DUREE)} s. Rattrape les esquives ratées.`,
+  armure: `Encaisse ${n(ARMURE_SOLIDITE)} barrières — ou un seul mur, qui la met en pièces d'un coup.`,
+  miroir:
+    'Le prochain sort reçu repart chez son auteur. Aucun minuteur : elle tient tant qu\'on n\'y touche pas — mais elle immobilise un slot sur deux.',
+  the: 'Lave d\'un coup la fumée, le poison et les chaînes.',
+  kunai: 'Fait trébucher net, sans esquive possible. Le sabotage franc.',
+  kusarigama: `Bride le rival à ×${n(KUSARIGAMA_FACTEUR)} pendant ${n(KUSARIGAMA_DUREE)} s. Inévitable.`,
+  fumigene: `Noircit l'écran du rival pendant ${n(FUMIGENE_DUREE)} s. Il peut encore s'en sortir.`,
+  senbon: `Fait tanguer l'écran du rival pendant ${n(SENBON_DUREE)} s.`,
+  onmyoji:
+    'Échange vos places. Il ne vise pas : il file tout droit dans ta ligne, à portée infinie, et seuls un rival ou un mur l\'arrêtent.',
+}
+
+/** Comment chaque sort se dirige, en un mot pour l'aide. */
+export const CIBLAGE: Record<Parchemin['cible'], string> = {
+  soi: 'Sur toi',
+  adversaire: 'Sur le rival devant',
+  projectile: 'Droit devant',
+}

@@ -899,6 +899,80 @@ body {
   opacity: 0.75;
 }
 
+/* ——— 📜 Les fiches des dix parchemins, dans l'aide ——— */
+.sorttitre {
+  width: 100%;
+  margin-top: 14px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid #3d4560;
+  font-size: 0.95rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+.sorts {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.sortgroupe {
+  margin: 10px 0 2px;
+  font-size: 0.66rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #9aa4c0;
+  text-align: left;
+}
+.sort {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  text-align: left;
+  padding: 8px 9px;
+  border: 1px solid rgba(61, 69, 96, 0.6);
+  border-radius: 9px;
+  background: rgba(20, 25, 42, 0.5);
+}
+/* L'icône ne doit ni rétrécir ni bouger quand le texte passe à la ligne */
+.sortic {
+  flex: none;
+  font-size: 1.3rem;
+  line-height: 1.3;
+  width: 1.5em;
+  text-align: center;
+}
+.sort b {
+  color: #f0e8d8;
+  font-size: 0.9rem;
+}
+/* Le ciblage : une étiquette discrète collée au nom */
+.sortcible {
+  margin-left: 7px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: rgba(230, 198, 106, 0.14);
+  color: #e6c66a;
+  font-size: 0.62rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.sort p {
+  margin-top: 3px;
+  font-size: 0.82rem;
+  line-height: 1.5;
+  opacity: 0.85;
+}
+/* Le 📜 du salon : poussé à droite, en face du bouton retour */
+.aidebtn {
+  margin-left: auto;
+  flex: none;
+  width: 38px;
+  height: 38px;
+  padding: 0;
+  font-size: 1.05rem;
+}
+
 /* ——— Attente / verdict ——— */
 #msg {
   line-height: 1.6;
