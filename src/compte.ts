@@ -242,30 +242,50 @@ export async function connecter(): Promise<Profil | null> {
  * nouveau : ses Mon et ses achats le suivent.
  */
 export async function connexionGoogle(): Promise<{ ok: boolean; raison?: string }> {
+  /*
+   * ⚠️ On NAVIGUE, on n'appelle pas.
+   *
+   * Lancer la connexion par un `fetch` semblait plus propre, mais échouait au
+   * retour sur « state_mismatch » : Better Auth dépose un jeton anti-falsification
+   * dans un COOKIE au départ, et une réponse venue d'un autre domaine ne permet
+   * pas au navigateur de le garder. Au retour, il n'y avait rien à comparer.
+   *
+   * En envoyant le navigateur directement sur le serveur, le cookie est posé en
+   * première partie — comme pour n'importe quel site où l'on se connecte.
+   *
+   * Le jeton anonyme voyage en paramètre : le serveur s'en sert pour savoir
+   * quel compte fusionner. (Il ne s'agit pas d'un secret durable et il ne
+   * quitte pas nos domaines, mais c'est bien pour cela que le relais vérifie
+   * strictement sa destination.)
+   */
   try {
-    // Où Google devra nous ramener : le relais du serveur, qui renverra ensuite
-    // ici même avec le jeton.
-    const relais = `${API}/api/relais?vers=${encodeURIComponent(location.origin + location.pathname)}`
+    /*
+     * On part par un FORMULAIRE plutôt qu'un simple lien : l'envoi d'un
+     * formulaire est lui aussi une navigation de premier niveau (le cookie sera
+     * donc bien posé), mais le jeton voyage dans le CORPS de la requête.
+     *
+     * Dans l'adresse, il finirait dans l'historique du navigateur et dans les
+     * journaux du serveur — pour un jeton de session, c'est exactement ce qu'on
+     * évite.
+     */
+    const form = document.createElement('form')
+    form.method = 'POST'
+    form.action = `${API}/api/connexion-google`
+    form.style.display = 'none'
 
-    const r = await fetch(`${API}/api/auth/sign-in/social`, {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        // Le jeton anonyme actuel : c'est LUI qui permet à Better Auth de
-        // savoir quel compte fusionner dans le nouveau.
-        ...(jeton ? { authorization: `Bearer ${jeton}` } : {}),
-      },
-      body: JSON.stringify({ provider: 'google', callbackURL: relais }),
-    })
-    const data = await r.json().catch(() => null)
-    // Le CODE d'abord (stable, traduisible), le message ensuite — comme pour
-    // l'inscription par email.
-    if (!r.ok || !data?.url) {
-      return { ok: false, raison: data?.code ?? data?.message ?? 'indisponible' }
+    const champ = (nom: string, valeur: string) => {
+      const i = document.createElement('input')
+      i.type = 'hidden'
+      i.name = nom
+      i.value = valeur
+      form.appendChild(i)
     }
+    champ('vers', location.origin + location.pathname)
+    // Le jeton anonyme : il dit au serveur quel compte fusionner dans le nouveau
+    if (jeton) champ('jeton', jeton)
 
-    // On quitte le jeu vers Google. Le retour se fera par le relais.
-    location.href = data.url
+    document.body.appendChild(form)
+    form.submit()
     return { ok: true }
   } catch {
     return { ok: false, raison: 'hors-ligne' }

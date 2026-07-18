@@ -2,7 +2,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'node:ht
 import { Server, LobbyRoom, WebSocketTransport } from 'colyseus'
 import { toNodeHandler } from 'better-auth/node'
 import { RaceRoom } from './RaceRoom.js'
-import { auth, GOOGLE_DISPO } from './auth.js'
+import { auth, GOOGLE_DISPO, BASE_URL } from './auth.js'
 import { baseDispo, migrer } from './db.js'
 import { assureProfil } from './profil.js'
 import { acheter, catalogue } from './boutique.js'
@@ -99,6 +99,25 @@ async function lireCorps(req: IncomingMessage): Promise<any> {
   } catch {
     return {}
   }
+}
+
+/**
+ * Lit un formulaire envoyé en POST (`application/x-www-form-urlencoded`).
+ *
+ * C'est ainsi que le jeu lance la connexion Google : l'envoi d'un formulaire
+ * est une navigation de premier niveau (indispensable pour que le cookie de
+ * protection soit accepté), tout en gardant le jeton hors de l'adresse.
+ */
+async function lireFormulaire(req: IncomingMessage): Promise<Record<string, string>> {
+  const morceaux: Buffer[] = []
+  let taille = 0
+  for await (const m of req) {
+    taille += (m as Buffer).length
+    if (taille > 8192) throw new Error('formulaire trop gros')
+    morceaux.push(m as Buffer)
+  }
+  const params = new URLSearchParams(Buffer.concat(morceaux).toString('utf8'))
+  return Object.fromEntries(params.entries())
 }
 
 /**
@@ -246,6 +265,76 @@ gameServer.listen(port).then(() => {
         }
         repondre(res, 200, { profil: r.profil, articles: await catalogue(joueur) }, req)
       })
+      return
+    }
+
+    /*
+     * ————— Le DÉPART vers Google —————
+     *
+     * Le jeu ne lance PAS la connexion lui-même : il envoie le navigateur ici,
+     * en navigation de premier niveau. C'est indispensable.
+     *
+     * Pourquoi : Better Auth protège l'échange par un jeton « state » qu'il
+     * dépose dans un COOKIE au moment du départ, et qu'il revérifie au retour.
+     * Lancé depuis le jeu par un simple `fetch`, ce cookie arrivait sur une
+     * réponse d'un AUTRE domaine — le navigateur ne le gardait pas, et le
+     * retour échouait sur « state_mismatch ».
+     *
+     * Ici, le navigateur est sur le domaine du serveur : le cookie est de
+     * première partie, posé et renvoyé sans difficulté. On recopie donc les
+     * en-têtes de Better Auth sur notre réponse, puis on redirige vers Google.
+     */
+    if (req.url?.startsWith('/api/connexion-google')) {
+      // Le jeu envoie un FORMULAIRE : destination et jeton anonyme sont dans le
+      // corps, pas dans l'adresse (un jeton n'a rien a faire dans l'historique
+      // du navigateur ni dans les journaux du serveur).
+      void (async () => {
+        let cible: URL | null = null
+        try {
+          const champs = await lireFormulaire(req)
+
+          // Meme liste blanche que le relais : la destination doit etre a nous.
+          try {
+            cible = new URL(champs.vers ?? '')
+          } catch {
+            repondre(res, 400, { erreur: 'destination invalide' })
+            return
+          }
+          if (!ORIGINES.has(cible.origin) || !auth) {
+            repondre(res, 400, { erreur: 'destination non autorisee' })
+            return
+          }
+
+          // Le jeton anonyme redevient un en-tete `Authorization` : c'est ainsi
+          // que Better Auth reconnait le compte a fusionner dans le nouveau.
+          const entetes = enTetes(req)
+          if (champs.jeton) entetes.set('authorization', `Bearer ${champs.jeton}`)
+
+          const relais = `${BASE_URL}/api/relais?vers=${encodeURIComponent(cible.origin + cible.pathname)}`
+          const reponse: Response = await auth.api.signInSocial({
+            body: { provider: 'google', callbackURL: relais },
+            headers: entetes,
+            asResponse: true, // on veut la reponse ENTIERE, cookies compris
+          })
+
+          // Les cookies de Better Auth (dont le fameux « state ») passent sur
+          // NOTRE reponse : c'est tout l'interet de ce detour.
+          for (const [nom, valeur] of reponse.headers.entries()) {
+            if (nom.toLowerCase() === 'set-cookie') res.appendHeader('set-cookie', valeur)
+          }
+
+          const data: any = await reponse.json().catch(() => null)
+          res.writeHead(302, {
+            location: data?.url ?? `${cible.origin}${cible.pathname}#connexion=echec`,
+          })
+          res.end()
+        } catch (e) {
+          console.error('connexion google :', e)
+          const repli = cible ? `${cible.origin}${cible.pathname}#connexion=echec` : '/'
+          res.writeHead(302, { location: repli })
+          res.end()
+        }
+      })()
       return
     }
 
