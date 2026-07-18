@@ -34,7 +34,7 @@ const GRAVITY = 42 // force qui te ramène au sol
  * On baisse la RÉFÉRENCE plutôt que les multiplicateurs : chaque guerrier garde
  * son identité chiffrée, et Yasuke reste le mètre-étalon à 1,00 partout.
  */
-const JUMP_SPEED = 13.2
+export const JUMP_SPEED = 13.2
 const ATTACK_TIME = 0.26 // durée d'un coup : on ne peut pas réenchaîner avant
 const MUR_DUREE = 0.95 // combien de temps on tient sur une paroi (secondes)
 const MUR_HAUTEUR = 1.6 // à quelle hauteur on y court

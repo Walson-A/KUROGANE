@@ -1,5 +1,5 @@
 import * as THREE from 'three'
-import { LANES, MUR_X } from './player'
+import { LANES, MUR_X, JUMP_SPEED } from './player'
 import { tirerParchemin, TIRAGE, type ParcheminKind } from './parchemin'
 
 /**
@@ -632,13 +632,17 @@ function buildParcheminPlan(
  * la suivante. Un écart plus court fait arriver en pleine montée (et l'on ne
  * touche rien) ; un écart plus long fait retomber au sol avant.
  *
- * ⚠️ La formule de croisière est celle de main.ts. Elle est recopiée ici parce
- * que main importe track (l'inverse ferait un cycle) : si l'une bouge, l'autre
- * doit suivre.
+ * L'impulsion vient de player.ts : elle a DÉJÀ bougé une fois (14 → 13,2, pour
+ * caler le saut sur la hauteur du mur) alors qu'elle était recopiée en dur
+ * ici. On l'importe donc, pour que ce réglage-là ne puisse plus se désaccorder
+ * en silence.
+ *
+ * ⚠️ Reste recopiée : la formule de croisière, qui vit dans main.ts — et main
+ * importe track, l'inverse ferait un cycle. Si l'une bouge, l'autre doit suivre.
  */
 function periodeRebond(d: number, length: number): number {
   const croisiere = 22 + 8 * (d / length)
-  return (2 * 14) / 42 * croisiere
+  return ((2 * JUMP_SPEED) / 42) * croisiere
 }
 
 export function buildJarrePlan(
