@@ -33,8 +33,8 @@ export interface MenuCallbacks {
   onFighter(f: Fighter): void
   /** Le joueur a changé la qualité graphique */
   onQuality(q: Quality): void
-  /** Le joueur a allumé ou coupé la musique */
-  onMusique(on: boolean): void
+  /** Le joueur a réglé le volume de la musique (0 → 1) */
+  onMusique(volume: number): void
   /** Le joueur annule la recherche d'adversaire */
   onCancel(): void
   // ————— Les salons en ligne —————
@@ -108,7 +108,8 @@ export class Menu {
     forgeHead: document.getElementById('forgeHead')!,
     optName: document.getElementById('optName') as HTMLInputElement,
     optQuality: document.getElementById('optQuality')!,
-    optMusique: document.getElementById('optMusique')!,
+    optVolume: document.getElementById('optVolume') as HTMLInputElement,
+    optVolumeVal: document.getElementById('optVolumeVal')!,
     // ————— Salon —————
     joinCode: document.getElementById('joinCode') as HTMLInputElement,
     salonList: document.getElementById('salonList')!,
@@ -548,16 +549,18 @@ export class Menu {
     }
     this.markQuality()
 
-    // La musique
-    for (const b of this.el.optMusique.querySelectorAll<HTMLElement>('button')) {
-      b.addEventListener('click', () => {
-        this.settings.musique = b.dataset.m === 'on'
-        saveSettings(this.settings)
-        this.markMusique()
-        this.cb.onMusique(this.settings.musique)
-      })
-    }
-    this.markMusique()
+    // Le volume de la musique. On applique en DIRECT (`input`) : régler un
+    // volume sans l'entendre bouger, c'est régler à l'aveugle.
+    this.el.optVolume.addEventListener('input', () => {
+      this.settings.volumeMusique = Number(this.el.optVolume.value) / 100
+      this.markVolume()
+      this.cb.onMusique(this.settings.volumeMusique)
+    })
+    // On n'écrit sur le téléphone qu'une fois le curseur lâché : sinon on
+    // sauvegarderait des dizaines de fois pendant le glissement.
+    this.el.optVolume.addEventListener('change', () => saveSettings(this.settings))
+    this.el.optVolume.value = String(Math.round(this.settings.volumeMusique * 100))
+    this.markVolume()
   }
 
   private markQuality() {
@@ -566,9 +569,8 @@ export class Menu {
     }
   }
 
-  private markMusique() {
-    for (const b of this.el.optMusique.querySelectorAll<HTMLElement>('button')) {
-      b.classList.toggle('on', (b.dataset.m === 'on') === this.settings.musique)
-    }
+  private markVolume() {
+    const pct = Math.round(this.settings.volumeMusique * 100)
+    this.el.optVolumeVal.textContent = pct === 0 ? '🔇 coupée' : `${pct} %`
   }
 }

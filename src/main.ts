@@ -2024,8 +2024,8 @@ const menu = new Menu({
   onQuality(q) {
     applyQuality(q)
   },
-  onMusique(on) {
-    musique.setActive(on)
+  onMusique(volume) {
+    musique.setVolume(volume)
   },
   onCancel() {
     net.leave()
@@ -2039,7 +2039,7 @@ btnGo.addEventListener('click', () => {
 })
 
 // Créée APRÈS le menu : c'est lui qui détient le réglage sauvegardé.
-const musique = new Musique(menu.settings.musique)
+const musique = new Musique(menu.settings.volumeMusique)
 
 applyQuality(menu.settings.quality)
 updateMeLabel()

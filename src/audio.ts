@@ -25,10 +25,11 @@ const FICHIERS: Record<Piste, string> = {
   race: 'audio/music/race.mp3',
 }
 
-/** Assez présente pour porter la course, assez basse pour laisser vivre le reste. */
-const VOLUME = 0.55
-
-/** Durée du fondu entre deux pistes (secondes). */
+/**
+ * Durée d'un fondu complet (0 → plein volume) en secondes. Un fondu partiel
+ * est donc proportionnellement plus court — et surtout, le calcul ne dépend
+ * PAS du volume réglé : couper le son ne doit pas figer le fondu de sortie.
+ */
 const FONDU = 0.6
 
 /** Les gestes qui valent autorisation de jouer, aux yeux du navigateur. */
@@ -39,11 +40,17 @@ export class Musique {
   private courante: Piste | null = null
   /** Ce qu'on veut entendre — même si le navigateur nous fait encore attendre. */
   private voulue: Piste | null = null
-  private active: boolean
+  /** Le volume réglé par le joueur, de 0 (coupée) à 1. */
+  private volume: number
   private debloque = false
 
-  constructor(active: boolean) {
-    this.active = active
+  /** Le son est-il demandé ? (0 = coupé depuis les options) */
+  private get active() {
+    return this.volume > 0
+  }
+
+  constructor(volume: number) {
+    this.volume = volume
 
     // On réessaie à CHAQUE geste tant que la lecture n'a pas vraiment démarré.
     //
@@ -64,7 +71,9 @@ export class Musique {
     // une musique qui continuerait seule n'aurait plus rien à accompagner.
     document.addEventListener('visibilitychange', () => {
       if (document.hidden) this.elements.forEach((a) => a.pause())
-      else if (this.active && this.courante) this.demarrer(this.courante)
+      // On REPREND où on en était : verrouiller son téléphone une seconde ne
+      // doit pas relancer le thème depuis le début.
+      else if (this.active && this.courante) this.demarrer(this.courante, true)
     })
   }
 
@@ -86,10 +95,15 @@ export class Musique {
    * réponse qui dit à l'écouteur de gestes s'il peut enfin se taire.
    * Ne rejette jamais : un refus du navigateur n'est pas une panne.
    */
-  private demarrer(p: Piste | null): Promise<boolean> {
+  private demarrer(p: Piste | null, reprendre = false): Promise<boolean> {
     this.courante = p
     if (!p || !this.active) return Promise.resolve(false)
-    return this.element(p)
+    const a = this.element(p)
+    // Une piste qu'on relance après l'avoir quittée repart de son DÉBUT :
+    // un thème qui redémarre en plein milieu s'entend comme un bug. On ne
+    // reprend en cours que dans un seul cas — le retour d'un onglet en veille.
+    if (!reprendre) a.currentTime = 0
+    return a
       .play()
       .then(() => true)
       .catch(() => false)
@@ -106,12 +120,16 @@ export class Musique {
     if (this.debloque) this.demarrer(p)
   }
 
-  /** Le réglage du joueur (options). Coupe ou relance sans perdre le fil. */
-  setActive(on: boolean) {
-    if (on === this.active) return
-    this.active = on
-    if (on) this.demarrer(this.voulue)
-    // Sinon : `update` fait descendre le volume puis met en pause.
+  /**
+   * Le volume réglé depuis les options (0 → 1), appliqué en direct pour qu'on
+   * s'entende régler. Repasser au-dessus de zéro relance la piste en cours —
+   * en la reprenant où elle en était, puisqu'on n'a pas changé d'écran.
+   */
+  setVolume(v: number) {
+    const avant = this.active
+    this.volume = Math.min(1, Math.max(0, v))
+    if (this.active && !avant) this.demarrer(this.voulue, true)
+    // Passé à zéro : `update` fait descendre le son puis met en pause.
   }
 
   /**
@@ -120,9 +138,9 @@ export class Musique {
    * du jeu, et ça s'arrête avec lui quand l'onglet passe en arrière-plan.
    */
   update(dt: number) {
-    const pas = (dt / FONDU) * VOLUME
+    const pas = dt / FONDU
     for (const [p, a] of this.elements) {
-      const cible = p === this.courante && this.active ? VOLUME : 0
+      const cible = p === this.courante ? this.volume : 0
       if (a.volume === cible) continue
       a.volume =
         cible > a.volume ? Math.min(cible, a.volume + pas) : Math.max(cible, a.volume - pas)

@@ -138,12 +138,9 @@
         </div>
 
         <div class="field">
-          <label>Musique</label>
-          <div class="seg" id="optMusique">
-            <button data-m="on">🎵 Oui</button>
-            <button data-m="off">🔇 Non</button>
-          </div>
-          <small>Une piste par moment : menus, salon, course.</small>
+          <label for="optVolume">Musique <span id="optVolumeVal">55 %</span></label>
+          <input id="optVolume" type="range" min="0" max="100" step="5" value="55" />
+          <small>Une piste par moment : menus, salon, course. À zéro, c'est le silence.</small>
         </div>
 
         <button class="primary" data-back>OK</button>
