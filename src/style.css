@@ -1369,3 +1369,14 @@ body {
   clip-path: inset(50%);
   white-space: nowrap;
 }
+
+/* ——— La classe « masqué », enfin générique ———
+   Elle était jusqu'ici redéclarée pour CHAQUE élément (#gap.hidden,
+   .screen.hidden…). Un nouvel élément portant `hidden` restait donc
+   visible — c'est exactement ce qui est arrivé au message « boutique
+   indisponible », affiché sous une boutique pleine.
+   Cette règle vaut pour tous ; les sélecteurs plus spécifiques ci-dessus
+   continuent de gagner quand ils font autre chose. */
+.hidden {
+  display: none;
+}
