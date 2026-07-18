@@ -6,6 +6,7 @@ import { Track, SPRINT_ZONE } from './track'
 import { Input } from './input'
 import { Net, type RemotePlayer, type LobbyView } from './net'
 import { Bot, PROFILS, BOTS_MAX, construireRangees } from './bot'
+import { cssColor } from './roster'
 import {
   PARCHEMINS,
   TIRAGE,
@@ -272,7 +273,6 @@ const countEl = document.getElementById('count')!
 const flashEl = document.getElementById('flash')!
 const fumeeEl = document.getElementById('fumee')!
 const progressEl = document.getElementById('progressfill')!
-const oppmarkEl = document.getElementById('oppmark')!
 const gapEl = document.getElementById('gap')!
 const aspiEl = document.getElementById('aspi')!
 const sprintEl = document.getElementById('sprint')!
@@ -325,15 +325,26 @@ let chaineT = 0 // temps restant pour enchaîner (sinon la chaîne retombe)
 const CLE_BOTS = 'kurogane-bots'
 let nbBots = Math.min(BOTS_MAX, Math.max(1, Number(localStorage.getItem(CLE_BOTS)) || 1))
 
-/** Un repère par rival sur la barre de progression, à sa couleur. */
-const botMarks = bots.map((b) => {
+/**
+ * Les têtes sur la colonne de progression.
+ *
+ * Un disque à la couleur de l'armure, barré du bandeau : le même langage que
+ * les corps en piste, donc on reconnaît qui est qui sans légende. Elles
+ * montent du bas (le départ) vers le haut (le torii).
+ */
+function makeTete(corps: number, bandeau: number, titre: string, moi = false): HTMLElement {
   const el = document.createElement('div')
-  el.className = 'botmark hidden'
-  el.style.background = `#${b.profil.bandeau.toString(16).padStart(6, '0')}`
-  el.title = b.profil.nom
+  el.className = moi ? 'tete moi' : 'tete hidden'
+  el.style.setProperty('--body', cssColor(corps))
+  el.style.setProperty('--band', cssColor(bandeau))
+  el.title = titre
   progressbarEl.appendChild(el)
   return el
-})
+}
+
+/** La tienne : toujours là, toujours au-dessus des autres. */
+const teteMoi = makeTete(0x23252d, 0xc33a2c, 'Toi', true)
+const botMarks = bots.map((b) => makeTete(b.profil.corps, b.profil.bandeau, b.profil.nom))
 
 // ————— Les parchemins —————
 // Une FILE d'attente : on lance toujours le plus ancien ramassé. Impossible de
@@ -2019,6 +2030,7 @@ function backToMenu(banner?: string) {
     b.cacher()
   }
   for (const m of botMarks) m.classList.add('hidden')
+  progressbarEl.classList.add('hidden') // la colonne n'a de sens qu'en course
   // Une lame encore en l'air à l'arrivée resterait plantée dans le menu
   for (const p of projets) {
     p.actif = false
@@ -2037,7 +2049,6 @@ function backToMenu(banner?: string) {
   grueAnneau.visible = false
   miroirGroup.visible = false
   hideSpark()
-  oppmarkEl.classList.add('hidden')
   rankEl.classList.add('hidden')
   gapEl.classList.add('hidden')
   aspiEl.classList.add('hidden')
@@ -2151,7 +2162,7 @@ function startRace(seed: number) {
     // Le joueur est l'indice 0 de la grille, les bots suivent (voie répartie).
     b.reset(rangees, rouleaux, (seed ^ ((i + 1) * 0x9e3779b1)) | 0, voieDe(i + 1))
     botMarks[i].classList.toggle('hidden', !b.actif)
-    botMarks[i].style.left = '0%'
+    botMarks[i].style.bottom = '0%'
   })
 
   // Le classement en direct : visible dans les deux modes !
@@ -2168,10 +2179,11 @@ function startRace(seed: number) {
   sprintEl.classList.add('hidden')
   sprintLabelEl.textContent = '🚀 DÉPART CANON'
   sprintFillEl.style.width = '0%'
-  progressEl.style.width = '0%'
+  progressbarEl.classList.remove('hidden')
+  progressEl.style.height = '0%'
+  teteMoi.style.bottom = '0%'
   // Le marqueur unique n'a plus de sens à 10 : c'est le classement en direct
   // qui montre où en est chacun. La bulle d'écart vise le plus proche devant.
-  oppmarkEl.classList.add('hidden')
   gapEl.classList.remove('hidden')
 }
 
@@ -2408,6 +2420,10 @@ const menu = new Menu({
     // Le guerrier qui court derrière le menu change tout de suite : on voit son
     // choix avant même de lancer la course.
     player.setFighter(f)
+    // Ta tête sur la colonne porte TES couleurs : sans ça elle resterait celle
+    // de Yasuke et tu te chercherais parmi les rivaux.
+    teteMoi.style.setProperty('--body', cssColor(f.body))
+    teteMoi.style.setProperty('--band', cssColor(f.band))
     // Et si on est dans un salon, on prévient les autres : sans ça, changer de
     // guerrier depuis le lobby ne se verrait que chez soi.
     if (online) net.sendIdentity(identity())
@@ -2651,7 +2667,7 @@ function tick(now?: number) {
       if (!b.actif) return
       if (b.avance(dt, time, COURSE_LENGTH)) toast(`⛩️ ${b.profil.nom} a franchi le torii !`)
       b.placer(dt, distance)
-      botMarks[i].style.left = `${Math.min(100, (b.distance / COURSE_LENGTH) * 100)}%`
+      botMarks[i].style.bottom = `${Math.min(100, (b.distance / COURSE_LENGTH) * 100)}%`
 
       // Ses parchemins. Un sort offensif part sur celui qui le précède — le
       // joueur compris : c'est ce qui rend l'entraînement mordant.
@@ -3061,7 +3077,10 @@ function tick(now?: number) {
 
     // Interface : chrono + progression
     scoreEl.textContent = `${time.toFixed(1)} s`
-    progressEl.style.width = `${Math.min(100, (distance / COURSE_LENGTH) * 100)}%`
+    // La colonne monte : le remplissage ET ta tete suivent ta distance
+    const pct = Math.min(100, (distance / COURSE_LENGTH) * 100)
+    progressEl.style.height = `${pct}%`
+    teteMoi.style.bottom = `${pct}%`
 
     // Interface du sprint : on annonce, puis la jauge suit le martèlement
     if (sprinting) {

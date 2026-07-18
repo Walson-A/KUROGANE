@@ -118,24 +118,98 @@ body {
 }
 
 /* ——— Barre de progression de la course ——— */
+/* ——— La progression, en COLONNE à gauche ———
+   Elle était couchée en haut de l'écran, avec des traits de 3 px pour les
+   rivaux : illisible en pleine course, et le bandeau supérieur est déjà pris
+   par le chrono et les parchemins.
+
+   Debout à gauche, elle gagne toute la hauteur de l'écran — donc la place
+   d'afficher de VRAIES têtes plutôt que des traits. Et le sens de lecture
+   devient évident : le départ en bas, le torii en haut, on MONTE vers lui. */
 #progressbar {
   position: fixed;
-  top: max(58px, calc(env(safe-area-inset-top) + 44px));
+  left: max(16px, env(safe-area-inset-left));
+  top: max(96px, calc(env(safe-area-inset-top) + 82px));
+  bottom: 16%;
+  width: 34px; /* la largeur des TÊTES, pas du rail : elles doivent déborder */
+  pointer-events: none;
+  /* surtout pas d'overflow ici : les têtes dépassent du rail */
+}
+/* Le rail : la gouttière, elle seule rogne son remplissage */
+#progressrail {
+  position: absolute;
   left: 50%;
+  top: 0;
+  bottom: 0;
+  width: 7px;
   transform: translateX(-50%);
-  width: min(46%, 340px);
-  height: 7px;
   border-radius: 100px;
   background: rgba(61, 69, 96, 0.55);
   border: 1px solid #3d4560;
   overflow: hidden;
 }
+/* Le remplissage monte DU BAS : c'est le chemin déjà parcouru */
 #progressfill {
-  height: 100%;
-  width: 0%;
-  background: linear-gradient(90deg, #e24b3a, #d6ac5a);
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 0%;
+  background: linear-gradient(0deg, #e24b3a, #d6ac5a);
   border-radius: 100px;
-  transition: width 0.2s linear;
+  transition: height 0.2s linear;
+}
+/* Le torii, tout en haut : ce vers quoi on monte */
+#progressgoal {
+  position: absolute;
+  left: 50%;
+  top: -22px;
+  transform: translateX(-50%);
+  font-size: 1rem;
+  filter: drop-shadow(0 2px 6px rgba(0, 0, 0, 0.7));
+}
+
+/* ——— Les têtes des coureurs ———
+   Un disque à la couleur de l'armure, barré du bandeau du guerrier : c'est le
+   même langage que les corps en piste, donc on reconnaît qui est qui sans
+   légende. La tienne est plus grosse et cerclée d'or — en course, on doit se
+   trouver soi-même sans réfléchir. */
+.tete {
+  position: absolute;
+  left: 50%;
+  bottom: 0%;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  transform: translate(-50%, 50%);
+  border: 2px solid rgba(13, 16, 28, 0.85);
+  box-shadow: 0 0 0 1px var(--band), 0 2px 6px rgba(0, 0, 0, 0.6);
+  background: var(--body);
+  overflow: hidden;
+  transition: bottom 0.2s linear;
+}
+/* Le bandeau, en travers du front */
+.tete::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 30%;
+  height: 26%;
+  background: var(--band);
+}
+.tete.moi {
+  width: 34px;
+  height: 34px;
+  z-index: 3;
+  border-color: #d6ac5a;
+  box-shadow: 0 0 0 2px rgba(214, 172, 90, 0.5), 0 2px 10px rgba(0, 0, 0, 0.7);
+}
+.tete.hidden {
+  display: none;
+}
+#progressbar.hidden {
+  display: none;
 }
 /* L'écart avec le rival : « Rival +12 m » (lui devant) ou « −12 m » (toi devant) */
 #gap {
@@ -166,22 +240,6 @@ body {
   display: none;
 }
 
-/* Un repère par rival d'entraînement, à sa couleur de bandeau. Un trait fin
-   plutôt qu'une pastille : la barre ne fait que 7 px, tout dépassement serait
-   rogné par son `overflow: hidden`. */
-.botmark {
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  left: 0%;
-  width: 3px;
-  border-radius: 2px;
-  transform: translateX(-50%);
-  transition: left 0.2s linear;
-}
-.botmark.hidden {
-  display: none;
-}
 
 /* ——— Le classement en direct ——— */
 /* Sous la barre de progression : au-dessus, il chevaucherait le chrono sur

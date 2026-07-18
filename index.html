@@ -21,9 +21,13 @@
         <div class="slot" id="slot1">—</div>
       </div>
     </div>
-    <div id="progressbar">
-      <div id="progressfill"></div>
-      <div id="oppmark" class="hidden"></div>
+    <!-- La progression, en colonne à gauche : le départ en bas, le torii en
+         haut. Les têtes des coureurs y montent — c'est menu.ts… non, main.ts
+         qui les fabrique. Le rail est un enfant séparé parce qu'il ROGNE son
+         remplissage, alors que les têtes doivent déborder de sa largeur. -->
+    <div id="progressbar" class="hidden">
+      <div id="progressrail"><div id="progressfill"></div></div>
+      <div id="progressgoal">⛩️</div>
     </div>
     <!-- Le classement en direct de l'entraînement (rempli en JS) -->
     <div id="rank" class="hidden"></div>

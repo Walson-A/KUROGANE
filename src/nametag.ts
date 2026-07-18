@@ -10,15 +10,18 @@ import * as THREE from 'three'
  */
 
 /** Hauteur de l'étiquette dans le monde 3D, en mètres */
-const TAG_HEIGHT = 0.34
+const TAG_HEIGHT = 0.3
 
 /**
  * La distance à laquelle l'étiquette a sa taille naturelle. Au-delà, on
  * l'agrandit pour compenser la perspective (cf. follow).
+ *
+ * MAX_GROW était à 3,2 : un rival au fond de la piste se retrouvait coiffé
+ * d'un panneau plus large que lui. 2,4 suffit à garder le nom lisible sans
+ * qu'il écrase la scène.
  */
-const REF_DIST = 9
-/** Jusqu'où on compense — au-delà, le rival est trop loin, tant pis */
-const MAX_GROW = 3.2
+const REF_DIST = 10
+const MAX_GROW = 2.4
 
 /** Hauteur du corps d'un guerrier (cf. roster.ts) — l'étiquette se pose dessus */
 const BODY_HEIGHT = 1.55
@@ -68,13 +71,29 @@ export class NameTag {
       return
     }
 
-    // ×2 : on dessine en double résolution, sinon le texte bave une fois
-    // étiré sur le sprite.
-    const S = 2
-    const font = `700 ${34 * S}px system-ui, -apple-system, "Segoe UI", sans-serif`
+    /*
+     * ————— Le dessin de l'étiquette —————
+     *
+     * Le texte est en IVOIRE, jamais à la couleur du guerrier. C'était le
+     * défaut du modèle précédent : un bandeau sombre (l'acier de Kurokumo, un
+     * skin perso presque noir) donnait un nom illisible sur une pastille déjà
+     * sombre. La couleur identifie, elle ne doit pas porter la lisibilité.
+     *
+     * Elle passe donc dans deux ACCENTS qui ne gênent jamais la lecture :
+     * une pastille ronde à gauche et un trait sous le nom — exactement le
+     * liseré coloré des vignettes du vestiaire. Même langage, partout.
+     */
+    const S = 2 // double résolution : sinon le texte bave une fois étiré
+    const POLICE = 30
+    const font = `700 ${POLICE * S}px system-ui, -apple-system, "Segoe UI", sans-serif`
     this.ctx.font = font
-    const w = Math.ceil(this.ctx.measureText(text).width) + 30 * S
-    const h = 52 * S
+
+    const pastille = 11 * S // le rayon du point de couleur
+    const marge = 13 * S
+    const ecart = 9 * S // entre la pastille et le texte
+    const largeurTexte = Math.ceil(this.ctx.measureText(text).width)
+    const w = marge + pastille * 2 + ecart + largeurTexte + marge
+    const h = 46 * S
 
     // ⚠️ Redimensionner un canvas le vide ET remet son contexte à zéro :
     // la police doit être re-déclarée APRÈS, sinon le texte sort en 10px Sans.
@@ -82,24 +101,38 @@ export class NameTag {
     this.canvas.height = h
     const c = this.ctx
     c.font = font
-    c.textAlign = 'center'
+    c.textAlign = 'left'
     c.textBaseline = 'middle'
 
-    // La pastille sombre, pour rester lisible sur n'importe quel décor
-    c.fillStyle = 'rgba(13, 16, 28, 0.74)'
+    // Le fond, franchement opaque : l'étiquette passe devant des décors très
+    // variés (sol sombre, torii doré, brume claire) et doit tenir sur tous.
+    c.fillStyle = 'rgba(13, 16, 28, 0.82)'
     c.beginPath()
-    c.roundRect(0, 0, w, h, 15 * S)
+    c.roundRect(0, 0, w, h, 12 * S)
     c.fill()
 
-    // Le liseré : la couleur du bandeau du guerrier
-    c.strokeStyle = color
-    c.lineWidth = 2 * S
-    c.beginPath()
-    c.roundRect(S, S, w - 2 * S, h - 2 * S, 14 * S)
-    c.stroke()
-
+    // Accent 1 — le trait sous le nom, comme les vignettes du vestiaire
     c.fillStyle = color
-    c.fillText(text, w / 2, h / 2 + S)
+    c.beginPath()
+    c.roundRect(0, h - 3.5 * S, w, 3.5 * S, [0, 0, 12 * S, 12 * S])
+    c.fill()
+
+    // Accent 2 — la pastille de couleur, à gauche
+    const cx = marge + pastille
+    c.beginPath()
+    c.arc(cx, h / 2 - S, pastille, 0, Math.PI * 2)
+    c.fill()
+
+    // Le nom : ivoire, avec un contour sombre. Le contour est ce qui le sauve
+    // quand l'étiquette passe devant une jarre dorée ou le torii.
+    const x = cx + pastille + ecart
+    const y = h / 2 - S
+    c.lineWidth = 3 * S
+    c.strokeStyle = 'rgba(6, 8, 14, 0.9)'
+    c.lineJoin = 'round'
+    c.strokeText(text, x, y)
+    c.fillStyle = '#f4eedf'
+    c.fillText(text, x, y)
 
     this.aspect = w / h
     this.texture.needsUpdate = true
