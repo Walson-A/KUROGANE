@@ -2,7 +2,7 @@ import * as THREE from 'three'
 import './style.css'
 import { Player, LANES } from './player'
 import { Opponent } from './opponent'
-import { Track, SPRINT_ZONE, COURSE_LENGTH } from './track'
+import { Track, SPRINT_ZONE, COURSE_LENGTH, PLATEFORME_H } from './track'
 import { ajouterScore } from './scores'
 import { Input } from './input'
 import { Net, type RemotePlayer, type LobbyView } from './net'
@@ -27,6 +27,23 @@ import {
   type ParcheminKind,
 } from './parchemin'
 import { Menu, escapeHtml } from './menu'
+import {
+  connecter,
+  monProfil,
+  monJeton,
+  rafraichirProfil,
+  chargerBoutique,
+  mesArticles,
+  couleursDebloquees,
+  acheter as acheterArticle,
+  connexionGoogle,
+  deconnecter,
+  estAnonyme,
+  monEmail,
+  googleActif,
+  inscriptionEmail,
+  connexionEmail,
+} from './compte'
 import { souffleDeVent, jouerBruit, setVolumeSfx, sonDeSoin } from './sfx'
 import type { Quality } from './settings'
 import { Musique } from './audio'
@@ -96,6 +113,22 @@ const PORTEE_LAME = 1.3
  * assez pour qu'une grappe sur sa ligne ne s'ignore jamais.
  */
 const JARRE_FREIN = 0.72
+
+/**
+ * ————— Le prix d'une escalade —————
+ *
+ * Percuter une plateforme sans rampe fait perdre **1,0 s** : le double d'un
+ * trébuchement (0,53 s), et de loin la plus lourde erreur du jeu. C'est
+ * volontaire — ce n'est pas une maladresse mais un mauvais itinéraire, et il
+ * faut que la rampe VAILLE le détour. Ça reste rattrapable : un sprint final
+ * parfait rend 0,42 s.
+ *
+ * Le freinage dure plus longtemps que la montée elle-même (0,45 s) : on se
+ * hisse, puis on repart mollement. Les deux chiffres sont calibrés ensemble par
+ * simulation — cf. test-escalade.
+ */
+const ESCALADE_FREIN = 0.16
+const ESCALADE_FREIN_DUREE = 1.12
 
 /**
  * ————— Les deux vitesses du 2ᵉ ACTE —————
@@ -304,6 +337,7 @@ let distance = 0 // mètres parcourus
 let speed = 0
 let countdown = 0 // secondes avant le GO !
 let stumble = 0 // invincibilité après un trébuchement
+let escaladeT = 0 // temps de freinage restant après une escalade
 let stumblePrec = 0 // sa valeur à l'image d'avant : sert à repérer le choc
 let netTimer = 0 // pour n'envoyer notre position que 10 fois/s
 let sprintTaps: number[] = [] // instants des derniers taps → cadence
@@ -1921,17 +1955,44 @@ function rivalAuContact() {
  * ici. Renvoie true si le swipe a servi à ça.
  */
 function tenteMur(cote: -1 | 1): boolean {
-  if (!acte2() || player.onGround || player.surMur !== 0) return false
-  // La voie extérieure du bon côté : 0 à gauche, 2 à droite
-  if (player.currentLane !== (cote === -1 ? 0 : 2)) return false
-  if (!track.murA(distance, cote)) return false
-  if (!player.accrocheMur(cote)) return false
-  // Les rivaux doivent le VOIR filer le long de la paroi : c'est la manoeuvre
-  // la plus spectaculaire du jeu, et rien ne la transmettait.
-  if (online) net.sendAction({ t: 'mur', cote })
-  jouerBruit('glissade')
-  toast('🧱 Au mur !')
-  return true
+  /*
+   * Deux parois possibles, et la seconde est la nouveauté.
+   *
+   * 1. Le PAN DE MUR qui borde la piste — depuis la voie extérieure seulement.
+   * 2. Le FLANC D'UNE PLATEFORME, depuis n'importe quelle voie.
+   *
+   * On n'escalade un mur que de face : vu de côté, un wagon est une paroi comme
+   * une autre. Ça donne une troisième réponse au convoi — après « prendre la
+   * rampe » et « payer l'escalade » — et c'est la seule qui demande du geste :
+   * il faut avoir sauté AVANT d'arriver à sa hauteur.
+   */
+  const surVoieExterieure = player.currentLane === (cote === -1 ? 0 : 2)
+  const flanc = track.flancA(player.currentLane, cote)
+
+  let accroche = false
+  let msg = ''
+
+  if (surVoieExterieure && track.murA(distance, cote)) {
+    if (player.accrocheMur(cote)) {
+      accroche = true
+      msg = '🧱 Au mur !'
+    }
+  } else if (flanc !== null) {
+    if (player.accrocheMur(cote, flanc)) {
+      accroche = true
+      msg = '🚃 Au flanc !'
+    }
+  }
+
+  if (accroche) {
+    // Les rivaux doivent le VOIR filer le long de la paroi : c'est la manoeuvre
+    // la plus spectaculaire du jeu, et rien ne la transmettait.
+    if (online) net.sendAction({ t: 'mur', cote })
+    jouerBruit('glissade')
+    toast(msg)
+    return true
+  }
+  return false
 }
 
 function botAuContact(): Bot | null {
@@ -2397,7 +2458,12 @@ const net = new Net({
     state = 'fini'
     sprintEl.classList.add('hidden')
     gapEl.classList.add('hidden')
-      showResults(view)
+    rankEl.classList.add('hidden')
+    showResults(view)
+    // Le serveur vient de payer les arrivants : on relit notre bourse. Elle est
+    // créditée LÀ-BAS, on ne fait que la constater — d'où la relecture plutôt
+    // qu'une addition côté jeu, qui pourrait mentir.
+    void majBourse()
   },
   onError(message) {
     net.leave()
@@ -2406,7 +2472,19 @@ const net = new Net({
 })
 
 // ————— Les menus —————
-const identity = () => ({ name: menu.settings.name, fighter: menu.settings.fighter })
+/**
+ * Qui l'on est, pour le salon de course.
+ *
+ * Le `token` sert au serveur à savoir quel PORTEFEUILLE créditer à l'arrivée —
+ * il ne circule jamais vers les autres joueurs, et le serveur le range à part
+ * de l'état partagé. Sans jeton (hors-ligne, base en panne), on court quand
+ * même : on ne gagne simplement pas de Mon.
+ */
+const identity = () => ({
+  name: menu.settings.name,
+  fighter: menu.settings.fighter,
+  token: monJeton(),
+})
 
 const menu = new Menu({
   onSolo() {
@@ -2480,6 +2558,156 @@ const menu = new Menu({
     net.leave()
     backToMenu()
   },
+
+  // ————— La boutique —————
+  onBoutique() {
+    menu.showBoutique()
+    // On ouvre TOUT DE SUITE avec ce qu'on a déjà, puis on rafraîchit : ouvrir
+    // un écran vide en attendant le réseau donne l'impression que ça rame.
+    menu.setBoutique(mesArticles())
+    void chargerBoutique().then((articles) => {
+      menu.setBoutique(articles)
+      majAffichageBourse()
+    })
+  },
+
+  // ————— Le compte —————
+  onGoogle() {
+    void connexionGoogle().then((r) => {
+      if (r.ok) return // on quitte la page vers Google : rien à afficher
+
+      /*
+       * Un échec ici doit se VOIR. Le bouton qui ne fait rien est le pire des
+       * cas : le joueur reclique, croit à un écran gelé, et abandonne. On écrit
+       * donc le refus dans l'écran du compte, sous les yeux du joueur, et pas
+       * seulement dans un toast fugace.
+       */
+      const messages: Record<string, string> = {
+        'hors-ligne': 'Serveur injoignable.',
+        INVALID_CALLBACK_URL:
+          "Le serveur n'accepte pas l'adresse de retour. (Configuration : PUBLIC_URL)",
+      }
+      const brut = r.raison ?? ''
+      const connu = Object.entries(messages).find(([code]) => brut.includes(code))
+      menu.erreurCompte(
+        connu ? connu[1] : `Connexion Google indisponible${brut ? ` (${brut})` : ''}.`
+      )
+    })
+  },
+
+  onDeconnexion() {
+    void deconnecter().then(async () => {
+      toast('👋 Déconnecté')
+      // On repart d'un compte anonyme neuf, sinon le jeu resterait sans bourse
+      await connecter()
+      majAffichageBourse()
+      majCompte()
+      menu.setCouleursDebloquees(couleursDebloquees())
+    })
+  },
+
+  onEmail(mode, email, motDePasse) {
+    const p = mode === 'inscription'
+      ? inscriptionEmail(email, motDePasse, menu.settings.name)
+      : connexionEmail(email, motDePasse)
+
+    void p.then(async (r) => {
+      if (!r.ok) {
+        /*
+         * Les refus du serveur arrivent en anglais. On les traduit par
+         * MORCEAU de code plutôt que par égalité stricte : Better Auth
+         * les rallonge parfois (« USER_ALREADY_EXISTS_USE_ANOTHER_EMAIL »),
+         * et une correspondance exacte laisserait passer l'anglais brut.
+         */
+        const traductions: [string, string][] = [
+          ['hors-ligne', 'Serveur injoignable.'],
+          ['USER_ALREADY_EXISTS', 'Un compte existe déjà avec cet email.'],
+          ['INVALID_EMAIL_OR_PASSWORD', 'Email ou mot de passe incorrect.'],
+          ['INVALID_EMAIL', "Cet email n'est pas valide."],
+          ['PASSWORD_TOO_SHORT', 'Mot de passe trop court (8 caractères minimum).'],
+          ['PASSWORD_TOO_LONG', 'Mot de passe trop long.'],
+        ]
+        const brut = r.raison ?? ''
+        const trouve = traductions.find(([code]) => brut.includes(code))
+        menu.erreurCompte(trouve ? trouve[1] : 'Échec — réessaie dans un instant.')
+        return
+      }
+      menu.viderFormulaireCompte()
+      toast(mode === 'inscription' ? '✅ Compte créé !' : '👋 Content de te revoir !')
+      majAffichageBourse()
+      majCompte()
+      // Les couleurs achetees suivent le compte : on relit le catalogue
+      await chargerBoutique()
+      menu.setCouleursDebloquees(couleursDebloquees())
+    })
+  },
+
+  onAcheter(code) {
+    void acheterArticle(code).then((r) => {
+      if (r.ok) {
+        jouerBruit('parchemin')
+        toast('🏪 Acquis !')
+        menu.setBoutique(mesArticles())
+        majAffichageBourse()
+        // La couleur payée doit rejoindre le vestiaire immédiatement
+        menu.setCouleursDebloquees(couleursDebloquees())
+        return
+      }
+      // Chaque refus vient du SERVEUR : on ne fait que le traduire.
+      const messages: Record<string, string> = {
+        fonds: '💰 Pas assez de monnaie',
+        possede: '✓ Tu le possèdes déjà',
+        inconnu: '⚠️ Article introuvable',
+        indisponible: '⚠️ Article indisponible',
+        'hors-ligne': '📡 Hors ligne',
+      }
+      toast(messages[r.raison] ?? '⚠️ Achat refusé')
+    })
+  },
+})
+
+/**
+ * ————— La bourse —————
+ * Le solde n'est JAMAIS calculé ici : il est relu chez le serveur, qui seul
+ * l'a écrit. Ce module ne fait que l'afficher.
+ */
+function majAffichageBourse() {
+  const p = monProfil()
+  menu.setBourse(p?.mon ?? null, p?.hisui ?? null)
+}
+
+/** Relit le solde auprès du serveur, puis rafraîchit l'affichage. */
+async function majBourse() {
+  await rafraichirProfil()
+  majAffichageBourse()
+}
+
+/** Reflète l'état du compte dans son écran. */
+function majCompte() {
+  menu.setCompte({
+    anonyme: estAnonyme(),
+    email: monEmail(),
+    googleDispo: googleActif(),
+    connecte: monProfil() !== null,
+  })
+}
+
+/**
+ * La connexion au démarrage : compte anonyme si c'est la première fois, sinon
+ * on reprend celui de l'appareil. Silencieuse et sans blocage — si le serveur
+ * ne répond pas, le jeu reste parfaitement jouable, simplement sans bourse.
+ */
+void connecter().then(async () => {
+  majAffichageBourse()
+  majCompte()
+  if (monProfil()) {
+    // On charge le catalogue en fond : c'est lui qui porte les couleurs
+    // achetées, et le vestiaire doit les proposer sans attendre une visite
+    // en boutique.
+    menu.setCouleursDebloquees(couleursDebloquees())
+    await chargerBoutique()
+    menu.setCouleursDebloquees(couleursDebloquees())
+  }
 })
 
 btnGo.addEventListener('click', () => {
@@ -2661,6 +2889,21 @@ function tick(now?: number) {
     // 🌸 Les pétales tombent pendant tout le décompte (monde immobile : dz = 0)
     petalesActifs = true
     updateEffets(dt, 0)
+
+    /*
+     * La piste doit vivre PENDANT le décompte, à vitesse nulle.
+     *
+     * `track.reset()` vide tout le décor pour repartir propre, et jusqu'ici
+     * rien ne le repeuplait avant le GO : on passait les dix secondes du départ
+     * devant une piste nue, la forêt n'apparaissant qu'une fois lancé. C'est
+     * précisément le moment où l'on REGARDE le décor, faute d'avoir autre chose
+     * à faire.
+     *
+     * Vitesse 0 : rien ne défile, on est bien à l'arrêt sur la ligne. Mais les
+     * bambous, les obstacles et les plateformes des 85 premiers mètres
+     * apparaissent, et l'on voit ce qui nous attend.
+     */
+    track.update(dt, 0, 0)
   } else if (state === 'course') {
     time += dt
 
@@ -2701,9 +2944,23 @@ function tick(now?: number) {
     // deux effets se multiplient au lieu de s'annuler.
     if (time < ventFin) cruise *= 1 + VENT_BOOST
     if (time < kusarigamaFin) cruise *= KUSARIGAMA_FACTEUR
+    // 🧗 On se hisse : la course est presque à l'arrêt le temps de passer.
+    escaladeT = Math.max(0, escaladeT - dt)
+    if (escaladeT > 0) cruise *= ESCALADE_FREIN
     speed += (cruise - speed) * Math.min(1, dt * 1.2)
 
     distance += speed * dt
+
+    /*
+     * ————— Le sol sous les pieds —————
+     * À interroger AVANT player.update, sinon la gravité de cette image
+     * s'appliquerait encore vers l'ancien sol : on traverserait le plateau d'un
+     * cheveu à chaque atterrissage.
+     *
+     * Sur la paroi on est hors de la piste : aucune plateforme ne nous porte.
+     */
+    const support = track.supportSous(player.mesh.position.x, player.mesh.position.y)
+    player.sol = player.surMur === 0 ? support.sol : 0
     player.update(dt)
     for (const r of rivals.values()) {
       // Chacun entre dans le sprint a SA distance, pas a la notre
@@ -2996,7 +3253,16 @@ function tick(now?: number) {
 
     // Le pan de mur s'achève : il nous relance en l'air, même si l'on aurait
     // pu tenir plus longtemps. On ne court pas sur du vide.
-    if (player.surMur !== 0 && !track.murA(distance, player.surMur)) player.lacheMur()
+    // La paroi s'achève : elle nous relance en l'air, même si l'on aurait pu
+    // tenir plus longtemps. On ne court pas sur du vide — et ça vaut pour les
+    // deux sortes de parois, le bord de piste comme le flanc d'un wagon.
+    if (
+      player.surMur !== 0 &&
+      !track.murA(distance, player.surMur) &&
+      track.flancA(player.currentLane, player.surMur) === null
+    ) {
+      player.lacheMur()
+    }
 
     /*
      * 😖 L'encaissement se déclenche sur le FRONT MONTANT de `stumble`.
@@ -3024,8 +3290,51 @@ function tick(now?: number) {
     // Trébuchement : toucher un obstacle RALENTIT (on ne meurt pas, c'est une course)
     // Sur la paroi on est hors de la piste : rien ne peut nous faucher.
     stumble = Math.max(0, stumble - dt)
+    /*
+     * 🚃 Percuter le FLANC d'une plateforme : on a raté le saut.
+     *
+     * C'est la contrepartie du raccourci — monter dessus met à l'abri de tout
+     * ce qui traîne au sol, mais s'y prendre trop tard coûte comme un mur. On
+     * l'assimile donc à `mur` : même sanction, et l'Armure de Fer y laisse une
+     * plaque entière, puisque c'est bien une masse pleine qu'on vient d'emboutir.
+     */
+    /*
+     * 🧗 Percuter une plateforme sans rampe : on l'ESCALADE.
+     *
+     * À 2,40 m, aucun saut ne passe (apex 2,07 m) : sans rampe, la rencontre est
+     * inévitable dès qu'on est sur cette ligne. Ce n'est donc pas une faute
+     * d'inattention qu'on sanctionne, c'est un choix d'itinéraire — d'où une
+     * mécanique à part plutôt qu'un trébuchement.
+     *
+     * On passe TOUJOURS : on se hisse, on perd une seconde, et on se retrouve
+     * en haut, sur la route rapide. Rester bloqué contre un mur en pleine
+     * course serait insupportable.
+     */
     const touche = player.surMur === 0 ? track.hits(player.hitbox()) : null
-    if (stumble <= 0 && touche) {
+
+    /*
+     * ————— Ce qui se GRIMPE —————
+     *
+     * Le flanc d'une plateforme, mais aussi le MUR ordinaire : les deux font
+     * 2,40 m, la même hauteur, et aucun des deux ne se saute (apex 2,07 m).
+     * Les traiter différemment n'avait aucun sens — on butait contre un mur en
+     * trébuchant alors qu'on escaladait la structure identique d'à côté.
+     *
+     * Un mur n'a que 50 cm d'épaisseur : on l'enjambe et l'on retombe de
+     * l'autre côté. Une plateforme est longue : on reste dessus. Même geste,
+     * même prix, deux issues — et c'est la piste qui les distingue, pas une
+     * règle à retenir.
+     */
+    const aGrimper =
+      player.surMur === 0 &&
+      (touche === 'mur' ||
+        track.supportSous(player.mesh.position.x, player.mesh.position.y).heurte)
+
+    if (stumble <= 0 && aGrimper && armure === 0 && player.escalader(PLATEFORME_H)) {
+      escaladeT = ESCALADE_FREIN_DUREE
+      jouerBruit('chute')
+      toast('🧗 Escalade !')
+    } else if (stumble <= 0 && touche && !player.escalade) {
       if (armure > 0) {
         // 🛡️ L'armure avale le choc : on garde toute sa vitesse. Mais un mur
         // la met en pièces d'un coup, là où une barrière ne fait que l'entamer.

@@ -98,7 +98,14 @@ export interface NetCallbacks {
  */
 const PROD_SERVER_URL = 'wss://kurogane-production.up.railway.app'
 
-const WS_URL: string =
+export interface Identity {
+  name: string
+  fighter: string
+  /** Le jeton de session : dit au serveur quel compte crediter. */
+  token?: string | null
+}
+
+export const WS_URL: string =
   import.meta.env.VITE_SERVER_URL ??
   (location.protocol === 'https:' ? PROD_SERVER_URL : `ws://${location.hostname}:2567`)
 
@@ -168,7 +175,7 @@ export class Net {
   // ————— Entrer dans un salon —————
 
   /** Crée un salon PRIVÉ et renvoie son code à partager. */
-  async createSalon(identity: { name: string; fighter: string }): Promise<string> {
+  async createSalon(identity: Identity): Promise<string> {
     const code = genCode()
     await this.enter((client) =>
       client.create('race', { ...identity, code, isPublic: false })
@@ -177,20 +184,20 @@ export class Net {
   }
 
   /** Rejoint (ou crée) le salon qui porte ce code. */
-  async joinByCode(identity: { name: string; fighter: string }, code: string) {
+  async joinByCode(identity: Identity, code: string) {
     const c = code.toUpperCase().replace(/[^A-Z]/g, '').slice(0, 6)
     await this.enter((client) => client.joinOrCreate('race', { ...identity, code: c }))
   }
 
   /** Partie rapide : remplit un salon PUBLIC (code 'PUBLIC'), départ à l'hôte/minuteur. */
-  async joinQuick(identity: { name: string; fighter: string }) {
+  async joinQuick(identity: Identity) {
     await this.enter((client) =>
       client.joinOrCreate('race', { ...identity, code: 'PUBLIC', isPublic: true })
     )
   }
 
   /** Rejoint un salon précis de la liste publique (par son roomId). */
-  async joinRoom(identity: { name: string; fighter: string }, roomId: string) {
+  async joinRoom(identity: Identity, roomId: string) {
     await this.enter((client) => client.joinById(roomId, identity))
   }
 
@@ -374,8 +381,11 @@ export class Net {
    * Le serveur ne l'accepte que tant qu'on n'a pas démarré : on ne change pas
    * d'armure en pleine course.
    */
-  sendIdentity(identity: { name: string; fighter: string }) {
-    this.room?.send('identity', identity)
+  sendIdentity(identity: Identity) {
+    // Le jeton est délibérément RETIRÉ ici : il n'est utile qu'à l'entrée dans
+    // le salon, où le serveur l'échange une fois contre l'identifiant du compte.
+    // Le renvoyer à chaque changement de guerrier le ferait circuler pour rien.
+    this.room?.send('identity', { name: identity.name, fighter: identity.fighter })
   }
 
   /** L'hôte lance la partie */

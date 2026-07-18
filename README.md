@@ -932,14 +932,120 @@ Le schéma est partagé : Better Auth gère `user`, `session`, `account`,
    d'expliquer un solde qui semble faux, et de repérer après coup un joueur qui
    gagnerait trop vite.
 
+### Gagner des Mon
+
+| Place à l'arrivée | Gain |
+|---|---|
+| 🏆 1ᵉʳ | **100 文** |
+| Tous les autres arrivants | **25 文** |
+| Abandon (pas franchi la ligne) | rien |
+
+C'est le **serveur** qui paie, à la clôture de la course
+([`RaceRoom.payer()`](server/src/RaceRoom.ts)). Le jeu ne demande jamais « donne-moi
+100 Mon » : il relit son solde ensuite et se contente de l'afficher.
+
+Deux garde-fous contre la ferme à monnaie : seuls ceux qui **franchissent la
+ligne** touchent quelque chose (abandonner pour relancer ne rapporte rien), et
+le serveur refuse déjà toute arrivée plus rapide que physiquement possible — une
+course payée coûte donc forcément ses ~35 s minimum.
+
+**Le lien entre la course et le portefeuille** : Colyseus identifie un joueur par
+un `sessionId` qui ne vaut que le temps de la connexion. Le jeu envoie donc son
+jeton de session en entrant dans le salon ; le serveur le vérifie une fois et
+range l'identifiant du compte dans une **Map privée**, jamais dans l'état
+synchronisé — le compte d'un joueur ne regarde pas ses adversaires. Sans jeton
+(hors-ligne), on court quand même : on ne gagne simplement rien.
+
+### Se connecter — et ne rien perdre
+
+Par défaut, le joueur est **anonyme** : il court dès la première seconde, sans
+inscription ni email (ils sont souvent mineurs). Ce compte vit dans le
+navigateur — c'est confortable, mais **perdable** : vider ses données ou changer
+de téléphone, et les Mon s'en vont. L'écran « 👤 Ton compte » le dit clairement
+et propose de se connecter avec Google.
+
+> ⚠️ **La fusion est le moment critique.** Quand un joueur anonyme se connecte,
+> Better Auth crée un NOUVEAU compte et supprime l'ancien. Sans reprise, il
+> perdrait tout **exactement au moment où il décide enfin de s'inscrire**. Le
+> greffon `anonymous` appelle donc `fusionner()` : monnaies additionnées, achats
+> repris (sans doublon), journal transféré, le tout en une transaction.
+> *Vérifié* : 200 Mon + 5 Hisui + une couleur → tout retrouvé sur le compte
+> Google ; et racheter la même couleur des deux côtés ne la duplique pas.
+
+**Le retour de Google** méritait une astuce. Après l'aller-retour, Better Auth
+pose un **cookie** sur le domaine du serveur — or le jeu vit sur un autre
+domaine (Vercel) et fonctionne au **jeton**, pas au cookie, que les navigateurs
+bloquent de plus en plus quand il est tiers.
+
+Google ne renvoie donc pas vers le jeu, mais vers `/api/relais` **sur le
+serveur** : à cet instant le navigateur est sur le domaine du serveur, le cookie
+est de première partie et lisible. Le relais lit la session et renvoie vers le
+jeu avec le jeton dans le **fragment** (`#jeton=…`) — jamais dans un paramètre
+`?`, car un fragment n'est pas envoyé aux serveurs et n'atterrit ni dans les
+journaux ni dans les en-têtes `Referer`. Le jeu le lit puis efface aussitôt la
+barre d'adresse.
+
+> ⚠️ Le relais **vérifie la destination** contre la liste blanche d'origines.
+> Sans ce contrôle, un lien forgé `/api/relais?vers=https://site-pirate`
+> repartirait avec le jeton de session d'un joueur — donc son compte et ses
+> achats. *Vérifié* : destination inconnue → 400, destination absente → 400.
+
+**Sans compte Google**, on peut aussi s'inscrire par **email et mot de passe** :
+même parcours, même fusion, mais tout se joue en un seul appel — pas de
+redirection, donc le serveur rend directement le jeton. Le formulaire vérifie
+la saisie avant d'appeler (email valide, 8 caractères minimum, la même longueur
+que celle exigée par le serveur) : dire « il manque le mot de passe » tout de
+suite vaut mieux qu'un aller-retour réseau pour l'apprendre.
+
+Les refus sont traduits par **code** et non par message : Better Auth renvoie
+`USER_ALREADY_EXISTS_USE_ANOTHER_EMAIL` d'un côté et de la prose anglaise de
+l'autre. Traduire sur la prose, c'est afficher de l'anglais au premier
+reformulage de leur part.
+
+Sans les clés Google, **le bouton reste masqué** et le formulaire email suffit :
+un déploiement sans clés propose moins, il ne tombe pas en panne.
+
+### La boutique
+
+Elle ne vend **que des couleurs** — huit teintes traditionnelles, de 500 文 à
+1 500 文, plus deux qui ne s'obtiennent qu'en jade
+([migration 002](server/migrations/002_boutique.sql)). Les 18 couleurs de la
+palette libre restent gratuites : la boutique n'a **rien retiré** à personne,
+elle ajoute.
+
+> ⚠️ **Pourquoi pas les ornements de tête ?** Parce que dans ce jeu ils ne sont
+> pas décoratifs : ils **décident du style** du guerrier perso (les cornes
+> donnent la peau d'oni, les oreilles la ruse du renard — cf. `CUSTOM_STYLE`).
+> Les vendre reviendrait à vendre un passif, donc de la puissance.
+
+**Le client n'envoie qu'un code.** Jamais un prix, jamais une monnaie, jamais un
+solde : tout est relu dans la base au moment de l'achat, dans une seule
+transaction. C'est la base qui refuse — `where mon >= prix` pour les fonds, la
+clé primaire `(joueur, article)` pour le doublon. *Vérifié* : deux achats du même
+article lancés simultanément → **un seul passe**, un seul déblocage, solde exact.
+
+La valeur d'une couleur (`#rrggbb`) vit **dans la base**, pas dans le jeu :
+ajouter une couleur à vendre est une simple ligne de SQL, sans redéployer le
+client.
+
 ### Le serveur HTTP partagé
 
 Les courses (websocket) et les comptes (HTTP) tiennent sur **un seul port**,
-donc un seul service à déployer. Piège rencontré : Colyseus installe ses
-propres routes HTTP sur le même serveur, et Node appelle tous les écouteurs à la
-suite **sans attendre** un gestionnaire asynchrone — Colyseus répondait 404
-pendant que Better Auth interrogeait encore la base. D'où l'aiguilleur unique
-installé après le `listen()` dans [server/src/index.ts](server/src/index.ts).
+donc un seul service à déployer. Deux pièges rencontrés, tous deux invisibles
+en test :
+
+1. **Colyseus installe ses propres routes HTTP** sur le même serveur, et Node
+   appelle tous les écouteurs à la suite **sans attendre** un gestionnaire
+   asynchrone — Colyseus répondait 404 pendant que Better Auth interrogeait
+   encore la base. D'où l'aiguilleur unique installé après le `listen()`
+   ([server/src/index.ts](server/src/index.ts)).
+2. **CORS.** Le jeu (Vercel) et le serveur (Railway) sont sur deux domaines. Le
+   navigateur envoie donc une requête préparatoire `OPTIONS` avant tout appel
+   authentifié, et bloque en silence si personne n'y répond. `curl` ne fait pas
+   ce préalable : **les tests en ligne de commande passaient alors que le vrai
+   jeu échouait.** On répond désormais à `OPTIONS`, et on renvoie l'origine
+   exacte de l'appelant — jamais `*`, qui ouvrirait l'API à n'importe quel site
+   au nom d'un joueur connecté.
 
 ## 🗺️ Roadmap
 
@@ -962,6 +1068,51 @@ installé après le `listen()` dans [server/src/index.ts](server/src/index.ts).
 
 Japon, ère Sengoku. Le pays brûle. Nobunaga convoque les meilleurs guerriers
 pour le **Tournoi des Voies** : une course à travers forêts de bambous,
-villages en flammes et ponts au clair de lune. Sur la route, des
-**parchemins de techniques** — pour se surpasser, ou saboter les rivaux.
-Premier au torii sacré, une lame légendaire à la clé.
+villages en flammes, ponts au clair de lune et flancs enneigés du Fuji. Sur la
+route, des **parchemins de techniques** — pour se surpasser, ou saboter les
+rivaux. Premier au torii sacré, une lame légendaire à la clé.
+
+### Les quatre biomes 🏞️
+
+La course traverse quatre décors, un par quart de piste (`src/biomes.ts`).
+Ce n'est pas que de l'habillage : sur 1 920 m de couloir uniforme, on perd la
+notion d'avancement. Le chrono dit qu'on progresse, l'œil dit qu'on fait du
+surplace. Quatre décors, c'est quatre repères — « je suis dans les flammes,
+donc à la moitié ».
+
+| Part | Biome | Brume | Portée | Décor |
+|---|---|---|---|---|
+| 0–25 % | **Forêt de bambous** 竹 | vert d'aube | 32 → 88 | Touffes de tiges hautes |
+| 25–50 % | **Village en flammes** 火 | orange, fumée | 26 → **72** | Masures et braises |
+| 50–75 % | **Pont au clair de lune** 月 | indigo | 30 → 92 | Rambardes, lanternes |
+| 75–100 % | **Flancs du Fuji** 雪 | **gris clair** | 38 → **105** | Rochers neigeux, pins |
+
+Trois réglages portent tout le sens :
+
+- **Le village voit le moins loin** (72 m). On y réagit plus vite : c'est le pic
+  de tension, placé quand le joueur maîtrise enfin ses contrôles.
+- **Le Fuji voit le plus loin** (105 m) et c'est le **seul biome clair**. Après
+  trois actes dans le noir, l'arrivée sur la neige est un coup de projecteur —
+  et pour la seule fois de la course, la brume cesse de cacher l'horizon : on
+  voit le torii sacré arriver. Il couvre exactement la zone de sprint final.
+- **Les frontières sont des fractions, pas des mètres.** Si la longueur de course
+  change, le découpage suit tout seul.
+
+Les couleurs se fondent sur les ~5 % précédant chaque frontière (≈ 4 s) : jamais
+de « claquement » de décor. Le **décor**, lui, bascule à mi-fondu et se plante
+d'après le point où il APPARAÎT (85 m devant), pas d'après nos pieds — sans quoi
+un bambou semé pendant qu'on entre dans le village nous arriverait dessus en
+pleine fournaise.
+
+⚠️ **La piste possède la brume, pas `main.ts`.** La couleur de la brume EST le
+ciel (on ne voit jamais l'horizon), et seule la piste sait où l'on se trouve sur
+la course. Le fond de scène la suit à l'identique : sinon une ligne d'horizon
+nette barrerait l'écran là où la brume s'achève.
+
+Hors course, `distance` vaut `-1` : le menu est explicitement la forêt de
+bambous — la ligne de départ. Sans ça, la brume gardait la couleur du dernier
+endroit traversé, et finir sur le Fuji laissait un menu tout blanc.
+
+🚧 **À venir, biome par biome** : les toits du village (chemin aérien =
+raccourci risqué) et les culs-de-sac à escalader (**1,0 s** perdue, le double
+d'un trébuchement).

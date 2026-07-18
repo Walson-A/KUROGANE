@@ -68,6 +68,84 @@ export async function assureProfil(joueur: string, pseudo?: string): Promise<Pro
 }
 
 /**
+ * ————— La fusion de deux comptes —————
+ *
+ * Quand un joueur ANONYME se connecte pour de bon (Google, email…), Better Auth
+ * lui donne un NOUVEAU compte et supprime l'ancien. Sans cette fonction, il
+ * perdrait tout ce qu'il a gagné — c'est le pire moment possible pour perdre
+ * ses Mon : celui où l'on décide enfin de s'inscrire.
+ *
+ * On déplace donc tout : monnaies, couleurs achetées, journal.
+ *
+ * Tout tient dans UNE transaction : à mi-chemin, on aurait un joueur dont les
+ * Mon sont partis mais dont les achats sont restés derrière.
+ */
+export async function fusionner(depuis: string, vers: string): Promise<void> {
+  if (!pool || depuis === vers) return
+
+  const client = await pool.connect()
+  try {
+    await client.query('begin')
+
+    // Le compte d'arrivée existe forcément (créé par la connexion), mais son
+    // profil de jeu, lui, peut ne pas encore exister.
+    await client.query(
+      `insert into profils (joueur) values ($1) on conflict (joueur) do nothing`,
+      [vers]
+    )
+
+    const { rows } = await client.query<{ mon: number; hisui: number; pseudo: string }>(
+      'select mon, hisui, pseudo from profils where joueur = $1',
+      [depuis]
+    )
+    const ancien = rows[0]
+    if (!ancien) {
+      // Rien à reprendre : le joueur anonyme n'avait jamais rien gagné.
+      await client.query('commit')
+      return
+    }
+
+    // Les soldes s'ADDITIONNENT : le compte d'arrivée peut déjà en avoir
+    // (quelqu'un qui se reconnecte sur un compte Google existant depuis un
+    // appareil où il jouait en anonyme).
+    await client.query(
+      `update profils set mon = mon + $1, hisui = hisui + $2,
+              pseudo = case when pseudo = 'Guerrier' then $3 else pseudo end
+        where joueur = $4`,
+      [ancien.mon, ancien.hisui, ancien.pseudo, vers]
+    )
+
+    // Les achats. `on conflict do nothing` : s'il possédait déjà la couleur des
+    // deux côtés, on ne la duplique pas — et on ne le rembourse pas non plus,
+    // ce serait ouvrir une faille (acheter en anonyme, fusionner, recommencer).
+    await client.query(
+      `insert into deblocages (joueur, article, obtenu_le)
+       select $2, article, obtenu_le from deblocages where joueur = $1
+       on conflict (joueur, article) do nothing`,
+      [depuis, vers]
+    )
+
+    // Le journal suit : c'est lui qui permet d'expliquer un solde plus tard.
+    await client.query('update mouvements set joueur = $2 where joueur = $1', [depuis, vers])
+    await client.query(
+      'insert into mouvements (joueur, monnaie, montant, motif) values ($1, $2, $3, $4)',
+      [vers, 'mon', 0, `fusion:${depuis}`]
+    )
+
+    // L'ancien profil disparaît (ses déblocages partent en cascade).
+    await client.query('delete from profils where joueur = $1', [depuis])
+
+    await client.query('commit')
+    console.log(`🔗 comptes fusionnés : ${depuis} → ${vers} (+${ancien.mon} Mon)`)
+  } catch (e) {
+    await client.query('rollback')
+    throw e
+  } finally {
+    client.release()
+  }
+}
+
+/**
  * Ajoute (ou retire) de la monnaie, et laisse une trace dans le journal.
  *
  * Tout se fait en UNE requête : le solde et le journal ne peuvent pas se

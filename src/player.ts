@@ -34,7 +34,7 @@ const GRAVITY = 42 // force qui te ramène au sol
  * On baisse la RÉFÉRENCE plutôt que les multiplicateurs : chaque guerrier garde
  * son identité chiffrée, et Yasuke reste le mètre-étalon à 1,00 partout.
  */
-const JUMP_SPEED = 13.2
+export const JUMP_SPEED = 13.2
 const ATTACK_TIME = 0.26 // durée d'un coup : on ne peut pas réenchaîner avant
 /** Combien de temps on tient sur une paroi (secondes). Exporté : le rival
  *  rejoue la même durée chez nous (cf. opponent.ts). */
@@ -49,6 +49,13 @@ export const MUR_HAUTEUR = 1.6
  */
 export const MUR_PENCHE = 0.18
 const SLIDE_TIME = 0.55 // durée d'une glissade (secondes)
+/**
+ * Durée de la montée quand on escalade une plateforme sans rampe.
+ *
+ * C'est le temps du GESTE, pas le coût en course : le freinage, lui, vit dans
+ * main.ts et dure plus longtemps que la montée (on repart lancé mollement).
+ */
+const ESCALADE_MONTEE = 0.45
 const LANE_LERP = 12 // vitesse de glissement vers la ligne visée
 /**
  * Combien de temps on penche dans le virage.
@@ -76,6 +83,8 @@ export class Player {
   /** 0 = au sol ou en vol ; -1 / +1 = accroché à la paroi de ce côté */
   private mur: -1 | 0 | 1 = 0
   private murT = 0 // temps restant sur la paroi
+  /** L'abscisse de la paroi qu'on longe : bord de piste, ou flanc de plateforme. */
+  private murX = 0
   private rabSaut = 0 // 🕊️ sauts en réserve pour le vol (Saut de la Grue)
   private racine?: THREE.Object3D // le corps articulé, cf. roster.buildFighter
   private tAnim = 0 // l'horloge de la foulée calculée (repli et flottants)
@@ -163,8 +172,44 @@ export class Player {
     this.mesh.rotation.z = 0
   }
 
+  /**
+   * La hauteur du sol SOUS le joueur : 0 sur la piste, le dessus d'une
+   * plateforme quand on court dessus.
+   *
+   * C'est main.ts qui la pose à chaque image, en interrogeant la piste. Le
+   * joueur ne connaît pas les plateformes — il ne connaît qu'un sol, qui se
+   * trouve parfois être à 1,6 m. Toute la mécanique « courir sur le train »
+   * tient dans cette seule valeur.
+   */
+  sol = 0
+
+  /** Temps restant de l'escalade en cours, et le sommet qu'on vise. */
+  private escaladeT = 0
+  private escaladeVers = 0
+
+  /** Est-on en train d'escalader ? (main.ts s'en sert pour freiner) */
+  get escalade() {
+    return this.escaladeT > 0
+  }
+
+  /**
+   * Se hisser par-dessus une plateforme sans rampe.
+   *
+   * On ne rebondit pas, on ne trébuche pas : on PASSE, mais lentement. C'est le
+   * prix de n'avoir pas pris la ligne de la rampe — et à l'arrivée on se
+   * retrouve tout de même en haut, sur la route rapide. La sanction est
+   * temporelle, jamais un cul-de-sac : rester bloqué contre un mur dans une
+   * course serait insupportable.
+   */
+  escalader(hauteur: number): boolean {
+    if (this.escaladeT > 0) return false
+    this.escaladeT = ESCALADE_MONTEE
+    this.escaladeVers = hauteur
+    return true
+  }
+
   get onGround() {
-    return this.mesh.position.y <= 0.001
+    return this.mesh.position.y <= this.sol + 0.001
   }
 
   /** Infos qu'on envoie au serveur pour que l'adversaire nous voie */
@@ -252,9 +297,25 @@ export class Player {
    * Sans lui, la moindre différence de hauteur au contact s'accumulerait d'un
    * bond à l'autre et l'on finirait par dériver — vers le ciel ou vers le sol.
    */
+  /**
+   * Rebondir sur le sommet d'une jarre qu'on vient de briser.
+   *
+   * ⚠️ L'impulsion est FIXE — surtout pas multipliée par le passif de saut.
+   *
+   * L'espacement des jarres est calculé par la graine, donc identique pour tout
+   * le monde : c'est la règle du multi, les deux joueurs voient la même piste.
+   * Mais tant que le rebond suivait `fighter.jump` (0,88 à 1,18 selon le
+   * guerrier), la chaîne n'était calibrée que pour Yasuke. Mesuré : Yasuke
+   * enchaînait 10 jarres sur 10, **les trois autres AUCUNE** — Hana passait
+   * 1,66 m au-dessus de la suivante, hors de portée de lame.
+   *
+   * Le rebond appartient donc à la JARRE, pas aux jambes : c'est un tremplin, et
+   * un tremplin renvoie tout le monde à la même hauteur. Le passif de saut garde
+   * tout son sens là où il est né — les sauts ordinaires, et les murs.
+   */
   rebondSur(hauteur: number) {
     this.mesh.position.y = hauteur
-    this.vy = JUMP_SPEED * this.fighter.jump
+    this.vy = JUMP_SPEED
   }
 
   get enAttaque() {
@@ -270,10 +331,15 @@ export class Player {
    * ————— S'accrocher à la paroi —————
    * Uniquement EN VOL : le mur est une manœuvre aérienne, pas un raccourci
    * qu'on prend au sol. Il faut donc décider de sauter avant d'y arriver.
+   *
+   * `x` dit à QUELLE abscisse se coller. Par défaut le bord de piste, mais le
+   * flanc d'une plateforme est une paroi comme une autre : on n'escalade un mur
+   * que de FACE, alors que de côté on doit pouvoir le longer.
    */
-  accrocheMur(cote: -1 | 1): boolean {
+  accrocheMur(cote: -1 | 1, x = cote * MUR_X): boolean {
     if (this.mur !== 0 || this.onGround) return false
     this.mur = cote
+    this.murX = x
     this.murT = MUR_DUREE
     this.vy = 0 // on se colle : plus de gravité tant qu'on tient
     this.sliding = 0
@@ -317,7 +383,7 @@ export class Player {
       this.murT -= dt
       if (this.murT > 0) {
         const k = Math.min(1, dt * 14)
-        this.mesh.position.x += (this.mur * MUR_X - this.mesh.position.x) * k
+        this.mesh.position.x += (this.murX - this.mesh.position.x) * k
         this.mesh.position.y += (MUR_HAUTEUR - this.mesh.position.y) * Math.min(1, dt * 12)
         // Le corps bascule vers la paroi : c'est ce qui fait « tenir » au mur.
         //
@@ -332,17 +398,30 @@ export class Player {
       this.lacheMur()
     }
 
+    // ————— L'escalade —————
+    // On se hisse : la gravité ne s'applique plus, on monte jusqu'au sommet.
+    // Le corps se redresse contre la paroi le temps de passer.
+    if (this.escaladeT > 0) {
+      this.escaladeT -= dt
+      this.vy = 0
+      this.sliding = 0
+      const k = Math.min(1, dt * 9)
+      this.mesh.position.y += (this.escaladeVers - this.mesh.position.y) * k
+      if (this.escaladeT <= 0) this.mesh.position.y = this.escaladeVers
+      return // ni voie, ni gravité tant qu'on se hisse
+    }
+
     // Glisse en douceur vers la ligne choisie
     const targetX = LANES[this.lane]
     const k = Math.min(1, dt * LANE_LERP * this.fighter.laneSpeed)
     this.mesh.position.x += (targetX - this.mesh.position.x) * k
 
-    // Gravité + saut
+    // Gravité + saut — vers `sol`, qui n'est pas toujours la piste
     this.mesh.position.y += this.vy * dt
-    if (this.mesh.position.y > 0) {
+    if (this.mesh.position.y > this.sol) {
       this.vy -= GRAVITY * dt
     } else {
-      this.mesh.position.y = 0
+      this.mesh.position.y = this.sol
       this.vy = 0
     }
 

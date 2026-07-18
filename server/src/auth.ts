@@ -1,6 +1,7 @@
 import { betterAuth } from 'better-auth'
 import { anonymous, bearer } from 'better-auth/plugins'
 import { pool } from './db.js'
+import { fusionner } from './profil.js'
 
 /**
  * ————— L'AUTHENTIFICATION —————
@@ -31,6 +32,15 @@ import { pool } from './db.js'
  */
 const secret = process.env.AUTH_SECRET
 
+/**
+ * Google est-il configuré ? Il faut les DEUX clés, obtenues dans la Google
+ * Cloud Console. Sans elles, le jeu masque simplement le bouton : mieux vaut
+ * une option en moins qu'un bouton qui mène à une page d'erreur.
+ */
+export const GOOGLE_DISPO = Boolean(
+  process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET
+)
+
 if (!secret && process.env.NODE_ENV === 'production') {
   // En production on refuse de démarrer plutôt que de tourner avec un secret
   // par défaut : un serveur qui marche « quand même » est le pire des cas,
@@ -38,11 +48,21 @@ if (!secret && process.env.NODE_ENV === 'production') {
   throw new Error('AUTH_SECRET manquante — refus de démarrer en production.')
 }
 
+/**
+ * L'adresse PUBLIQUE de ce serveur.
+ *
+ * ⚠️ En local, laisser `PUBLIC_URL` vide : y mettre l'adresse de production
+ * ferait croire à Better Auth qu'il tourne sur Railway. Il refuserait alors le
+ * relais de retour (qui, lui, pointe bien sur localhost) et enverrait Google
+ * rediriger vers la production. Symptôme : le bouton Google « ne fait rien ».
+ */
+export const BASE_URL = process.env.PUBLIC_URL ?? `http://localhost:${process.env.PORT ?? 2567}`
+
 export const auth = pool
   ? betterAuth({
       database: pool,
       secret: secret ?? 'secret-de-developpement-local-uniquement',
-      baseURL: process.env.PUBLIC_URL ?? `http://localhost:${process.env.PORT ?? 2567}`,
+      baseURL: BASE_URL,
 
       emailAndPassword: {
         enabled: true,
@@ -53,17 +73,56 @@ export const auth = pool
         requireEmailVerification: false,
       },
 
+      /**
+       * ————— Se connecter avec Google —————
+       * Activé SEULEMENT si les deux clés sont fournies. Sans elles, le bouton
+       * Google reste masqué côté jeu et tout le reste continue de marcher : un
+       * déploiement sans clés ne doit pas tomber en panne, juste proposer moins.
+       */
+      ...(GOOGLE_DISPO
+        ? {
+            socialProviders: {
+              google: {
+                clientId: process.env.GOOGLE_CLIENT_ID!,
+                clientSecret: process.env.GOOGLE_CLIENT_SECRET!,
+              },
+            },
+          }
+        : {}),
+
       plugins: [
-        // Le compte invisible : on joue d'abord, on s'inscrit si on veut.
-        anonymous(),
+        /*
+         * Le compte invisible : on joue d'abord, on s'inscrit si on veut.
+         *
+         * `onLinkAccount` est LE moment critique : quand un joueur anonyme se
+         * connecte pour de bon, Better Auth crée un nouveau compte et supprime
+         * l'ancien. Sans cette reprise, il perdrait ses Mon et ses achats
+         * exactement au moment où il décide enfin de s'inscrire.
+         */
+        anonymous({
+          onLinkAccount: async ({ anonymousUser, newUser }: any) => {
+            const avant = anonymousUser?.user?.id
+            const apres = newUser?.user?.id
+            if (!avant || !apres) return
+            await fusionner(avant, apres)
+          },
+        }),
         // Le jeu est une application, pas un site : il garde un jeton et
         // l'envoie en en-tête, plutôt que de dépendre des cookies.
         bearer(),
       ],
 
-      // Le jeu est servi depuis un autre domaine (Vercel) que le serveur
-      // (Railway) : sans cette liste, le navigateur refuserait les échanges.
+      /*
+       * Le jeu est servi depuis un autre domaine (Vercel) que le serveur
+       * (Railway) : sans cette liste, le navigateur refuserait les échanges.
+       *
+       * ⚠️ `BASE_URL` en fait partie : le retour de Google passe par notre
+       * propre relais (`/api/relais`), donc par NOTRE domaine. Sans lui dans la
+       * liste, Better Auth refuse sa propre adresse — « Invalid callbackURL »,
+       * et le bouton Google semble ne rien faire.
+       */
       trustedOrigins: [
+        BASE_URL,
         'http://localhost:5173',
         ...(process.env.ORIGINES_AUTORISEES?.split(',').map((o) => o.trim()) ?? []),
       ],
@@ -73,4 +132,24 @@ export const auth = pool
 /** L'authentification est-elle disponible ? (elle exige la base) */
 export function authDispo() {
   return auth !== null
+}
+
+/**
+ * À quel compte appartient ce jeton ? `null` s'il est absent, expiré ou inventé.
+ *
+ * Sert au salon de course, qui reçoit le jeton par websocket et non par un
+ * en-tête HTTP : on le remet donc en forme d'en-tête `Authorization` pour que
+ * Better Auth le vérifie exactement comme n'importe quelle requête — même
+ * chemin de code, donc même niveau de contrôle.
+ */
+export async function compteDe(token: unknown): Promise<string | null> {
+  if (!auth || typeof token !== 'string' || !token) return null
+  try {
+    const session = await auth.api.getSession({
+      headers: new Headers({ authorization: `Bearer ${token}` }),
+    })
+    return session?.user?.id ?? null
+  } catch {
+    return null
+  }
 }

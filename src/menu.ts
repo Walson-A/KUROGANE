@@ -14,6 +14,7 @@ import {
 import { Anim, animerGuerrier } from './anims'
 import { CIBLAGE, EFFETS, PARCHEMINS, TIRAGE, type ParcheminKind } from './parchemin'
 import { cleanName, loadSettings, saveSettings, type Quality, type Settings } from './settings'
+import { montant } from './icones'
 import type { LobbyView, SalonInfo } from './net'
 import { COURSE_LENGTH } from './track'
 import { chargerScores, effacerScores, formaterTemps, MAX_SCORES } from './scores'
@@ -29,6 +30,8 @@ type ScreenName =
   | 'lobby'
   | 'results'
   | 'scores'
+  | 'boutique'
+  | 'compte'
 
 export interface MenuCallbacks {
   onSolo(): void
@@ -54,6 +57,16 @@ export interface MenuCallbacks {
   onChat(text: string): void
   onReplay(): void
   onLeaveSalon(): void
+  /** Le joueur veut ouvrir la boutique (le jeu ira chercher le catalogue) */
+  onBoutique(): void
+  /** Le joueur achete un article — le serveur tranche */
+  onAcheter(code: string): void
+  /** Le joueur veut securiser son compte avec Google */
+  onGoogle(): void
+  /** Le joueur se deconnecte */
+  onDeconnexion(): void
+  /** Creer un compte, ou retrouver le sien, par email */
+  onEmail(mode: 'inscription' | 'connexion', email: string, motDePasse: string): void
 }
 
 /**
@@ -66,6 +79,21 @@ export function escapeHtml(s: string): string {
   const div = document.createElement('div')
   div.textContent = s
   return div.innerHTML
+}
+
+/**
+ * Un article tel que la boutique l'AFFICHE.
+ * Le menu ne calcule aucun prix : il ne fait que montrer ce que le serveur
+ * envoie, et renvoyer le code cliqué.
+ */
+export interface ArticleVu {
+  code: string
+  nom: string
+  categorie: string
+  prix_mon: number | null
+  prix_hisui: number | null
+  valeur: string | null
+  possede: boolean
 }
 
 /** L'aperçu 3D du guerrier sélectionné : sa propre petite scène, son propre canvas. */
@@ -98,6 +126,8 @@ export class Menu {
   private apercu?: THREE.Object3D
   /** Le guerrier montré dans la vignette — il a sa propre foulée. */
   private fighterAffiche: Fighter = ROSTER[0]
+  /** Les couleurs achetées (0xrrggbb), ajoutées aux palettes du vestiaire. */
+  private couleursAchetees: number[] = []
   private anim = new Anim()
 
   private el = {
@@ -137,6 +167,27 @@ export class Menu {
     // ————— Résultats —————
     resultsBody: document.getElementById('resultsBody')!,
     replay: document.getElementById('btnReplay')!,
+    // ————— Boutique —————
+    bourseRow: document.getElementById('bourseRow')!,
+    bourse: document.getElementById('bourse')!,
+    bourseMon: document.getElementById('bourseMon')!,
+    bourseHisui: document.getElementById('bourseHisui')!,
+    boutiqueListe: document.getElementById('boutiqueListe')!,
+    boutiqueVide: document.getElementById('boutiqueVide')!,
+    // ————— Compte —————
+    compteTitre: document.getElementById('compteTitre')!,
+    compteDetail: document.getElementById('compteDetail')!,
+    compteAlerte: document.getElementById('compteAlerte')!,
+    compteAide: document.getElementById('compteAide')!,
+    btnGoogle: document.getElementById('btnGoogle')!,
+    btnDeconnexion: document.getElementById('btnDeconnexion')!,
+    compteOu: document.getElementById('compteOu')!,
+    compteActions: document.getElementById('compteActions')!,
+    compteErreur: document.getElementById('compteErreur')!,
+    mailCompte: document.getElementById('mailCompte') as HTMLInputElement,
+    mdpCompte: document.getElementById('mdpCompte') as HTMLInputElement,
+    btnInscription: document.getElementById('btnInscription')!,
+    btnConnexionMail: document.getElementById('btnConnexionMail')!,
   }
 
   constructor(cb: MenuCallbacks) {
@@ -154,6 +205,8 @@ export class Menu {
       lobby: document.getElementById('scr-lobby')!,
       results: document.getElementById('scr-results')!,
       scores: document.getElementById('scr-scores')!,
+      boutique: document.getElementById('scr-boutique')!,
+      compte: document.getElementById('scr-compte')!,
     }
 
     // — Écran-titre —
@@ -173,6 +226,17 @@ export class Menu {
       if (!confirm('Effacer tous les meilleurs temps ?')) return
       effacerScores(COURSE_LENGTH)
       this.buildScores()
+    })
+
+    document.getElementById('btnBoutique')!.addEventListener('click', () => cb.onBoutique())
+    document.getElementById('btnCompte')!.addEventListener('click', () => this.show('compte'))
+    this.el.btnGoogle.addEventListener('click', () => cb.onGoogle())
+    this.el.btnDeconnexion.addEventListener('click', () => cb.onDeconnexion())
+    this.el.btnInscription.addEventListener('click', () => this.envoyerEmail('inscription'))
+    this.el.btnConnexionMail.addEventListener('click', () => this.envoyerEmail('connexion'))
+    // Entree dans le mot de passe = on valide, comme partout ailleurs
+    this.el.mdpCompte.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') this.envoyerEmail('inscription')
     })
     this.el.cancel.addEventListener('click', () => cb.onCancel())
 
@@ -455,16 +519,36 @@ export class Menu {
 
   /** Câble les deux palettes et le choix d'ornement. */
   private buildForge() {
+    this.remplirPalettes()
+    for (const b of this.el.forgeHead.querySelectorAll<HTMLElement>('button')) {
+      b.addEventListener('click', () => {
+        this.settings.custom.head = b.dataset.h as Head
+        this.editCustom()
+      })
+    }
+  }
+
+  /**
+   * (Re)fabrique les deux palettes : les 18 couleurs libres, puis les couleurs
+   * ACHETÉES à la suite.
+   *
+   * Appelée à nouveau après un achat, pour que la couleur payée apparaisse
+   * tout de suite — sans quoi il faudrait relancer le jeu pour en profiter.
+   */
+  private remplirPalettes() {
     for (const [pal, key] of [
       [this.el.palBody, 'body'],
       [this.el.palBand, 'band'],
     ] as const) {
-      for (const c of SKIN_PALETTE) {
+      pal.replaceChildren()
+      for (const c of [...SKIN_PALETTE, ...this.couleursAchetees]) {
         const sw = document.createElement('button')
         sw.className = 'swatch'
         sw.dataset.c = String(c)
         sw.style.background = cssColor(c)
         sw.setAttribute('aria-label', cssColor(c))
+        // Les couleurs achetées portent une marque : on doit voir ce qu'on a payé
+        if (this.couleursAchetees.includes(c)) sw.classList.add('paye')
         sw.addEventListener('click', () => {
           this.settings.custom[key] = c
           this.editCustom()
@@ -472,12 +556,191 @@ export class Menu {
         pal.appendChild(sw)
       }
     }
-    for (const b of this.el.forgeHead.querySelectorAll<HTMLElement>('button')) {
-      b.addEventListener('click', () => {
-        this.settings.custom.head = b.dataset.h as Head
-        this.editCustom()
-      })
+    this.markForge()
+  }
+
+  /**
+   * Les couleurs débloquées, reçues du serveur en '#rrggbb'.
+   *
+   * ⚠️ C'est le SERVEUR qui dit ce que le joueur possède. Cette liste n'est
+   * qu'un affichage : ajouter une couleur ici à la main ne la ferait
+   * apparaître que sur son propre écran, sans rien débloquer nulle part.
+   */
+  setCouleursDebloquees(hex: string[]) {
+    this.couleursAchetees = hex
+      .map((h) => Number.parseInt(h.replace('#', ''), 16))
+      .filter((n) => Number.isInteger(n) && n >= 0 && n <= 0xffffff)
+    this.remplirPalettes()
+  }
+
+  // ————— La boutique —————
+
+  /**
+   * Affiche la bourse partout où elle se montre : le bouton de l'écran-titre et
+   * l'en-tête de la boutique. `null` = on n'a pas joint le serveur ; on cache
+   * alors la ligne plutôt que d'afficher un faux zéro.
+   */
+  setBourse(mon: number | null, hisui: number | null) {
+    const dispo = mon !== null && hisui !== null
+    this.el.bourseRow.classList.toggle('hidden', !dispo)
+    if (!dispo) return
+
+    // Le bouton du titre : les deux monnaies côte à côte, en petit
+    this.el.bourse.replaceChildren(
+      montant(mon, 'mon', 15),
+      ' · ',
+      montant(hisui, 'hisui', 15)
+    )
+    // L'en-tête de la boutique : une monnaie par pavé, en plus gros
+    this.el.bourseMon.replaceChildren(montant(mon, 'mon', 20))
+    this.el.bourseHisui.replaceChildren(montant(hisui, 'hisui', 20))
+  }
+
+  /** Remplit la boutique. `articles` vient du serveur — lui seul dit les prix. */
+  setBoutique(articles: ArticleVu[]) {
+    const liste = this.el.boutiqueListe
+    liste.replaceChildren()
+    this.el.boutiqueVide.classList.toggle('hidden', articles.length > 0)
+
+    for (const a of articles) {
+      const carte = document.createElement('div')
+      carte.className = 'article' + (a.possede ? ' possede' : '')
+
+      const pastille = document.createElement('span')
+      pastille.className = 'pastille'
+      if (a.valeur) pastille.style.background = a.valeur
+
+      const lignes = document.createElement('span')
+      lignes.className = 'lines'
+      const nom = document.createElement('b')
+      // textContent : le nom vient de la base, on ne fabrique jamais de HTML avec
+      nom.textContent = a.nom
+      const prix = document.createElement('small')
+      if (a.possede) {
+        prix.textContent = 'Acquis'
+      } else if (a.prix_mon !== null) {
+        prix.appendChild(montant(a.prix_mon, 'mon', 14))
+      } else {
+        prix.appendChild(montant(a.prix_hisui ?? 0, 'hisui', 14))
+      }
+      lignes.append(nom, prix)
+
+      const bouton = document.createElement('button')
+      bouton.className = 'ghost'
+      bouton.textContent = a.possede ? '✓' : 'Acheter'
+      bouton.disabled = a.possede
+      if (!a.possede) bouton.addEventListener('click', () => this.cb.onAcheter(a.code))
+
+      carte.append(pastille, lignes, bouton)
+      liste.appendChild(carte)
     }
+  }
+
+  showBoutique() {
+    this.show('boutique')
+  }
+
+  // ————— Le compte —————
+
+  /**
+   * Reflète l'état du compte.
+   *
+   * `anonyme` vient du serveur. Le ton change du tout au tout : un compte
+   * anonyme mérite un avertissement — ses Mon tiennent à un navigateur — là où
+   * un compte Google n'a besoin que d'être constaté.
+   */
+  setCompte(opts: {
+    anonyme: boolean
+    email: string | null
+    googleDispo: boolean
+    connecte: boolean
+  }) {
+    const { anonyme, email, googleDispo, connecte } = opts
+    const formulaire = [
+      this.el.mailCompte.parentElement!,
+      this.el.mdpCompte.parentElement!,
+      this.el.btnInscription,
+      this.el.btnConnexionMail,
+    ]
+    const montrer = (els: HTMLElement[], oui: boolean) =>
+      els.forEach((e) => e.classList.toggle('hidden', !oui))
+
+    this.el.compteErreur.classList.add('hidden')
+
+    if (!connecte) {
+      // Serveur injoignable : ni compte, ni promesse qu'on ne peut pas tenir.
+      this.el.compteTitre.textContent = 'Hors ligne'
+      this.el.compteDetail.textContent = "Le serveur ne répond pas — tes Mon ne sont pas accessibles."
+      this.el.compteAlerte.classList.add('hidden')
+      this.el.btnGoogle.classList.add('hidden')
+      this.el.compteOu.classList.add('hidden')
+      this.el.btnDeconnexion.classList.add('hidden')
+      this.el.compteAide.classList.add('hidden')
+      montrer(formulaire, false)
+      return
+    }
+
+    this.el.compteTitre.textContent = anonyme ? 'Compte invité' : 'Compte connecté'
+    this.el.compteDetail.textContent = anonyme
+      ? 'Tu joues sans inscription. Tes Mon sont gardés côté serveur.'
+      : (email ?? 'Ta progression te suit sur tous tes appareils.')
+
+    this.el.compteAlerte.classList.toggle('hidden', !anonyme)
+    this.el.compteAide.classList.toggle('hidden', !anonyme)
+    // Le bouton Google n'apparaît que s'il MÈNE quelque part : sans les clés
+    // côté serveur, mieux vaut pas de bouton qu'un bouton qui échoue.
+    this.el.btnGoogle.classList.toggle('hidden', !anonyme || !googleDispo)
+    // Le « ou » ne sépare quelque chose que si les DEUX voies sont proposées
+    this.el.compteOu.classList.toggle('hidden', !anonyme || !googleDispo)
+    this.el.btnDeconnexion.classList.toggle('hidden', anonyme)
+    // Déjà connecté : plus rien à saisir
+    montrer(formulaire, anonyme)
+  }
+
+  /**
+   * Valide la saisie AVANT d'appeler le serveur.
+   *
+   * Ce n'est pas une sécurité — le serveur revérifie tout — mais une politesse :
+   * dire « il manque le mot de passe » tout de suite vaut mieux qu'un
+   * aller-retour réseau pour l'apprendre.
+   */
+  private envoyerEmail(mode: 'inscription' | 'connexion') {
+    const email = this.el.mailCompte.value.trim()
+    const mdp = this.el.mdpCompte.value
+
+    if (!email || !email.includes('@')) {
+      this.erreurCompte('Il faut un email valide.')
+      this.el.mailCompte.focus()
+      return
+    }
+    // 8 caractères : la même longueur que celle exigée par le serveur
+    // (minPasswordLength). Les deux doivent rester d'accord.
+    if (mode === 'inscription' && mdp.length < 8) {
+      this.erreurCompte('Le mot de passe doit faire au moins 8 caractères.')
+      this.el.mdpCompte.focus()
+      return
+    }
+    if (!mdp) {
+      this.erreurCompte('Il faut un mot de passe.')
+      this.el.mdpCompte.focus()
+      return
+    }
+
+    this.el.compteErreur.classList.add('hidden')
+    this.cb.onEmail(mode, email, mdp)
+  }
+
+  /** Affiche un refus sous le formulaire. */
+  erreurCompte(texte: string) {
+    this.el.compteErreur.textContent = texte
+    this.el.compteErreur.classList.remove('hidden')
+  }
+
+  /** Vide les champs — après une réussite, on ne laisse pas traîner le mot de passe. */
+  viderFormulaireCompte() {
+    this.el.mailCompte.value = ''
+    this.el.mdpCompte.value = ''
+    this.el.compteErreur.classList.add('hidden')
   }
 
   /** Une retouche du skin : on sauve et on réapplique (aperçu + jeu en direct). */
