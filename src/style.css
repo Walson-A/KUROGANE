@@ -431,23 +431,34 @@ body {
 
 /* ——— ☠️ Senbon empoisonné : tout tangue ———
    On fait onduler le CANVAS et non le HUD : le chrono et les slots doivent
-   rester lisibles, sinon c'est le joueur qu'on rend malade, pas Yasuke. */
+   rester lisibles, sinon c'est le joueur qu'on rend malade, pas Yasuke.
+
+   Le FLOU vient avec : le tangage seul laissait la piste parfaitement nette, on
+   lisait les obstacles à travers sans vraiment être gêné. Un poison doit
+   troubler la vue, pas seulement bercer l'image. Il RESPIRE (1,4 → 3,2 px) au
+   lieu d'être constant : un flou fixe se lit comme un écran cassé, un flou qui
+   va et vient se lit comme un malaise. On reste sous 3,5 px pour que la piste
+   demeure devinable — sinon ce n'est plus une gêne, c'est un bandeau. */
 #game.poison {
-  animation: nausee 1.6s ease-in-out infinite;
+  animation: nausee 1.15s ease-in-out infinite;
 }
 @keyframes nausee {
   0%,
   100% {
     transform: rotate(0deg) scale(1);
+    filter: blur(1.4px) saturate(1.3) hue-rotate(-14deg);
   }
   25% {
-    transform: rotate(1.1deg) scale(1.035);
+    transform: rotate(1.9deg) scale(1.05);
+    filter: blur(3.2px) saturate(1.45) hue-rotate(-22deg);
   }
   50% {
-    transform: rotate(0deg) scale(1.05);
+    transform: rotate(0deg) scale(1.075);
+    filter: blur(2.2px) saturate(1.3) hue-rotate(-14deg);
   }
   75% {
-    transform: rotate(-1.1deg) scale(1.035);
+    transform: rotate(-1.9deg) scale(1.05);
+    filter: blur(3.2px) saturate(1.45) hue-rotate(-22deg);
   }
 }
 
@@ -927,6 +938,90 @@ body {
   border-color: #d6ac5a;
 }
 
+/* ——— Les réglettes de volume ———
+   Elles étaient au rendu brut du navigateur : une poignée de ~12 px, à peu près
+   impossible à attraper au pouce sur un téléphone. La recommandation d'Apple
+   comme celle de Google est de 44 px de cible tactile — c'est ce que vise la
+   poignée de 30 px, entourée du dépassement du rail.
+
+   Il faut TOUT redéclarer par moteur : dès qu'on met `appearance: none`, plus
+   aucun style par défaut ne subsiste, et WebKit et Firefox ne partagent aucun
+   pseudo-élément. Les deux blocs disent donc la même chose deux fois — les
+   fusionner en une règle unique la ferait rejeter en entier par les deux. */
+#overlay input[type='range'] {
+  -webkit-appearance: none;
+  appearance: none;
+  /* Les paddings et bordures de `#overlay input` n'ont pas de sens ici */
+  padding: 0;
+  border: none;
+  background: transparent;
+  width: 100%;
+  /* La zone cliquable ne se limite pas au rail : on prend toute la hauteur */
+  height: 34px;
+  cursor: pointer;
+  touch-action: none; /* sinon le geste part en défilement de page sur mobile */
+}
+
+/* Le rail : la portion déjà réglée est en or, le reste en sombre. Le remplissage
+   vient d'un dégradé piloté par --pct (posé en JS), parce qu'aucun pseudo-élément
+   de progression n'existe sur WebKit. */
+#overlay input[type='range']::-webkit-slider-runnable-track {
+  height: 10px;
+  border-radius: 100px;
+  border: 1px solid #3d4560;
+  background: linear-gradient(
+    to right,
+    #d6ac5a 0%,
+    #d6ac5a var(--pct, 50%),
+    rgba(21, 26, 44, 0.7) var(--pct, 50%),
+    rgba(21, 26, 44, 0.7) 100%
+  );
+}
+#overlay input[type='range']::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background: #f0e8d8;
+  border: 2px solid #d6ac5a;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.45);
+  /* Recentrer la poignée sur un rail de 12 px bordure comprise : (12 − 30) / 2 */
+  margin-top: -9px;
+}
+
+#overlay input[type='range']::-moz-range-track {
+  height: 10px;
+  border-radius: 100px;
+  border: 1px solid #3d4560;
+  background: rgba(21, 26, 44, 0.7);
+}
+/* Firefox, lui, sait remplir tout seul : pas besoin de --pct ici */
+#overlay input[type='range']::-moz-range-progress {
+  height: 10px;
+  border-radius: 100px;
+  background: #d6ac5a;
+}
+#overlay input[type='range']::-moz-range-thumb {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background: #f0e8d8;
+  border: 2px solid #d6ac5a;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.45);
+}
+
+/* Au doigt comme à la souris, la poignée grossit : on sait qu'on l'a saisie */
+#overlay input[type='range']:active::-webkit-slider-thumb {
+  transform: scale(1.12);
+}
+#overlay input[type='range']:active::-moz-range-thumb {
+  transform: scale(1.12);
+}
+#overlay input[type='range']:focus-visible::-webkit-slider-thumb {
+  border-color: #e24b3a;
+}
+
 /* Le sélecteur à 3 positions (qualité graphique) */
 .seg {
   display: grid;
@@ -1299,4 +1394,69 @@ body {
   font-family: ui-monospace, monospace;
   font-size: 0.85rem;
   color: #9aa4c0;
+}
+
+/* ——— 🏆 Le tableau des meilleurs temps ——— */
+.scores {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+  margin: 4px 0 14px;
+  /* Dix lignes ne tiennent pas sur un écran de téléphone : on fait défiler
+     la LISTE, pas la page — le bouton « Effacer » doit rester atteignable. */
+  max-height: 52vh;
+  overflow-y: auto;
+}
+.score {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 11px;
+  border-radius: 9px;
+  background: rgba(21, 26, 44, 0.55);
+  border: 1px solid #2b3350;
+}
+/* Le meilleur temps se détache en or : c'est celui qu'on vient battre */
+.score.premier {
+  border-color: #d6ac5a;
+  background: rgba(214, 172, 90, 0.1);
+}
+.scorerang {
+  flex: none;
+  width: 1.6em;
+  text-align: center;
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: #9aa4c0;
+}
+.scorejp {
+  flex: none;
+  font-family: "Yu Mincho", "Hiragino Mincho ProN", serif;
+  font-size: 1.15rem;
+  color: #e24b3a;
+}
+.scorecorps {
+  flex: 1;
+  text-align: left;
+  min-width: 0; /* sans ça, un pseudo long pousse le chrono hors de la ligne */
+}
+.scorecorps b {
+  display: block;
+  font-size: 0.92rem;
+  color: #f0e8d8;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.scorecorps small {
+  font-size: 0.72rem;
+  color: #6b7594;
+}
+.scoretemps {
+  flex: none;
+  font-family: ui-monospace, monospace;
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: #d6ac5a;
 }

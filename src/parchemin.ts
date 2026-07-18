@@ -132,7 +132,13 @@ export const MIROIR_DUREE = 8
 // possible. C'est le sabotage franc.
 
 // ————— ⛓️ Kusarigama —————
-// La chaîne bride la victime. ×0,7 pendant 2 s → ~0,60 s perdues.
+// La chaîne bride la victime : ×0,7 pendant 2 s → ~0,60 s perdues.
+//
+// Et elle CLOUE AU SOL — plus de saut tant qu'elle tient. Les chaînes traînent
+// par terre à l'écran : les voir et sauter par-dessus quand même ne racontait
+// rien. Le prix, en revanche, est lourd : 2 s sans saut, c'est ~60 m de piste
+// où toute barrière devient un trébuchement forcé. Le sort passe donc devant le
+// trébuchement dans l'échelle des coûts — c'est assumé, pas un oubli.
 export const KUSARIGAMA_FACTEUR = 0.7
 export const KUSARIGAMA_DUREE = 2
 
@@ -142,7 +148,10 @@ export const KUSARIGAMA_DUREE = 2
 // joueur peut s'en sortir — c'est leur intérêt face au Kusarigama, inévitable.
 // Un bot n'a pas d'écran : on traduit en malus d'adresse, il rate ses esquives.
 export const FUMIGENE_DUREE = 2.5
-export const SENBON_DUREE = 3
+// Le poison brouille EN PLUS de faire tanguer (cf. `#game.poison` dans le CSS),
+// et tient une seconde de plus : le tangage seul se subissait sans gêner, on
+// gardait la piste parfaitement nette et on lisait les obstacles à travers.
+export const SENBON_DUREE = 4
 export const MALUS_ADRESSE = 0.35
 
 // ————— 🔮 Onmyōji —————
@@ -182,9 +191,9 @@ export const EFFETS: Record<ParcheminKind, string> = {
     'Le prochain sort reçu repart chez son auteur. Aucun minuteur : elle tient tant qu\'on n\'y touche pas — mais elle immobilise un slot sur deux.',
   the: 'Lave d\'un coup la fumée, le poison et les chaînes.',
   kunai: 'Fait trébucher net, sans esquive possible. Le sabotage franc.',
-  kusarigama: `Bride le rival à ×${n(KUSARIGAMA_FACTEUR)} pendant ${n(KUSARIGAMA_DUREE)} s. Inévitable.`,
+  kusarigama: `Bride le rival à ×${n(KUSARIGAMA_FACTEUR)} et le cloue au sol — plus aucun saut — pendant ${n(KUSARIGAMA_DUREE)} s. Inévitable.`,
   fumigene: `Noircit l'écran du rival pendant ${n(FUMIGENE_DUREE)} s. Il peut encore s'en sortir.`,
-  senbon: `Fait tanguer l'écran du rival pendant ${n(SENBON_DUREE)} s.`,
+  senbon: `Brouille et fait tanguer l'écran du rival pendant ${n(SENBON_DUREE)} s.`,
   onmyoji:
     'Échange vos places. Il ne vise pas : il file tout droit dans ta ligne, à portée infinie, et seuls un rival ou un mur l\'arrêtent.',
 }

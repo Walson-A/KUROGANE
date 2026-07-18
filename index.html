@@ -60,6 +60,7 @@
               <b id="pickName">Yasuke</b>
             </span>
           </button>
+          <button id="btnScores" class="ghost" aria-label="Meilleurs temps">🏆</button>
           <button id="btnOptions" class="ghost" aria-label="Options">⚙️</button>
           <button id="btnHelp" class="ghost" aria-label="Comment jouer">❓</button>
         </div>
@@ -219,6 +220,21 @@
         <div id="helpSorts" class="sorts"></div>
 
         <button class="primary" data-back>OK</button>
+      </section>
+
+      <!-- 🏆 Les meilleurs temps — le tableau est construit en JS depuis
+           scores.ts, jamais écrit en dur ici. -->
+      <section id="scr-scores" class="screen hidden">
+        <header class="head">
+          <button class="back" data-back aria-label="Retour">‹</button>
+          <h2>Meilleurs temps</h2>
+        </header>
+        <p class="lead" id="scoresLead"></p>
+        <div id="scoresBody" class="scores"></div>
+        <div class="row">
+          <button id="btnScoresClear" class="ghost">🗑️ Effacer</button>
+          <button class="primary grow" data-back>OK</button>
+        </div>
       </section>
 
       <!-- 2e écran entraînement : contre combien de rivaux ? (boutons créés en JS) -->

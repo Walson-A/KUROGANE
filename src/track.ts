@@ -13,6 +13,18 @@ const LOOKAHEAD = 85 // les obstacles apparaissent 85 m devant (cachés par la b
 const DESPAWN_Z = 8 // et disparaissent derrière la caméra
 
 /**
+ * La longueur de la course, en mètres. Départ → torii sacré.
+ * Calibrée pour qu'une course propre — aucun parchemin, aucun trébuchement,
+ * aucun martèlement — dure 75 s à la vitesse de croisière.
+ *
+ * Elle vit ici, avec la piste qu'elle décrit, et non dans main.ts : l'écran des
+ * meilleurs temps range ses tableaux SOUS cette valeur (un classement qui
+ * mêlerait deux longueurs ne voudrait rien dire), et il ne peut pas importer
+ * main.ts sans créer une boucle.
+ */
+export const COURSE_LENGTH = 1920
+
+/**
  * Les derniers mètres de la course : le SPRINT FINAL.
  * Aucun obstacle n'y est placé — sur mobile, on ne peut pas swiper pour
  * esquiver ET marteler l'écran pour accélérer en même temps.
@@ -302,10 +314,15 @@ export class Track {
       if (j.kind === 'doree') {
         j.mesh.rotation.y = this.tempsRouleaux * 1.1
         const battement = 1 + Math.sin(this.tempsRouleaux * 3.4) * 0.14
-        // Les deux derniers enfants sont le halo et l'aura (cf. makeJarreMesh)
+        // Les deux derniers enfants sont le halo et le rayon (cf. makeJarreMesh)
         const n = j.mesh.children.length
         j.mesh.children[n - 2].scale.setScalar(battement)
-        j.mesh.children[n - 1].scale.setScalar(battement)
+        // Le rayon respire en INTENSITÉ, pas en taille : le mettre à l'échelle
+        // l'allongerait aussi, et une colonne de lumière qui grandit vers le
+        // ciel se lit comme un sort qu'on lance, pas comme un objet à ramasser.
+        const ray = j.mesh.children[n - 1] as THREE.Mesh
+        const mr = ray.material as THREE.MeshBasicMaterial
+        mr.opacity = (ray.userData.op as number) * battement
       }
       if (j.mesh.position.z > DESPAWN_Z) {
         j.active = false
@@ -799,11 +816,11 @@ function makeJarreMesh(kind: JarreKind): THREE.Group {
    */
   const teinte = doree ? 0xffd98a : 0x9fc4ff
   const halo = new THREE.Mesh(
-    new THREE.CircleGeometry(doree ? 0.62 : 0.5, 20),
+    new THREE.CircleGeometry(doree ? 0.42 : 0.34, 20),
     new THREE.MeshBasicMaterial({
       color: teinte,
       transparent: true,
-      opacity: doree ? 0.4 : 0.22,
+      opacity: doree ? 0.11 : 0.055,
       blending: THREE.AdditiveBlending,
       depthWrite: false,
     })
@@ -811,20 +828,67 @@ function makeJarreMesh(kind: JarreKind): THREE.Group {
   halo.rotation.x = -Math.PI / 2
   halo.position.y = 0.02 // juste au-dessus du sol, sinon il z-fight avec lui
 
-  const aura = new THREE.Mesh(
-    new THREE.SphereGeometry(doree ? 0.56 : 0.48, 12, 10),
+  /*
+   * La bulle qui enveloppait la jarre est remplacée par un RAYON qui monte —
+   * un trait de lumière posé sur elle, comme un jour qui tombe entre deux
+   * nuages. Deux raisons de préférer la colonne à la bulle :
+   *  · elle est VERTICALE, donc elle dépasse du sol et des obstacles, et se
+   *    repère par-dessus la piste bien avant qu'on distingue la poterie ;
+   *  · elle n'entoure pas la jarre, donc elle ne noie plus sa silhouette — on
+   *    voit encore la forme qu'on doit viser.
+   * Faible, volontairement : c'est un repère, pas un phare.
+   */
+  const opRayon = doree ? 0.16 : 0.075
+  const rayon = new THREE.Mesh(
+    new THREE.CylinderGeometry(doree ? 0.26 : 0.2, doree ? 0.12 : 0.1, RAYON_H, 12, 1, true),
     new THREE.MeshBasicMaterial({
       color: teinte,
+      map: texRayon(),
       transparent: true,
-      opacity: doree ? 0.3 : 0.14,
+      opacity: opRayon,
       blending: THREE.AdditiveBlending,
       depthWrite: false,
+      side: THREE.DoubleSide,
     })
   )
-  aura.position.y = 0.4
+  rayon.position.y = RAYON_H / 2
+  // Le battement de la dorée repart de CETTE valeur (cf. update). La recopier
+  // là-bas obligerait à tenir deux chiffres en accord à la main : au premier
+  // réglage oublié, la jarre se remettrait à briller comme avant.
+  rayon.userData.op = opRayon
 
-  g.add(halo, aura)
+  g.add(halo, rayon)
   return g
+}
+
+/** Hauteur du rayon. Au-delà il perce le plafond de brume et se voit de trop loin. */
+const RAYON_H = 2.6
+
+/**
+ * Le dégradé du rayon : dense au pied, éteint au sommet.
+ *
+ * Sans lui, un cylindre translucide est un TUBE — on voit ses deux arêtes et
+ * son bord haut, ça ressemble à un décor raté. C'est le fondu qui transforme la
+ * géométrie en lumière. La texture est fabriquée une fois et partagée par
+ * toutes les jarres : une par jarre, sur des centaines, coûterait cher pour un
+ * résultat rigoureusement identique.
+ */
+let _texRayon: THREE.CanvasTexture | null = null
+function texRayon(): THREE.CanvasTexture {
+  if (_texRayon) return _texRayon
+  const c = document.createElement('canvas')
+  c.width = 1
+  c.height = 64
+  const ctx = c.getContext('2d')!
+  // y=0 en haut de la texture = sommet du cylindre : c'est là qu'on s'éteint.
+  const grad = ctx.createLinearGradient(0, 0, 0, 64)
+  grad.addColorStop(0, 'rgba(255,255,255,0)')
+  grad.addColorStop(0.55, 'rgba(255,255,255,0.35)')
+  grad.addColorStop(1, 'rgba(255,255,255,1)')
+  ctx.fillStyle = grad
+  ctx.fillRect(0, 0, 1, 64)
+  _texRayon = new THREE.CanvasTexture(c)
+  return _texRayon
 }
 
 /**

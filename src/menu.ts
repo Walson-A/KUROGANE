@@ -15,6 +15,8 @@ import { Anim, animerGuerrier } from './anims'
 import { CIBLAGE, EFFETS, PARCHEMINS, TIRAGE, type ParcheminKind } from './parchemin'
 import { cleanName, loadSettings, saveSettings, type Quality, type Settings } from './settings'
 import type { LobbyView, SalonInfo } from './net'
+import { COURSE_LENGTH } from './track'
+import { chargerScores, effacerScores, formaterTemps, MAX_SCORES } from './scores'
 
 type ScreenName =
   | 'title'
@@ -26,6 +28,7 @@ type ScreenName =
   | 'salon'
   | 'lobby'
   | 'results'
+  | 'scores'
 
 export interface MenuCallbacks {
   onSolo(): void
@@ -150,6 +153,7 @@ export class Menu {
       salon: document.getElementById('scr-salon')!,
       lobby: document.getElementById('scr-lobby')!,
       results: document.getElementById('scr-results')!,
+      scores: document.getElementById('scr-scores')!,
     }
 
     // — Écran-titre —
@@ -158,6 +162,18 @@ export class Menu {
     document.getElementById('btnRoster')!.addEventListener('click', () => this.show('roster'))
     document.getElementById('btnOptions')!.addEventListener('click', () => this.show('options'))
     document.getElementById('btnHelp')!.addEventListener('click', () => this.show('help'))
+    // 🏆 Le tableau se REBÂTIT à chaque ouverture : on vient souvent d'y ajouter
+    // une ligne en finissant une course.
+    document.getElementById('btnScores')!.addEventListener('click', () => {
+      this.buildScores()
+      this.show('scores')
+    })
+    document.getElementById('btnScoresClear')!.addEventListener('click', () => {
+      // Effacer des records est irréversible : on demande.
+      if (!confirm('Effacer tous les meilleurs temps ?')) return
+      effacerScores(COURSE_LENGTH)
+      this.buildScores()
+    })
     this.el.cancel.addEventListener('click', () => cb.onCancel())
 
     /*
@@ -375,6 +391,18 @@ export class Menu {
     this.show('title')
   }
 
+  /**
+   * Le mot de fin de course est-il encore à l'écran ?
+   *
+   * main.ts s'en sert pour GELER le décor : tant qu'on lit son chrono, le sol
+   * ne doit plus défiler. On le dérive de l'affichage au lieu d'entretenir un
+   * drapeau en double — un drapeau finirait par mentir le jour où l'on ajoute
+   * un chemin de retour au titre qui oublie de le baisser.
+   */
+  arriveeAffichee(): boolean {
+    return !this.el.banner.classList.contains('hidden')
+  }
+
   /** Un message plein écran : recherche d'adversaire, ligne franchie… */
   showStatus(html: string, cancellable = false) {
     this.el.msg.innerHTML = html
@@ -512,6 +540,72 @@ export class Menu {
    *
    * On construit une fois, au démarrage : le contenu ne change jamais.
    */
+  /**
+   * 🏆 Le tableau des meilleurs temps.
+   *
+   * Construit en DOM plutôt qu'en innerHTML : les noms viennent du joueur (et,
+   * en ligne, d'inconnus). `textContent` les pose tels quels, sans qu'un
+   * pseudo contenant des chevrons puisse devenir du balisage.
+   */
+  private buildScores() {
+    const hote = document.getElementById('scoresBody')
+    const lead = document.getElementById('scoresLead')
+    if (!hote || !lead) return
+
+    const scores = chargerScores(COURSE_LENGTH)
+    const clear = document.getElementById('btnScoresClear')
+    // Rien à effacer quand la table est vide : le bouton ne sert à rien.
+    clear?.classList.toggle('hidden', scores.length === 0)
+
+    if (scores.length === 0) {
+      lead.textContent = `Aucun temps pour l'instant. Franchis le torii une fois et ta ligne s'inscrira ici.`
+      hote.replaceChildren()
+      return
+    }
+    lead.textContent = `Tes ${MAX_SCORES} meilleurs temps sur les ${COURSE_LENGTH} m, gardés sur cet appareil.`
+
+    hote.replaceChildren()
+    scores.forEach((s, i) => {
+      const f = fighterById(s.fighter)
+      const ligne = document.createElement('div')
+      ligne.className = i === 0 ? 'score premier' : 'score'
+
+      const rang = document.createElement('span')
+      rang.className = 'scorerang'
+      // Le podium se lit d'un coup d'œil ; au-delà, le chiffre suffit.
+      rang.textContent = ['🥇', '🥈', '🥉'][i] ?? String(i + 1)
+
+      const jp = document.createElement('span')
+      jp.className = 'scorejp'
+      jp.textContent = f.jp
+
+      const corps = document.createElement('div')
+      corps.className = 'scorecorps'
+      const nom = document.createElement('b')
+      nom.textContent = s.nom
+      const sous = document.createElement('small')
+      // Ce qui rend deux temps comparables : le mode et le nombre d'adversaires.
+      // « rival » fait « rivaux » : le pluriel change le mot entier, on ne peut
+      // pas se contenter de coller une terminaison.
+      const quoi =
+        s.mode === 'ligne'
+          ? '⚔️ en ligne'
+          : s.rivaux > 0
+            ? `🏋️ ${s.rivaux} ${s.rivaux > 1 ? 'rivaux' : 'rival'}`
+            : '🏋️ en solitaire'
+      const quand = s.date ? ` · ${new Date(s.date).toLocaleDateString('fr-FR')}` : ''
+      sous.textContent = `${f.name} · ${quoi}${quand}`
+      corps.append(nom, sous)
+
+      const temps = document.createElement('span')
+      temps.className = 'scoretemps'
+      temps.textContent = formaterTemps(s.temps)
+
+      ligne.append(rang, jp, corps, temps)
+      hote.append(ligne)
+    })
+  }
+
   private buildAideSorts() {
     const hote = document.getElementById('helpSorts')
     if (!hote) return
@@ -686,10 +780,14 @@ export class Menu {
   private markVolume() {
     const pct = Math.round(this.settings.volumeMusique * 100)
     this.el.optVolumeVal.textContent = pct === 0 ? '🔇 coupée' : `${pct} %`
+    this.el.optVolume.style.setProperty('--pct', `${pct}%`)
   }
 
   private markSfx() {
     const pct = Math.round(this.settings.volumeSfx * 100)
     this.el.optSfxVal.textContent = pct === 0 ? '🔇 coupés' : `${pct} %`
+    // C'est ce qui remplit le rail en or jusqu'à la poignée : sur WebKit, aucun
+    // pseudo-élément ne donne la progression, il faut la lui dire (cf. le CSS).
+    this.el.optSfx.style.setProperty('--pct', `${pct}%`)
   }
 }

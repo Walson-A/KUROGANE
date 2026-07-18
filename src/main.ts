@@ -2,7 +2,8 @@ import * as THREE from 'three'
 import './style.css'
 import { Player, LANES } from './player'
 import { Opponent } from './opponent'
-import { Track, SPRINT_ZONE } from './track'
+import { Track, SPRINT_ZONE, COURSE_LENGTH } from './track'
+import { ajouterScore } from './scores'
 import { Input } from './input'
 import { Net, type RemotePlayer, type LobbyView } from './net'
 import { Bot, PROFILS, BOTS_MAX, construireRangees } from './bot'
@@ -30,12 +31,9 @@ import { souffleDeVent, jouerBruit, setVolumeSfx, sonDeSoin } from './sfx'
 import type { Quality } from './settings'
 import { Musique } from './audio'
 
-/**
- * La longueur de la course, en mètres. Départ → torii sacré.
- * Calibrée pour qu'une course propre — aucun parchemin, aucun trébuchement,
- * aucun martèlement — dure 75 s à la vitesse de croisière ci-dessous.
- */
-const COURSE_LENGTH = 1920
+// La longueur de la course vit dans track.ts — le module qui possède la piste.
+// L'écran des meilleurs temps en a besoin lui aussi (sa clé de rangement la
+// porte), et il ne peut pas importer main.ts sans boucler.
 
 /**
  * ————— Le sprint final —————
@@ -369,6 +367,7 @@ const tetesRivaux = Array.from({ length: TETES_RIVAUX }, () => makeCoureur())
 let slots: ParcheminKind[] = []
 let ventFin = 0 // 🌀 le dash court jusqu'à cet instant du chrono
 let kusarigamaFin = 0 // ⛓️ on est bridé jusqu'à cet instant
+let chaineToastT = 0 // anti-spam du message « clouté au sol »
 let armure = 0 // 🛡️ solidité restante de l'armure (0 = pas d'armure)
 let grueFin = 0 // 🕊️ le double saut est armé jusqu'ici
 let miroirFin = 0 // 🪞 la parade est levée jusqu'ici
@@ -2239,6 +2238,17 @@ function crossFinishLine() {
     // On prévient le serveur et on attend le classement (les autres courent encore)
     net.sendFinished(time)
     state = 'fini'
+    // Le temps compte aussi quand il a été couru en ligne : c'est le même torii
+    // et la même longueur. Le tableau garde le mode, pour qu'on sache après coup
+    // ce qui a été couru seul et ce qui a été couru dans la mêlée.
+    ajouterScore(COURSE_LENGTH, {
+      temps: time,
+      nom: menu.settings.name || 'Guerrier anonyme',
+      fighter: menu.settings.fighter,
+      mode: 'ligne',
+      rivaux: rivals.size,
+      date: Date.now(),
+    })
     const restants = [...rivals.values()].filter((r) => !r.finished).length
     menu.showStatus(
       `⛩️ Ligne franchie en <b>${t} s</b> !<br>` +
@@ -2263,7 +2273,21 @@ function crossFinishLine() {
   // En solo on est toujours « arrivé » : c'est la place devant les rivaux qui
   // décide du son, pas le simple fait d'avoir fini.
   jouerBruit(bots.some((b) => b.actif && b.distance >= COURSE_LENGTH) ? 'defaite' : 'victoire')
-  backToMenu(`⛩️ Torii sacré franchi en <b>${t} s</b> !<br>${classement()}<br>${bestLine}`)
+
+  // 🏆 La ligne entre au tableau des meilleurs temps. On l'annonce seulement si
+  // elle y est entrée : dire « 11ᵉ » quand la table n'en garde que 10 serait un
+  // classement fantôme.
+  const { rang } = ajouterScore(COURSE_LENGTH, {
+    temps: time,
+    nom: menu.settings.name || 'Guerrier anonyme',
+    fighter: menu.settings.fighter,
+    mode: 'solo',
+    rivaux: bots.filter((b) => b.actif).length,
+    date: Date.now(),
+  })
+  const rangLine = rang > 0 ? `<br>🏆 ${rang}ᵉ meilleur temps` : ''
+
+  backToMenu(`⛩️ Torii sacré franchi en <b>${t} s</b> !<br>${classement()}<br>${bestLine}${rangLine}`)
 }
 
 /** Le classement final : trié, arrivés d'abord (au rang), puis les abandons. */
@@ -2523,6 +2547,18 @@ new Input(document.body, {
     if (state !== 'course') return
     // Sur la paroi, sauter c'est s'en détacher — elle nous relance en l'air
     if (player.surMur !== 0) return player.lacheMur()
+    // ⛓️ Entravé : les chaînes tombent au sol et t'y retiennent. Le ×0,7 seul
+    // n'expliquait pas ce qu'on voyait à l'écran — des chaînes qui traînent
+    // par terre pendant qu'on saute par-dessus. Maintenant elles CLOUENT.
+    if (time < kusarigamaFin) {
+      // Martelé pendant 2 s, un message par appui noierait le HUD : on ne le
+      // redit qu'au bout d'une demi-seconde.
+      if (time > chaineToastT) {
+        chaineToastT = time + 0.5
+        toast('⛓️ Les chaînes te clouent au sol !')
+      }
+      return
+    }
     donneCoup() // la lame sort ; elle frappera ce qu'on touchera en montant
     const v = player.jump(time < grueFin)
     // ⚡ Le style de Sasuke crépite aussi au décollage, en plus petit
@@ -3155,8 +3191,24 @@ function tick(now?: number) {
     // ⛩️ Ligne d'arrivée !
     if (distance >= COURSE_LENGTH) crossFinishLine()
   } else {
-    // Au menu / en attente / après l'arrivée : le décor défile doucement
-    track.update(dt, state === 'fini' ? 3 : 5)
+    // Au menu / en attente : le décor défile doucement.
+    //
+    // Après l'arrivée, en revanche, il S'ARRÊTE NET. Le laisser glisser donnait
+    // une sensation fausse : la course est finie, le chrono est figé, mais le
+    // sol continuait de filer sous des pieds qui ne courent plus.
+    //
+    // J'avais d'abord mis un freinage progressif, par crainte qu'une coupure
+    // sèche se lise comme un plantage. À l'usage c'est l'inverse : tant que
+    // quelque chose bouge, l'œil croit la course encore en cours. L'arrêt franc
+    // est ce qui DIT que c'est fini.
+    //
+    // Deux conditions, parce qu'il y a deux façons d'arriver :
+    //  · en ligne, on reste en 'fini' le temps que les autres finissent ;
+    //  · en SOLO, backToMenu() repasse en 'menu' dans la seconde — c'est là que
+    //    le décor repartait sous le mot de fin. On se cale donc aussi sur la
+    //    bannière d'arrivée, qui dure exactement tant qu'on lit son chrono.
+    const fige = state === 'fini' || menu.arriveeAffichee()
+    track.update(dt, fige ? 0 : 5)
     player.update(dt)
     if (state === 'fini' && online) for (const r of rivals.values()) r.opp.update(dt, distance)
     speedEl.style.opacity = '0' // pas de rideau de vitesse hors course
