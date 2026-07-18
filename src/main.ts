@@ -467,6 +467,108 @@ function boom(pos: THREE.Vector3) {
   boomFin = time + BOOM_DUREE
 }
 
+// ————— 🛡️ Le bouclier d'acier, façon Protection de Daruk —————
+// Un dôme facetté ambré enveloppe le coureur tant que l'armure tient : on SAIT
+// qu'on est protégé, au lieu de le deviner. Comme dans Breath of the Wild, il
+// réagit de deux façons bien distinctes, et c'est toute la lecture du sort :
+//
+//  · Un choc encaissé, mais l'armure tient → le dôme CLAQUE (flash + sursaut)
+//    et quelques éclats se détachent. Il reste là : « il t'en reste ».
+//  · La dernière plaque cède → volée d'éclats dans toutes les directions,
+//    souffle lumineux, et le dôme DISPARAÎT. Plus rien ne te protège.
+//
+// Deux maillages superposés : un remplissage translucide et un fil de fer qui
+// dessine les facettes. C'est le fil de fer qui fait la signature Daruk.
+const BOUCLIER_R = 1.35
+const boucGeo = new THREE.IcosahedronGeometry(BOUCLIER_R, 1)
+const boucFillMat = new THREE.MeshBasicMaterial({
+  color: 0xff9a3c,
+  transparent: true,
+  opacity: 0,
+  blending: THREE.AdditiveBlending,
+  depthWrite: false,
+})
+const boucLineMat = new THREE.MeshBasicMaterial({
+  color: 0xffd08a,
+  transparent: true,
+  opacity: 0,
+  wireframe: true,
+  blending: THREE.AdditiveBlending,
+  depthWrite: false,
+})
+const boucFill = new THREE.Mesh(boucGeo, boucFillMat)
+const boucLignes = new THREE.Mesh(boucGeo, boucLineMat)
+boucFill.visible = false
+boucLignes.visible = false
+scene.add(boucFill, boucLignes)
+const BOUC_CLAQUE = 0.25 // durée du claquement quand un choc est encaissé
+let boucFlash = 0
+
+/** Un éclat de bouclier qui part en tournoyant. */
+interface Eclat {
+  mesh: THREE.Mesh
+  vx: number
+  vy: number
+  vz: number
+  fin: number
+}
+const ECLAT_VIE = 0.6
+const eclats: Eclat[] = []
+for (let i = 0; i < 26; i++) {
+  // Chacun son matériau : ils doivent pouvoir s'éteindre à leur propre rythme
+  const m = new THREE.Mesh(
+    new THREE.TetrahedronGeometry(0.17),
+    new THREE.MeshBasicMaterial({
+      color: 0xffb055,
+      transparent: true,
+      opacity: 0,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+    })
+  )
+  m.visible = false
+  scene.add(m)
+  eclats.push({ mesh: m, vx: 0, vy: 0, vz: 0, fin: 0 })
+}
+
+/** Fait sauter `nb` éclats de la coque, projetés à `force` mètres/seconde. */
+function briserBouclier(nb: number, force: number) {
+  const p = player.mesh.position
+  let poses = 0
+  for (const e of eclats) {
+    if (poses >= nb) break
+    if (e.mesh.visible) continue
+    // Un point au hasard sur la coque : les éclats partent de la surface
+    const th = Math.random() * Math.PI * 2
+    const ph = Math.acos(2 * Math.random() - 1)
+    const dx = Math.sin(ph) * Math.cos(th)
+    const dy = Math.cos(ph)
+    const dz = Math.sin(ph) * Math.sin(th)
+    e.mesh.position.set(p.x + dx * BOUCLIER_R, 0.85 + dy * BOUCLIER_R, p.z + dz * BOUCLIER_R)
+    e.vx = dx * force
+    e.vy = dy * force + 1.2 // un rien vers le haut : ça retombe joliment
+    e.vz = dz * force
+    e.mesh.rotation.set(Math.random() * 6, Math.random() * 6, Math.random() * 6)
+    e.fin = time + ECLAT_VIE
+    e.mesh.visible = true
+    poses++
+  }
+}
+
+/**
+ * L'armure vient d'encaisser un choc. `brisee` : c'était la dernière plaque.
+ * Les deux cas doivent se lire d'un coup d'œil, sans lire le message.
+ */
+function armureEncaisse(brisee: boolean) {
+  if (brisee) {
+    briserBouclier(20, 5.5) // toute la coque explose…
+    boom(new THREE.Vector3(player.mesh.position.x, 0.85, player.mesh.position.z)) // …dans un souffle
+  } else {
+    boucFlash = time + BOUC_CLAQUE // le dôme claque et tient bon
+    briserBouclier(7, 2.6)
+  }
+}
+
 // ————— 💨 La zone de fumée, COLLÉE à sa victime —————
 // Le nuage gris suit le coureur enfumé pendant toute la durée du sort, en plus
 // du voile d'écran. Deux règles, et elles vont ensemble :
@@ -579,6 +681,43 @@ function updateEffets(dt: number, dz: number) {
       boomMat.opacity = k * 0.85
     }
   }
+
+  // 🛡️ Le dôme : présent tant qu'il reste de la solidité, il respire doucement
+  // et CLAQUE quand il vient d'encaisser. Sa seule présence dit « tu es couvert ».
+  const bouclierOn = armure > 0
+  boucFill.visible = bouclierOn
+  boucLignes.visible = bouclierOn
+  if (bouclierOn) {
+    const p = player.mesh.position
+    boucFill.position.set(p.x, 0.85, p.z)
+    boucLignes.position.copy(boucFill.position)
+    boucLignes.rotation.y += dt * 0.5
+    boucFill.rotation.y = boucLignes.rotation.y
+    const claque = Math.max(0, (boucFlash - time) / BOUC_CLAQUE) // 1 → 0
+    boucFillMat.opacity = 0.1 + Math.sin(time * 3) * 0.02 + claque * 0.5
+    boucLineMat.opacity = 0.28 + claque * 0.6
+    const s = 1 + claque * 0.18 // il enfle une fraction de seconde sous le choc
+    boucFill.scale.setScalar(s)
+    boucLignes.scale.setScalar(s)
+  }
+
+  // 🛡️ Les éclats : ils fusent, retombent et s'éteignent
+  for (const e of eclats) {
+    if (!e.mesh.visible) continue
+    const reste = e.fin - time
+    if (reste <= 0) {
+      e.mesh.visible = false
+      continue
+    }
+    e.mesh.position.x += e.vx * dt
+    e.mesh.position.y += e.vy * dt
+    e.mesh.position.z += e.vz * dt + dz // + dz : ils restent dans le décor qui recule
+    e.vy -= 6 * dt // un peu de gravité, pour qu'ils retombent au lieu de flotter
+    e.mesh.rotation.x += dt * 6
+    e.mesh.rotation.z += dt * 5
+    ;(e.mesh.material as THREE.MeshBasicMaterial).opacity = (reste / ECLAT_VIE) * 0.9
+  }
+
   // 💨 Les zones de fumée : entrée franche, tenue, sortie en fondu ; elles montent
   for (const z of fumeeZones) {
     if (!z.actif) continue
@@ -799,6 +938,7 @@ function subirSort(
     // Le seul sort qui fait trébucher sec. L'armure peut encore l'avaler.
     if (armure > 0) {
       armure = Math.max(0, armure - ARMURE_COUT_PETIT)
+      armureEncaisse(armure === 0) // 🛡️ même lecture que sur un obstacle
       toast('🛡️ Le kunai éclate sur l\'armure !')
       return false
     }
@@ -1011,6 +1151,11 @@ function startRace(seed: number) {
   // 3 s en solo). Le son est synthétisé : aucun fichier à charger.
   souffleDeVent(online ? 5 : 3.2)
   boomMesh.visible = false
+  // 🛡️ Ni dôme ni éclat ne survivent d'une course à l'autre
+  boucFlash = 0
+  boucFill.visible = false
+  boucLignes.visible = false
+  for (const e of eclats) e.mesh.visible = false
   for (const z of fumeeZones) {
     z.actif = false
     z.disque.visible = false
@@ -1549,6 +1694,7 @@ function tick(now?: number) {
         const cout = touche === 'mur' ? ARMURE_COUT_MUR : ARMURE_COUT_PETIT
         armure = Math.max(0, armure - cout)
         stumble = 1.2
+        armureEncaisse(armure === 0) // 🛡️ le dôme claque, ou vole en éclats
         toast(
           armure > 0
             ? '🛡️ L\'armure encaisse — une plaque saute'
