@@ -548,6 +548,25 @@ function rivalAPortee(lane: number) {
 }
 
 /**
+ * Le bot à portée de lame sur cette ligne — la cible du mode entraînement.
+ *
+ * Les bots SONT les rivaux du solo : les priver du corps à corps ferait de
+ * l'entraînement un mode où l'on ne peut pas répéter le geste qui décide les
+ * duels. Mêmes règles que contre un humain, sans le serveur (rien à valider :
+ * tout se passe sur cette machine).
+ */
+function botAPortee(lane: number): Bot | null {
+  if (online) return null
+  for (let i = 0; i < nbBots; i++) {
+    const b = bots[i]
+    if (!b.actif || b.ligne !== lane) continue
+    const ecart = b.distance - distance
+    if (ecart > -2 && ecart <= PVP_PORTEE) return b
+  }
+  return null
+}
+
+/**
  * Un maillon de chaîne de plus, et le gain qui va avec.
  * Une jarre ou un rival valent pareil : c'est le RANG qui paie.
  */
@@ -564,9 +583,13 @@ function encaisseGain() {
 function frappe(lane: number): boolean {
   if (lane < 0 || lane > 2 || !combatActif()) return false
 
+  // La jarre passe en premier : c'est la cible posée là exprès par le niveau,
+  // alors qu'un rival peut dériver sur la ligne par hasard — perdre sa chaîne
+  // parce qu'un bot est passé au mauvais moment serait injuste.
   const jarre = track.jarreDevant(lane)
   const rival = rivalAPortee(lane)
-  if (!jarre && !rival) return false
+  const bot = botAPortee(lane)
+  if (!jarre && !rival && !bot) return false
 
   // Un coup est déjà en cours : le swipe est avalé, mais rien ne part. C'est ce
   // verrou qui empêche de gagner en martelant l'écran sans viser.
@@ -587,9 +610,18 @@ function frappe(lane: number): boolean {
     return true
   }
 
-  // ⚔️ Le rival : on joue le geste (et le rebond) TOUT DE SUITE, mais les
-  // dégâts sont tranchés par le serveur, qui rejuge le coup à l'instant où on
-  // l'a porté. Attendre sa réponse pour bouger rendrait la lame molle.
+  // ⚔️ Un bot (entraînement) : tout est local, le coup porte immédiatement.
+  if (bot) {
+    bot.encaisseCoup(PVP_FREIN)
+    encaisseGain()
+    if (enLAir) player.rebond()
+    toast(chaine >= 2 ? `⚔️ ${bot.profil.nom} ! Chaîne ×${chaine}` : `⚔️ ${bot.profil.nom} touché !`)
+    return true
+  }
+
+  // ⚔️ Le rival en ligne : on joue le geste (et le rebond) TOUT DE SUITE, mais
+  // les dégâts sont tranchés par le serveur, qui rejuge le coup à l'instant où
+  // on l'a porté. Attendre sa réponse pour bouger rendrait la lame molle.
   net.sendPvp(lane)
   if (enLAir) player.rebond()
   return true
