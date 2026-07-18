@@ -525,6 +525,11 @@ function frappe(lane: number): boolean {
   // verrou qui empêche de gagner en martelant l'écran sans viser.
   if (!player.attaquer()) return true
 
+  // Le rebond ne récompense QUE les coups donnés en vol. Il faut donc décider
+  // de sauter avant d'aborder la grappe : c'est ce choix, pris à l'avance, qui
+  // sépare celui qui casse une jarre au passage de celui qui enchaîne.
+  const enLAir = !player.onGround
+
   const { touchee, parchemin } = track.casseJarre(lane)
   if (!touchee) return true
 
@@ -532,7 +537,7 @@ function frappe(lane: number): boolean {
   chaine = Math.min(CHAINE_MAX, chaine + 1)
   chaineT = CHAINE_FENETRE
   speed = Math.max(6, speed * (1 - COUP_COUT) + COUP_GAIN * chaine)
-  player.rebond() // le petit bond qui relance vers la jarre suivante
+  if (enLAir) player.rebond() // relancé vers la jarre suivante
 
   if (parchemin) gagneParchemin(parchemin)
   else if (chaine >= 2) toast(`⚔️ Chaîne ×${chaine}`)

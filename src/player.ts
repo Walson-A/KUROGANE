@@ -11,7 +11,6 @@ export const LANES = [-2.2, 0, 2.2]
  */
 const GRAVITY = 42 // force qui te ramène au sol
 const JUMP_SPEED = 14 // impulsion du saut
-const REBOND_SPEED = 9.5 // le petit bond d'un coup réussi (plus court qu'un saut)
 const ATTACK_TIME = 0.26 // durée d'un coup : on ne peut pas réenchaîner avant
 const SLIDE_TIME = 0.55 // durée d'une glissade (secondes)
 const LANE_LERP = 12 // vitesse de glissement vers la ligne visée
@@ -134,12 +133,16 @@ export class Player {
   }
 
   /**
-   * Le rebond d'un coup réussi : un petit saut, plus court qu'un vrai saut.
-   * C'est LUI qui rend la chaîne possible — on retombe de jarre en jarre sans
-   * jamais toucher le sol, et tant qu'on est en l'air on survole les obstacles.
+   * Le rebond d'un coup porté EN L'AIR : un VRAI saut, exactement celui d'un
+   * swipe vers le haut — mais donné automatiquement par le coup.
+   *
+   * C'est lui qui rend la chaîne possible : on repart de jarre en jarre sans
+   * jamais toucher le sol, et tant qu'on vole on survole les obstacles.
+   * Un coup donné au sol, lui, ne fait pas rebondir — il faut déjà être en
+   * l'air pour enchaîner, donc décider de sauter AVANT d'arriver sur la grappe.
    */
   rebond() {
-    this.vy = REBOND_SPEED * this.fighter.jump
+    this.vy = JUMP_SPEED * this.fighter.jump
   }
 
   get enAttaque() {

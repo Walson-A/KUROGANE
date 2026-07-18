@@ -494,9 +494,9 @@ function buildParcheminPlan(
  * Une jarre isolée ne vaut rien : frapper coûte de la vitesse, et un coup seul
  * ne la rembourse pas. Ce qui paie, c'est la CHAÎNE. Il faut donc que les
  * cibles se suivent d'assez près pour qu'on aille de l'une à l'autre sans
- * retomber : après un rebond on reste en l'air ~0,6 s, soit une quinzaine de
- * mètres à vitesse de croisière. D'où l'espacement de 12 à 15 m — assez serré
- * pour enchaîner, assez large pour rater si on frappe trop tôt.
+ * retomber : un rebond est un vrai saut, donc ~0,67 s en l'air, soit environ
+ * 17 m à vitesse de croisière. D'où l'espacement de 12 à 15 m — on atteint la
+ * suivante avec un peu de marge, mais frapper trop tôt fait retomber court.
  *
  * Une grappe tient sur UNE ligne : on enchaîne tout droit, et le choix « je
  * prends la grappe ou je garde ma trajectoire » reste lisible en une seconde.
