@@ -125,7 +125,7 @@ const DECOUPES = {
  *   mauvais saut d'obstacle.
  */
 function note(action, m) {
-  if (action === 'course' || action === 'courseGenee' || action === 'mur') {
+  if (action === 'course' || action === 'courseGenee') {
     // Boucler est éliminatoire, mais entre deux clips qui bouclent bien, le
     // départage se fait à la VITESSE. On est dans une course : un jogging à
     // côté de sprinteurs se lit comme un coureur à la traîne, même s'il
@@ -395,7 +395,13 @@ for (const fichier of fichiers) {
 }
 
 const clips = {}
-const boucles = new Set(['course', 'courseGenee', 'mur'])
+/*
+ * La course sur mur ne BOUCLE PAS, et n'a pas a boucler : elle se joue une
+ * seule fois, du saut sur la paroi jusqu'au lacher. Le clip dure 0,93 s pour
+ * un passage de 0,95 s (MUR_DUREE) — il tombe presque juste. L'exiger en
+ * boucle le faisait refuser pour rien, et le mur restait sans animation.
+ */
+const boucles = new Set(['course', 'courseGenee'])
 
 for (const [cle, liste] of [...candidats].sort()) {
   const action = cle.split('/')[1]

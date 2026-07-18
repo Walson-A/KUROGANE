@@ -216,7 +216,7 @@ export class RaceRoom extends Room<{ state: RaceState }> {
 
     // ————— Les ACTIONS (saut, ligne, glissade, trébuchement) —————
     // Relayées IMMÉDIATEMENT à tous les autres, avec l'identité de l'auteur.
-    const ACTIONS = ['lane', 'jump', 'slide', 'stumble']
+    const ACTIONS = ['lane', 'jump', 'slide', 'stumble', 'mur']
     this.onMessage('action', (client, data: any) => {
       if (this.state.phase !== 'racing') return
       if (!data || !ACTIONS.includes(data.t)) return

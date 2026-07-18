@@ -36,6 +36,8 @@ export type OppAction =
   | { from: string; t: 'jump'; v: number }
   | { from: string; t: 'slide'; d: number }
   | { from: string; t: 'stumble'; keep: number }
+  // 🧱 Il s'accroche a une paroi : `cote` -1 gauche, +1 droite
+  | { from: string; t: 'mur'; cote: number }
 
 /** Un salon vu depuis la liste publique (getAvailableRooms) */
 export interface SalonInfo {
@@ -398,7 +400,7 @@ export class Net {
   }
 
   /** Envoie une action (saut, esquive, trébuchement) — relayée immédiatement */
-  sendAction(a: { t: 'lane' | 'jump' | 'slide' | 'stumble'; [k: string]: any }) {
+  sendAction(a: { t: 'lane' | 'jump' | 'slide' | 'stumble' | 'mur'; [k: string]: any }) {
     this.room?.send('action', a)
   }
 

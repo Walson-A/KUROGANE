@@ -1927,6 +1927,9 @@ function tenteMur(cote: -1 | 1): boolean {
   if (player.currentLane !== (cote === -1 ? 0 : 2)) return false
   if (!track.murA(distance, cote)) return false
   if (!player.accrocheMur(cote)) return false
+  // Les rivaux doivent le VOIR filer le long de la paroi : c'est la manoeuvre
+  // la plus spectaculaire du jeu, et rien ne la transmettait.
+  if (online) net.sendAction({ t: 'mur', cote })
   jouerBruit('glissade')
   toast('🧱 Au mur !')
   return true

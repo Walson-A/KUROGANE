@@ -36,8 +36,17 @@ const GRAVITY = 42 // force qui te ramène au sol
  */
 const JUMP_SPEED = 13.2
 const ATTACK_TIME = 0.26 // durée d'un coup : on ne peut pas réenchaîner avant
-const MUR_DUREE = 0.95 // combien de temps on tient sur une paroi (secondes)
+/** Combien de temps on tient sur une paroi (secondes). Exporté : le rival
+ *  rejoue la même durée chez nous (cf. opponent.ts). */
+export const MUR_DUREE = 0.95
 const MUR_HAUTEUR = 1.6 // à quelle hauteur on y court
+/**
+ * Le RESTE d'inclinaison qu'ajoute le jeu par-dessus le clip de course sur mur.
+ * Exporté : le rival penche pareil chez nous (cf. opponent.ts).
+ * C'est le chiffre à retoucher si la pose au mur ne plaît pas — le clip, lui,
+ * apporte déjà 0,48 rad.
+ */
+export const MUR_PENCHE = 0.18
 const SLIDE_TIME = 0.55 // durée d'une glissade (secondes)
 const LANE_LERP = 12 // vitesse de glissement vers la ligne visée
 /**
@@ -83,6 +92,9 @@ export class Player {
    * le saut prime sur le virage, et le virage sur la course.
    */
   private action(): Action {
+    // 🧱 La paroi prime sur tout : on y court à l'horizontale, ce n'est ni un
+    // saut ni une glissade. Le clip dure 0,93 s pour un passage de 0,95 s.
+    if (this.mur !== 0) return 'mur'
     if (this.sliding > 0) return 'glissade'
     if (!this.onGround) return 'saut'
     if (this.vireT > 0) return this.vire < 0 ? 'virageG' : 'virageD'
@@ -293,8 +305,8 @@ export class Player {
     this.tAnim += dt
     this.vireT = Math.max(0, this.vireT - dt)
     // Le mouvement suit l'ÉTAT, pas une horloge : au sol on court, en l'air on
-    // joue le saut, au ras du sol la glissade. Le lecteur enchaîne en fondu.
-    // (Sur le mur, action() rend 'saut' — pas de clip dédié, mais c'est déjà en l'air.)
+    // joue le saut, au ras du sol la glissade, sur la paroi la course de mur.
+    // Le lecteur enchaîne en fondu.
     animerGuerrier(this.racine, this.fighter, this.anim, this.action(), dt, this.tAnim)
 
     // ————— Accroché à la paroi —————
@@ -306,8 +318,13 @@ export class Player {
         const k = Math.min(1, dt * 14)
         this.mesh.position.x += (this.mur * MUR_X - this.mesh.position.x) * k
         this.mesh.position.y += (MUR_HAUTEUR - this.mesh.position.y) * Math.min(1, dt * 12)
-        // Le corps bascule vers la paroi : c'est ce qui fait « tenir » au mur
-        this.mesh.rotation.z += (this.mur * 0.55 - this.mesh.rotation.z) * k
+        // Le corps bascule vers la paroi : c'est ce qui fait « tenir » au mur.
+        //
+        // ⚠️ Volontairement DISCRET depuis qu'il y a un vrai clip de course sur
+        // mur : celui-ci penche déjà le buste de 0,48 rad à lui seul. Les 0,55
+        // d'origine, calés à l'époque où le corps restait droit, portaient le
+        // total à 59° — le coureur basculait presque à l'horizontale.
+        this.mesh.rotation.z += (this.mur * MUR_PENCHE - this.mesh.rotation.z) * k
         this.sliding = 0
         return // ni voie, ni gravité, ni glissade tant qu'on tient
       }

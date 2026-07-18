@@ -18,6 +18,7 @@ import { Anim, animerGuerrier, clipDe, type Action } from '../src/anims.ts'
 /** La pose de garde attendue pour l'épaule armée (cf. ARME_EPAULE dans anims). */
 const ARME_EPAULE_ATTENDUE = new THREE.Quaternion().setFromEuler(new THREE.Euler(-0.3, 0, 0))
 import { ROSTER, buildFighter, customFighter, fighterById, DEFAULT_CUSTOM, type Corps, type Fighter } from '../src/roster.ts'
+import { MUR_PENCHE } from '../src/player.ts'
 
 let echecs = 0
 function verifier(titre: string, ok: boolean, detail = '') {
@@ -404,6 +405,40 @@ console.log('\n————— Le perso « + » herite du guerrier de son style 
       a === null ? 'aucun saut' : a === b ? '' : 'ce n\'est pas le meme clip'
     )
   }
+}
+
+console.log('\n————— La course sur mur —————')
+{
+  const f = PERSOS[0]
+  const clip = clipDe(f, 'mur')
+  // Elle est a la RACINE : elle doit servir a tout le monde, sans exception.
+  verifier('tout le monde a la course sur mur', PERSOS.every((p) => clipDe(p, 'mur') !== null))
+  // Le clip dure 0,93 s pour un passage de 0,95 s (MUR_DUREE) : il tient tout
+  // le temps qu'on reste accroche, sans avoir a boucler.
+  verifier(
+    'le clip couvre le passage sur la paroi',
+    clip !== null && clip.duree >= 0.85 && clip.duree <= 1.0,
+    clip ? `${clip.duree.toFixed(2)} s pour 0,95 s au mur` : 'aucun clip'
+  )
+  /*
+   * Le clip penche DEJA le buste. Le jeu ajoute MUR_PENCHE par-dessus : la
+   * somme doit rester lisible. A 0,48 + 0,55 (l'ancienne valeur) on montait a
+   * 59°, et le coureur basculait presque a l'horizontale.
+   */
+  const { racine, corps } = corpsDe(f)
+  const anim = new Anim()
+  let propre = 0
+  for (let i = 0; i < 60; i++) {
+    animerGuerrier(racine, f, anim, 'mur', (clip?.duree ?? 1) / 60, i / 60)
+    const z = new THREE.Euler().setFromQuaternion(corps.torse.quaternion, 'ZYX').z
+    if (Math.abs(z) > Math.abs(propre)) propre = z
+  }
+  const total = Math.abs(propre) + MUR_PENCHE
+  verifier(
+    'l\'inclinaison totale au mur reste lisible',
+    total < 0.8,
+    `${Math.abs(propre).toFixed(2)} (clip) + ${MUR_PENCHE} (jeu) = ${total.toFixed(2)} rad, ${((total * 180) / Math.PI).toFixed(0)}°`
+  )
 }
 
 console.log('\n————— Le repli quand le mouvement manque —————')

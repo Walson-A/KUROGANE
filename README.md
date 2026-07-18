@@ -288,6 +288,26 @@ Le contrôle en garde la trace, et il **déduit le sens du rig** au lieu de le
 figer : quand la convention a changé, tous les contrôles d'angle ont basculé
 d'un coup sans qu'aucun ne soit réellement faux. Ils s'adaptent désormais.
 
+### 🧱 La course sur mur
+
+`Wall Run.fbx` est à la **racine** : elle sert donc à tout le monde, quel que
+soit le guerrier.
+
+Elle avait d'abord été **refusée** — la cuisson exigeait qu'elle boucle, et son
+raccord était à 8,5×. C'était une exigence déplacée : on ne court pas sur une
+paroi en rond. Elle se joue **d'un trait**, du saut sur le mur jusqu'au lâcher,
+et ses **0,93 s** couvrent presque exactement les **0,95 s** de `MUR_DUREE`.
+
+Le rival la montre aussi : la manœuvre passe désormais par le réseau
+(`{ t: 'mur', cote }`), relayée telle quelle par le serveur. Rien ne la
+transmettait, alors que c'est la plus spectaculaire du jeu.
+
+> ⚠️ **Le clip penche déjà le buste de 0,48 rad.** Le jeu ajoutait 0,55 par
+> dessus — réglés à l'époque où le corps restait droit, faute d'animation — ce
+> qui portait le total à **59°** : le coureur basculait presque à l'horizontale.
+> `MUR_PENCHE` est descendu à **0,18**, soit 38° au total. C'est le seul chiffre
+> à retoucher si la pose ne plaît pas.
+
 ### 🕳️ Le garde-fou du sol
 
 Les mouvements sont joués par un corps aux proportions qui ne sont pas les

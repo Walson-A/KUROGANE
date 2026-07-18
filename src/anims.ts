@@ -29,6 +29,7 @@ export type Action =
   | 'virageD'
   | 'impact'
   | 'attaque'
+  | 'mur'
 
 /**
  * Les gestes qui se SUPERPOSENT à la foulée au lieu de la remplacer.
@@ -217,6 +218,8 @@ const EN_BOUCLE: Record<Action, boolean> = {
   virageD: false,
   impact: false,
   attaque: false,
+  // La course sur mur se joue d'un trait, du saut sur la paroi au lacher.
+  mur: false,
 }
 
 /** Les articulations du haut du corps — celles que pilote un geste superposé. */

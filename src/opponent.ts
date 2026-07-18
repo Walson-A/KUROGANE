@@ -1,5 +1,5 @@
 import * as THREE from 'three'
-import { LANES, VIRAGE_TEMPS } from './player'
+import { LANES, MUR_DUREE, MUR_PENCHE, VIRAGE_TEMPS } from './player'
 import { NameTag } from './nametag'
 import { buildFighter, clearFighter, cssColor, fighterById, type Fighter } from './roster'
 import { Anim, animerGuerrier, type Action } from './anims'
@@ -68,8 +68,13 @@ export class Opponent {
    */
   presse = false
 
+  /** 🧱 Ce qu'il lui reste à courir sur la paroi (secondes) */
+  private murT = 0
+  private murCote: -1 | 1 = 1
+
   /** Le mouvement que réclame son état courant (cf. Player.action). */
   private action(): Action {
+    if (this.murT > 0) return 'mur'
     if (this.stumbleT > 0) return 'courseGenee'
     if (this.sliding || this.slideTimer > 0) return 'glissade'
     if (this.mesh.position.y > 0.001) return 'saut'
@@ -128,9 +133,11 @@ export class Opponent {
     this.slideTimer = 0
     this.stumbleT = 0
     this.vireT = 0
+    this.murT = 0
     // Sur SA ligne de la grille, à la même hauteur que nous : une vraie ligne de départ
     this.mesh.position.set(LANES[lane], 0, 0)
     this.mesh.scale.y = 1
+    this.mesh.rotation.z = 0
     this.mesh.visible = false
   }
 
@@ -184,6 +191,12 @@ export class Opponent {
       // …et il clignote le temps de se relever, comme chez lui
       this.stumbleT = 1.2
       this.anim.declencher('impact') // 😖 on le voit encaisser
+    } else if (a.t === 'mur') {
+      // 🧱 Il file le long d'une paroi. On ne rejoue PAS sa trajectoire : sa
+      // position continue d'arriver par le reseau. On ne joue que le mouvement,
+      // et on penche son corps du bon cote comme chez lui.
+      this.murT = MUR_DUREE
+      this.murCote = a.cote < 0 ? -1 : 1
     }
   }
 
@@ -228,6 +241,11 @@ export class Opponent {
     // seraient au pas cadencé comme des soldats.
     this.tAnim += dt
     this.vireT = Math.max(0, this.vireT - dt)
+    this.murT = Math.max(0, this.murT - dt)
+    // Le corps bascule vers la paroi, puis se redresse — meme inclinaison que
+    // chez le joueur (cf. player.update).
+    const penche = this.murT > 0 ? this.murCote * MUR_PENCHE : 0
+    this.mesh.rotation.z += (penche - this.mesh.rotation.z) * Math.min(1, dt * 14)
     animerGuerrier(this.racine, this.fighter, this.anim, this.action(), dt, this.tAnim)
 
     // ————— L'extrapolation —————
