@@ -599,6 +599,26 @@ export function buildFighter(f: Fighter, ghost = false): THREE.Object3D[] {
     brasD.main.add(fabriquerArme(d.arme, matAccent, matFer, ghost))
   }
 
+  /*
+   * ————— ⚠️ LE DEMI-TOUR : à lire avant de toucher aux positions —————
+   *
+   * Tout ce corps est modelé FACE À +Z : le masque et le menpo sont posés en
+   * z positif, tandis que les queues, l'écharpe, la cape et le pan de capuche
+   * sont en z négatif — leurs commentaires disent bien « en arrière ».
+   *
+   * Mais le jeu fait avancer le coureur vers -Z : le décor défile vers +Z et
+   * sort derrière la caméra. Sans ce demi-tour, le guerrier court à reculons —
+   * ses queues lui battaient devant le nez et son visage était dans son dos.
+   *
+   * On tourne donc la racine plutôt que de déplacer trente pièces une à une :
+   * une seule ligne, et rien ne peut être oublié en chemin.
+   *
+   * 🔗 `tools/cuire-anims.mjs` en dépend : Mixamo modèle AUSSI face à +Z, donc
+   * les deux repères coïncident et la cuisson ne retourne rien. Enlever ce
+   * demi-tour sans toucher à la cuisson ferait courir tout le monde à l'envers.
+   */
+  racine.rotation.y = Math.PI
+
   const corps: Corps = {
     bassin, torse, tete, brasG, brasD, jambeG, jambeD,
     porteArme: d.arme !== 'aucune', flottants,

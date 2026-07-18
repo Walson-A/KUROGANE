@@ -95,7 +95,13 @@ kurogane/
 │   ├── bot.ts          Les rivaux d'entraînement : esquive scriptée, parchemins
 │   ├── net.ts          La connexion au serveur : rejoindre, envoyer, recevoir
 │   ├── input.ts        Clavier + swipes + double-tap + martèlement du sprint
+│   ├── anims.ts        🎞️ Le lecteur des mouvements importés (Mixamo reciblé)
+│   ├── anims-cuites.json  Les mouvements, cuits — NE PAS ÉDITER À LA MAIN
 │   └── style.css       L'habillage de l'interface
+├── animation/          Les .fbx Mixamo déposés (la SOURCE des mouvements)
+├── tools/
+│   ├── cuire-anims.mjs    La cuisson : .fbx → anims-cuites.json
+│   └── verifier-anims.ts  Le contrôle anatomique des mouvements reciblés
 └── server/
     └── src/
         ├── index.ts    Démarrage du serveur (port 2567)
@@ -105,6 +111,160 @@ kurogane/
 `roster.ts` est la **source de vérité unique** : le menu, le joueur, le rival et
 l'aperçu 3D lisent tous la même fiche. Pour ajouter un guerrier, il suffit
 d'ajouter une entrée dans `ROSTER` — le reste du jeu suit tout seul.
+
+## 🎞️ Les animations : du Mixamo sur des boîtes
+
+Les mouvements viennent de `.fbx` Mixamo déposés dans `animation/`. Ils sont
+exportés **sans peau** : 65 os, aucun maillage. Impossible de les afficher tels
+quels — nos guerriers sont des empilements de boîtes montés par `buildFighter`.
+
+D'où le **reciblage**. On ne recopie pas les rotations Mixamo (leurs os n'ont ni
+la même pose de repos ni les mêmes proportions que nos boîtes) : on lit la
+**direction** de chaque membre dans le monde, et on cherche la rotation qui
+pointe notre boîte dans ce sens-là. Ça marche quelles que soient les
+proportions, et ça tient dans dix articulations.
+
+### Pourquoi cuire hors ligne
+
+Les 21 fichiers pèsent **8,7 Mo**, plus 200 Ko de `FBXLoader` dans le bundle.
+Une fois cuits : **26 Ko compressés** — 350 fois moins. Le jeu garde sa promesse,
+rien de lourd à télécharger sur mobile.
+
+```bash
+npm run anims        # recuit animation/*.fbx → src/anims-cuites.json
+npm run anims:test   # contrôle anatomique (à lancer après toute recuisson)
+```
+
+### La règle des dossiers
+
+`animation/hana/` n'anime que Hana ; à la **racine**, ça sert à tout le monde.
+Le perso « + » cherche d'abord son ornement (`perso/aucun`, `perso/kitsu`,
+`perso/oni2`), puis le fonds commun `perso/`, puis la racine.
+
+Personne ne peut se retrouver figé : quand un mouvement manque — le perso « + »
+n'a pas de saut — le guerrier **retombe sur l'ancienne foulée calculée**.
+
+> Les **bots d'entraînement** (`bot.ts`) gardent leur maillage simple : ils n'ont
+> pas de corps articulé, donc rien à animer. Seuls le joueur et les rivaux en
+> ligne jouent ces mouvements.
+
+### 🔥 La foulée qui s'emballe
+
+Sous le **Souffle de Vent** et dans le **sprint final**, le coureur passe en
+`courseRapide`.
+
+Attention au piège : `Fast Run` est déjà la foulée de **tout le monde, en
+permanence**. Lui « mettre Fast Run » sur ces deux moments n'aurait donc rien
+changé à l'écran. Ce qui se voit, c'est la **cadence** : le même cycle joué à
+**1,35×**. Ce chiffre n'est pas au jugé — c'est exactement le gain du Souffle de
+Vent (`VENT_BOOST = 0,35`), donc les pieds ne patinent pas et ne courent pas
+devant le coureur.
+
+Le jour où un vrai clip de sprint atterrit dans un dossier, il est pris
+automatiquement : `courseRapide` cherche d'abord un fichier à elle, et ne
+retombe sur la course normale accélérée qu'à défaut.
+
+La **gêne l'emporte sur la hâte** : empoisonné, on titube même porté par le vent
+— sinon un sort offensif se verrait annulé à l'écran. Et les rivaux entrent dans
+le sprint à **leur** distance, pas à la nôtre : dans un peloton de dix, chacun
+son tour.
+
+### Les gestes qui se superposent
+
+🔥 **Le lancer** part sur le **portail, le senbon, la fumigène et le kunai** —
+les quatre sorts qui quittent la main. Les sorts qu'on se jette à soi-même
+(armure, thé, grue) n'ont rien à lancer.
+
+Un coureur qui jette un sort **ne cesse pas de courir**. Le lancer, la frappe et
+l'encaissement ne sont donc pas des mouvements à part entière : ce sont des
+**gestes du haut du corps**, posés par-dessus la foulée. Les jambes continuent,
+seuls le buste, la tête et les bras jouent le geste — sinon le lanceur patinerait
+sur place au milieu de la piste.
+
+Pendant un geste, le **verrou du bras armé se relâche** : le garder tiendrait la
+garde et écraserait le lancer qu'on vient de déclencher.
+
+L'encaissement se déclenche sur le **front montant** de `stumble`, guetté à un
+seul endroit de la boucle — plutôt qu'aux cinq sources qui font trébucher (mur,
+kunai, coup d'un rival, armure entamée…), dont une aurait fini par être oubliée.
+
+### Ce que le nom du fichier ne dit pas
+
+Un nom de fichier ment ; la courbe des os, non. La cuisson **mesure** chaque
+clip et départage sur les faits :
+
+- **une course doit boucler.** On compare la pose d'arrivée à celle de départ,
+  rapportée à l'écart entre deux images. `Running.fbx` saute de 2,6 images à la
+  reprise — et pour cause, ce n'est pas une course : les hanches y tombent de 98
+  à 12 et dérivent de 436 sur le côté. C'est une roulade. Elle est **refusée**.
+- **entre deux clips qui bouclent, le plus rapide gagne.** Hana avait hérité de
+  `Run.fbx`, un jogging : elle levait les jambes deux fois moins haut que les
+  autres et se serait lue comme une coureuse à la traîne, alors qu'elle avance à
+  la même allure.
+- **un saut doit avancer.** `Joyful Jump` est un saut de joie sur place ; c'est
+  `Jump (2)` qui franchit l'obstacle.
+- **le côté d'un virage se mesure.** Hana a deux fichiers nommés `Running Arc`
+  et `Running Arc (1)` — les noms ne disent rien. C'est la **dérive latérale des
+  hanches** qui tranche. Là où Mixamo nomme le côté (`Arc Left` / `Arc Right`),
+  la mesure tombe d'accord avec le nom : de quoi lui faire confiance ailleurs.
+- **une attaque doit frapper devant.** Dans les 7,57 s de `Hell Slammer`, la
+  main droite ne passe devant la hanche qu'**une seule fois** : de 31 unités
+  derrière à 40 devant, entre 0,80 s et 1,08 s. On ne garde que ça — joué en
+  **0,26 s, soit exactement `ATTACK_TIME`**. Ce n'est pas décoratif : le jeu
+  autorise une frappe toutes les 0,26 s, et en enchaînant les jarres le geste
+  était relancé avant d'avoir fini. Il ne montrait jamais que son élan et
+  bégayait.
+- **un clip trop long est taillé autour de son geste.** `Fireball` dure 3,37 s :
+  la main recule jusqu'à 1,5 s, se projette à 1,90 s, puis récupère. On garde
+  1,35 → 2,45 s, joué une fois et demie plus vite. `Hell Slammer` dure 7,57 s
+  pour une frappe qui en dure 0,26 dans le jeu : on ne garde que le coup.
+
+### Le contrôle anatomique
+
+Le reciblage est de la déduction : une erreur de repère et le guerrier court les
+**genoux à l'envers**, sans qu'aucun typage ne bronche. `npm run anims:test`
+joue les clips pour de vrai et mesure le squelette obtenu — les genoux se
+replient-ils derrière, les coudes devant, les pieds touchent-ils le sol, les
+bras balancent-ils à l'opposé des jambes, le bassin reste-t-il à hauteur d'homme.
+
+C'est ce contrôle qui a établi le repère : le coureur avance vers **−Z** (le
+décor défile vers +Z et sort derrière la caméra) et son buste se penche dans le
+sens de la marche. Donc −Z devant, +Z derrière.
+
+### 🔄 Le demi-tour
+
+Tout le corps est modelé **face à +Z** : masque et menpo en z positif, queues,
+écharpe, cape et pan de capuche en z négatif — leurs commentaires disent bien
+« en arrière ».
+
+Mais le jeu fait avancer le coureur vers **−Z**. Sans correction, le guerrier
+courait **à reculons** : les queues de kitsune lui battaient devant le nez et
+son visage était dans son dos.
+
+`buildFighter` tourne donc la **racine** d'un demi-tour, plutôt que de déplacer
+trente pièces une à une — une seule ligne, et rien ne peut être oublié. Mixamo
+modelant lui aussi face à +Z, les deux repères coïncident et **la cuisson ne
+retourne plus rien**. ⚠️ Les deux vont ensemble : toucher à l'un sans l'autre
+fait courir tout le monde à l'envers.
+
+Le contrôle en garde la trace, et il **déduit le sens du rig** au lieu de le
+figer : quand la convention a changé, tous les contrôles d'angle ont basculé
+d'un coup sans qu'aucun ne soit réellement faux. Ils s'adaptent désormais.
+
+### 🕳️ Le garde-fou du sol
+
+Les mouvements sont joués par un corps aux proportions qui ne sont pas les
+nôtres : là où le personnage Mixamo rase le sol, nos boîtes le traversent. La
+**glissade** était la pire — mains et bassin passaient jusqu'à **16 cm sous la
+piste**, et le coureur semblait à moitié enterré.
+
+Plutôt que de retoucher chaque clip, on relève le bassin de ce qui dépasse.
+C'est un filet : il ne fait rien quand tout va bien, et aucun mouvement futur
+ne pourra enfoncer un guerrier dans le décor.
+
+On ne sonde que les **membres solides**. Les queues, capes et écharpes traînent
+volontiers plus bas : les inclure relèverait le corps entier pour sauver un
+bout de tissu, et la glissade se jouerait debout.
 
 ## 🎌 Les salons — jouer jusqu'à 10
 
@@ -494,6 +654,18 @@ zone est `SPRINT_ZONE` dans [`src/track.ts`](src/track.ts), partagée avec le
 générateur d'obstacles pour que les deux ne puissent pas se désynchroniser.
 
 ## 📜 Les parchemins
+
+### 📖 L'aide, qui ne peut pas mentir
+
+Les dix fiches s'affichent dans l'écran **Comment jouer** — depuis le ❓ du menu
+principal, et depuis le **📜 du salon**, où l'on revient en refermant : personne
+n'a à quitter la partie pour aller lire une fiche.
+
+Elles ne sont **pas écrites dans le HTML**. `EFFETS`, dans
+[`parchemin.ts`](src/parchemin.ts), vit sous les constantes de calibrage et les
+**calcule** au lieu de les recopier : « +35 % pendant 1,5 s » sort de
+`VENT_BOOST` et `VENT_DUREE`. Retoucher un réglage corrige donc l'aide toute
+seule — un texte figé aurait menti au joueur dès le premier ajustement.
 
 On ramasse des rouleaux sur la piste (environ un toutes les **7 secondes**).
 **Tous les rouleaux se ressemblent** : on ne sait ce qu'on a décroché qu'une

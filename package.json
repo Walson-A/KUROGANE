@@ -6,7 +6,9 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "anims": "node tools/cuire-anims.mjs",
+    "anims:test": "node --import ./tools/resolveur-ts.mjs tools/verifier-anims.ts"
   },
   "devDependencies": {
     "@types/three": "^0.185.1",

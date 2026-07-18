@@ -3,7 +3,6 @@ import {
   ROSTER,
   PERSO_ID,
   SKIN_PALETTE,
-  animerCourse,
   buildFighter,
   clearFighter,
   cssColor,
@@ -12,6 +11,8 @@ import {
   type Fighter,
   type Head,
 } from './roster'
+import { Anim, animerGuerrier } from './anims'
+import { CIBLAGE, EFFETS, PARCHEMINS, TIRAGE, type ParcheminKind } from './parchemin'
 import { cleanName, loadSettings, saveSettings, type Quality, type Settings } from './settings'
 import type { LobbyView, SalonInfo } from './net'
 
@@ -89,7 +90,12 @@ export class Menu {
   private spin = 0
   /** La dernière vue du salon reçue — pour savoir qui je suis, si je suis prêt… */
   private view: LobbyView | null = null
+  /** D'où l'on a ouvert l'aide, pour y revenir. null = depuis le titre. */
+  private retourAide: ScreenName | null = null
   private apercu?: THREE.Object3D
+  /** Le guerrier montré dans la vignette — il a sa propre foulée. */
+  private fighterAffiche: Fighter = ROSTER[0]
+  private anim = new Anim()
 
   private el = {
     banner: document.getElementById('banner')!,
@@ -154,10 +160,36 @@ export class Menu {
     document.getElementById('btnHelp')!.addEventListener('click', () => this.show('help'))
     this.el.cancel.addEventListener('click', () => cb.onCancel())
 
-    // Tous les boutons « retour » / « OK » ramènent au titre
+    /*
+     * Les boutons « retour » / « OK » ramènent au titre — SAUF quand on est
+     * venu du salon. Un joueur qui ouvre les fiches depuis le lobby veut y
+     * revenir : le renvoyer au titre lui donnerait l'impression d'avoir quitté
+     * la partie, alors qu'il y est toujours.
+     */
     for (const b of document.querySelectorAll('[data-back]')) {
-      b.addEventListener('click', () => this.show('title'))
+      b.addEventListener('click', () => {
+        const vers = this.retourAide
+        this.retourAide = null
+        this.show(vers ?? 'title')
+      })
     }
+
+    // 📜 L'aide depuis le salon, sans quitter le salon
+    document.getElementById('btnLobbyHelp')?.addEventListener('click', () => {
+      this.retourAide = 'lobby'
+      this.show('help')
+    })
+
+    // 🥷 Le vestiaire depuis le salon. On attend souvent plusieurs minutes qu'un
+    // salon se remplisse : c'est LE moment où l'on veut changer de guerrier ou
+    // retoucher son skin. Le faire imposait de quitter le salon — donc de perdre
+    // sa place et son code. Même mécanique de retour que l'aide.
+    document.getElementById('btnLobbyRoster')?.addEventListener('click', () => {
+      this.retourAide = 'lobby'
+      this.show('roster')
+    })
+
+    this.buildAideSorts()
 
     this.buildRoster()
     this.buildOptions()
@@ -314,6 +346,18 @@ export class Menu {
   // ————— Les écrans —————
 
   private show(name: ScreenName) {
+    /*
+     * Le repère de retour ne s'efface qu'en SORTANT vraiment du salon.
+     *
+     * On ne peut pas l'effacer à chaque écran : l'aide et le vestiaire le
+     * posent juste avant d'appeler show(), et il serait balayé dans la foulée.
+     * On ne peut pas non plus ne jamais l'effacer : quitter le salon autrement
+     * que par « retour » le laisserait traîner, et un retour plus tard —
+     * depuis les options — renverrait vers un salon déjà quitté.
+     *
+     * Le titre et la liste des salons sont les deux seules portes de sortie.
+     */
+    if (name === 'title' || name === 'salon') this.retourAide = null
     this.current = name
     for (const [key, el] of Object.entries(this.screens)) {
       el.classList.toggle('hidden', key !== name)
@@ -457,6 +501,59 @@ export class Menu {
     this.cb.onFighter(f)
   }
 
+  // ————— 📜 Les fiches des sorts —————
+
+  /**
+   * Construit la liste des dix parchemins dans l'écran d'aide.
+   *
+   * Tout vient de `parchemin.ts` : nom, icône, ciblage et chiffres. Rien n'est
+   * écrit en dur dans le HTML — une fiche recopiée à la main aurait menti au
+   * joueur dès le premier réglage de calibrage.
+   *
+   * On construit une fois, au démarrage : le contenu ne change jamais.
+   */
+  private buildAideSorts() {
+    const hote = document.getElementById('helpSorts')
+    if (!hote) return
+
+    // Rangés par usage : ce qu'on se lance à soi, puis ce qu'on envoie.
+    const groupes: [string, ParcheminKind[]][] = [
+      ['🧘 Pour toi', TIRAGE.filter((k) => PARCHEMINS[k].cible === 'soi')],
+      ['⚔️ Contre les autres', TIRAGE.filter((k) => PARCHEMINS[k].cible !== 'soi')],
+    ]
+
+    hote.replaceChildren()
+    for (const [titre, kinds] of groupes) {
+      const h = document.createElement('h4')
+      h.className = 'sortgroupe'
+      h.textContent = titre
+      hote.append(h)
+
+      for (const k of kinds) {
+        const p = PARCHEMINS[k]
+        const carte = document.createElement('div')
+        carte.className = 'sort'
+
+        const ic = document.createElement('span')
+        ic.className = 'sortic'
+        ic.textContent = p.icone
+
+        const corps = document.createElement('div')
+        const nom = document.createElement('b')
+        nom.textContent = p.nom
+        const ou = document.createElement('span')
+        ou.className = 'sortcible'
+        ou.textContent = CIBLAGE[p.cible]
+        const quoi = document.createElement('p')
+        quoi.textContent = EFFETS[k]
+
+        corps.append(nom, ou, quoi)
+        carte.append(ic, corps)
+        hote.append(carte)
+      }
+    }
+  }
+
   // ————— L'aperçu 3D —————
 
   private showInPreview(f: Fighter) {
@@ -465,6 +562,7 @@ export class Menu {
     clearFighter(this.preview.group)
     const parts = buildFighter(f)
     this.apercu = parts[0] // on le fait courir sur place dans la vignette
+    this.fighterAffiche = f // c'est SA foulée qu'on joue : chacun la sienne
     this.preview.group.add(...parts)
   }
 
@@ -521,7 +619,7 @@ export class Menu {
     this.preview.group.rotation.y = this.spin
     // Il court sur place pendant qu'on le regarde : une pose figée donnerait
     // l'impression d'un mannequin, pas d'un coureur.
-    animerCourse(this.apercu, this.spin)
+    animerGuerrier(this.apercu, this.fighterAffiche, this.anim, 'course', dt, this.spin)
     this.preview.renderer.render(this.preview.scene, this.preview.camera)
   }
 

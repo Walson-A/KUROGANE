@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="theme-color" content="#151a2c" />
+    <title>KUROGANE — banc d'essai des animations</title>
+    <style>
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      html, body { height: 100%; overflow: hidden; background: #151a2c; color: #f0e8d8;
+        font-family: system-ui, -apple-system, "Segoe UI", sans-serif; user-select: none; }
+      #vue { display: block; width: 100%; height: 100%; }
+
+      .panneau {
+        position: fixed; z-index: 10; padding: 9px;
+        border-radius: 10px; background: rgba(13, 16, 28, 0.85);
+        border: 1px solid #3d4560; font-size: 0.78rem; color: #9aa4c0;
+      }
+      #actions { left: 12px; top: 12px; width: 178px; }
+      #guerriers { right: 12px; top: 12px; width: 160px; }
+      #aide { left: 12px; bottom: 12px; }
+
+      .titre { font-size: 0.62rem; letter-spacing: 0.16em; text-transform: uppercase;
+        color: #6b7594; margin-bottom: 6px; }
+      .ligne { display: flex; align-items: center; gap: 7px; padding: 3px 6px;
+        border-radius: 6px; line-height: 1.5; }
+      /* La sélection doit sauter aux yeux : c'est l'unique repère de la page */
+      .ligne.on { background: rgba(226, 75, 58, 0.26); color: #f0e8d8; font-weight: 700; }
+      /* Un mouvement importé n'est pas la meme chose qu'un repli calculé :
+         c'est LA question qu'on vient poser à cette page. */
+      .pastille { margin-left: auto; font-size: 0.66rem; padding: 0 5px; border-radius: 4px; }
+      .vrai { background: rgba(94, 240, 138, 0.2); color: #9ff0bd; }
+      .repli { background: rgba(214, 172, 90, 0.18); color: #e8cf98; }
+
+      kbd { background: #3d4560; color: #f0e8d8; border-radius: 4px; padding: 0 5px;
+        font-family: inherit; font-size: 0.72rem; }
+      #aide { line-height: 1.9; }
+    </style>
+  </head>
+  <body>
+    <canvas id="vue"></canvas>
+    <div class="panneau" id="actions"></div>
+    <div class="panneau" id="guerriers"></div>
+    <div class="panneau" id="aide">
+      <kbd>o</kbd> / <kbd>i</kbd> action · <kbd>p</kbd> / <kbd>m</kbd> guerrier<br />
+      <kbd>espace</kbd> rejouer · <kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd> geste superposé
+    </div>
+
+    <script type="module">
+      import * as THREE from 'three'
+      import { ROSTER, buildFighter, clearFighter } from '/src/roster.ts'
+      import { Anim, animerGuerrier, aUnClip } from '/src/anims.ts'
+
+      // ————— La scène : juste ce qu'il faut pour REGARDER un mouvement —————
+      // On ne charge pas le jeu : pas de piste, pas de course, pas de menu. Une
+      // page d'animation doit démarrer en une seconde et ne montrer que le corps.
+      const canvas = document.getElementById('vue')
+      const renderer = new THREE.WebGLRenderer({ canvas, antialias: true })
+      renderer.setPixelRatio(Math.min(devicePixelRatio, 2))
+
+      const scene = new THREE.Scene()
+      scene.background = new THREE.Color(0x151a2c)
+
+      const camera = new THREE.PerspectiveCamera(42, 1, 0.1, 60)
+      camera.position.set(2.6, 2.1, 4.2)
+      camera.lookAt(0, 0.95, 0)
+
+      // Même éclairage que la course, sinon les couleurs mentent
+      scene.add(new THREE.HemisphereLight(0xbfd4ff, 0x30281e, 1.0))
+      const key = new THREE.DirectionalLight(0xdfe8ff, 1.6)
+      key.position.set(-3, 5, 4)
+      const rim = new THREE.DirectionalLight(0xe24b3a, 0.7)
+      rim.position.set(3, 2, -3)
+      scene.add(key, rim)
+
+      // Un sol quadrillé : sans repère au sol, impossible de juger si un
+      // mouvement patine, s'enfonce ou décolle.
+      const sol = new THREE.Mesh(
+        new THREE.CircleGeometry(4, 40),
+        new THREE.MeshStandardMaterial({ color: 0x272d3f, roughness: 1 })
+      )
+      sol.rotation.x = -Math.PI / 2
+      scene.add(sol, new THREE.GridHelper(8, 16, 0x3d4560, 0x232838))
+
+      // ————— L'état —————
+      const ACTIONS = ['course', 'courseRapide', 'courseGenee', 'saut', 'glissade',
+        'chute', 'lancer', 'virageG', 'virageD', 'impact', 'attaque']
+      const GESTES = ['lancer', 'attaque', 'impact']
+      const jouables = ROSTER.filter((f) => f.pickable)
+
+      let iAction = 0
+      let iGuerrier = 0
+      let anim = new Anim()
+      let racine
+      const groupe = new THREE.Group()
+      scene.add(groupe)
+
+      function habiller() {
+        clearFighter(groupe)
+        const parts = buildFighter(jouables[iGuerrier])
+        racine = parts[0]
+        groupe.add(...parts)
+        anim = new Anim() // on repart d'un mouvement propre à chaque changement
+      }
+
+      function dessiner() {
+        const f = jouables[iGuerrier]
+        document.getElementById('actions').innerHTML =
+          '<div class="titre">Action</div>' +
+          ACTIONS.map((a, i) => {
+            // `aUnClip` dit si le mouvement est VRAIMENT importé pour ce
+            // guerrier, ou si on retombe sur la foulée calculée.
+            const tag = aUnClip(f, a)
+              ? '<span class="pastille vrai">clip</span>'
+              : '<span class="pastille repli">repli</span>'
+            return `<div class="ligne${i === iAction ? ' on' : ''}">${a}${tag}</div>`
+          }).join('')
+        document.getElementById('guerriers').innerHTML =
+          '<div class="titre">Guerrier</div>' +
+          jouables
+            .map((g, i) => `<div class="ligne${i === iGuerrier ? ' on' : ''}">${g.jp} ${g.name.split(' ')[0]}</div>`)
+            .join('')
+      }
+
+      addEventListener('keydown', (e) => {
+        if (e.repeat) return
+        const k = e.key.toLowerCase()
+        if (k === 'o') iAction = (iAction + 1) % ACTIONS.length
+        else if (k === 'i') iAction = (iAction - 1 + ACTIONS.length) % ACTIONS.length
+        else if (k === 'p') { iGuerrier = (iGuerrier + 1) % jouables.length; habiller() }
+        else if (k === 'm') { iGuerrier = (iGuerrier - 1 + jouables.length) % jouables.length; habiller() }
+        else if (k === ' ') anim.jouer(ACTIONS[iAction], true) // rejoue depuis le début
+        else if (['1', '2', '3'].includes(k)) { anim.declencher(GESTES[+k - 1]); return }
+        else return
+        dessiner()
+      })
+
+      // ————— La boucle —————
+      const horloge = new THREE.Clock()
+      let t = 0
+      function tick() {
+        requestAnimationFrame(tick)
+        const dt = Math.min(horloge.getDelta(), 0.05)
+        t += dt
+        animerGuerrier(racine, jouables[iGuerrier], anim, ACTIONS[iAction], dt, t)
+        // Le corps tourne lentement : un mouvement se juge de tous les côtés
+        groupe.rotation.y = Math.sin(t * 0.25) * 0.8
+        renderer.render(scene, camera)
+      }
+
+      function resize() {
+        renderer.setSize(innerWidth, innerHeight)
+        camera.aspect = innerWidth / innerHeight
+        camera.updateProjectionMatrix()
+      }
+      addEventListener('resize', resize)
+
+      habiller()
+      dessiner()
+      resize()
+      tick()
+    </script>
+  </body>
+</html>

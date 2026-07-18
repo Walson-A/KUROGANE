@@ -18,7 +18,6 @@ import {
   ARMURE_SOLIDITE,
   ARMURE_COUT_MUR,
   ARMURE_COUT_PETIT,
-  MIROIR_DUREE,
   FUMIGENE_DUREE,
   SENBON_DUREE,
   ONMYOJI_VITESSE,
@@ -26,7 +25,7 @@ import {
   type ParcheminKind,
 } from './parchemin'
 import { Menu, escapeHtml } from './menu'
-import { souffleDeVent, jouerBruit, setVolumeSfx } from './sfx'
+import { souffleDeVent, jouerBruit, setVolumeSfx, sonDeSoin } from './sfx'
 import type { Quality } from './settings'
 import { Musique } from './audio'
 
@@ -308,6 +307,7 @@ let distance = 0 // mètres parcourus
 let speed = 0
 let countdown = 0 // secondes avant le GO !
 let stumble = 0 // invincibilité après un trébuchement
+let stumblePrec = 0 // sa valeur à l'image d'avant : sert à repérer le choc
 let netTimer = 0 // pour n'envoyer notre position que 10 fois/s
 let sprintTaps: number[] = [] // instants des derniers taps → cadence
 let sprintCharge = 0 // la jauge de sprint, 0 → 1
@@ -347,16 +347,149 @@ let miroirFin = 0 // 🪞 la parade est levée jusqu'ici
 let fumigeneFin = 0 // 💨 l'écran est noyé de fumée
 let senbonFin = 0 // ☠️ l'écran ondule
 
-/** 🔮 Le portail en vol : il file tout droit dans SA ligne jusqu'au 1er mur. */
-let portail: { d: number; lane: number } | null = null
+/**
+ * ————— 🔮 Le portail : un orbe ÉLECTRIQUE —————
+ *
+ * Une bille unie ne disait rien de la violence du sort le plus brutal du jeu.
+ * On le monte comme une boule de foudre : un cœur incandescent, un anneau qui
+ * tourne, et des arcs qui se redessinent À CHAQUE IMAGE. C'est ce redessin
+ * permanent qui fait l'électricité — des éclairs figés ne crépitent pas.
+ *
+ * Le portail est BLEU, comme la foudre : c'est la couleur qu'on lit
+ * instantanément comme « électrique », et elle le distingue de tout le reste du
+ * jeu (le rouge du trébuchement, l'or du torii, l'orange de l'explosion).
+ *
+ * Elle reste portée par le portail plutôt que codée en dur dans chaque
+ * maillage : le halo, les arcs et la brûlure laissée sur le mur la lisent tous
+ * depuis lui. Le jour où un rival lancera son propre portail, lui donner une
+ * autre teinte tiendra en une ligne — et sa brûlure suivra toute seule.
+ */
+const PORTAIL_BLEU = 0x4db8ff
 
-// La bille du portail. Un seul maillage recyclé : il n'y en a jamais deux.
-const portailMesh = new THREE.Mesh(
-  new THREE.SphereGeometry(0.42, 14, 14),
-  new THREE.MeshBasicMaterial({ color: 0xb98cff })
+/** 🔮 Le portail en vol : il file tout droit dans SA ligne jusqu'au 1er mur. */
+let portail: { d: number; lane: number; couleur: number } | null = null
+
+const portailGroup = new THREE.Group()
+// Le cœur : presque blanc, c'est lui qui « brûle » au centre
+const portailCoeur = new THREE.Mesh(
+  new THREE.SphereGeometry(0.2, 12, 10),
+  new THREE.MeshBasicMaterial({ color: 0xf2fbff, blending: THREE.AdditiveBlending, depthWrite: false })
 )
-portailMesh.visible = false
-scene.add(portailMesh)
+// Le halo : la lueur diffuse autour du cœur
+const portailHalo = new THREE.Mesh(
+  new THREE.SphereGeometry(0.46, 14, 12),
+  new THREE.MeshBasicMaterial({
+    color: PORTAIL_BLEU,
+    transparent: true,
+    opacity: 0.4,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+  })
+)
+// L'anneau : le cercle net de la référence, qui tourne sur lui-même
+const portailAnneau = new THREE.Mesh(
+  new THREE.TorusGeometry(0.5, 0.055, 8, 28),
+  new THREE.MeshBasicMaterial({
+    color: PORTAIL_BLEU,
+    transparent: true,
+    opacity: 0.9,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+  })
+)
+portailGroup.add(portailCoeur, portailHalo, portailAnneau)
+portailGroup.visible = false
+scene.add(portailGroup)
+
+/**
+ * Les arcs électriques. Chacun est une polyligne de 6 points qu'on RELANCE au
+ * hasard à chaque image : c'est le seul moyen d'obtenir un crépitement, et
+ * c'est bien moins coûteux que d'animer une texture.
+ */
+const ARC_POINTS = 6
+function makeArc(couleur: number): THREE.Line {
+  const g = new THREE.BufferGeometry()
+  g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(ARC_POINTS * 3), 3))
+  return new THREE.Line(
+    g,
+    new THREE.LineBasicMaterial({
+      color: couleur,
+      transparent: true,
+      opacity: 0.95,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+    })
+  )
+}
+
+/** Redessine un arc : il part de l'anneau et gigote vers l'extérieur. */
+function jitterArc(arc: THREE.Line, rayon: number, ampleur: number) {
+  const pos = arc.geometry.getAttribute('position') as THREE.BufferAttribute
+  const a = Math.random() * Math.PI * 2
+  for (let i = 0; i < ARC_POINTS; i++) {
+    const t = i / (ARC_POINTS - 1)
+    const r = rayon * (0.45 + t * 0.95)
+    pos.setXYZ(
+      i,
+      Math.cos(a) * r + (Math.random() - 0.5) * ampleur,
+      Math.sin(a) * r + (Math.random() - 0.5) * ampleur,
+      (Math.random() - 0.5) * ampleur * 0.6
+    )
+  }
+  pos.needsUpdate = true
+}
+
+const PORTAIL_ARCS = 7
+const portailArcs = Array.from({ length: PORTAIL_ARCS }, () => {
+  const l = makeArc(0x9fe8ff)
+  portailGroup.add(l)
+  return l
+})
+
+/**
+ * ————— 💥 L'impact contre un mur —————
+ * Le portail ne se contente plus de disparaître : il ÉCLATE. Une gerbe d'arcs
+ * qui crépitent une fraction de seconde, puis une trace brûlée qui reste sur
+ * le mur — à la couleur du portail, pour qu'on sache lequel s'y est cassé.
+ */
+const IMPACT_ARCS = 9
+const IMPACT_CREPITE = 0.4 // durée du crépitement
+const IMPACT_TRACE = 1.8 // la brûlure s'efface bien après
+const impactGroup = new THREE.Group()
+const impactArcs = Array.from({ length: IMPACT_ARCS }, () => {
+  const l = makeArc(PORTAIL_BLEU)
+  impactGroup.add(l)
+  return l
+})
+// La brûlure laissée sur la paroi
+const impactTrace = new THREE.Mesh(
+  new THREE.CircleGeometry(0.75, 20),
+  new THREE.MeshBasicMaterial({
+    color: PORTAIL_BLEU,
+    transparent: true,
+    opacity: 0,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+  })
+)
+impactGroup.add(impactTrace)
+impactGroup.visible = false
+scene.add(impactGroup)
+let impactFin = 0
+
+/** Le portail s'écrase ici, dans SA couleur. */
+function portailImpact(pos: THREE.Vector3, couleur: number) {
+  impactGroup.position.copy(pos)
+  impactGroup.visible = true
+  impactFin = time + IMPACT_TRACE
+  for (const a of impactArcs) {
+    ;(a.material as THREE.LineBasicMaterial).color.setHex(couleur)
+    a.visible = true
+  }
+  const m = impactTrace.material as THREE.MeshBasicMaterial
+  m.color.setHex(couleur)
+  m.opacity = 0.85
+}
 
 /**
  * ————— Les projectiles : un sabotage, ça VOLE jusqu'à sa victime —————
@@ -457,58 +590,123 @@ function lancerProjet(
 }
 
 /**
- * ————— Les auras : « ce sort agit, sur LUI, encore maintenant » —————
+ * ————— Chaque sort a sa FORME, plus une bulle pour tous —————
  *
- * Une bulle colorée collée à un coureur, pour toute la durée du sort. C'est la
- * même règle que le nuage de fumée : une aura n'est pas un décor, c'est la
- * JAUGE de l'effet — tant qu'elle brille, l'effet court.
+ * La bulle colorée générique disait « il se passe quelque chose », jamais QUOI.
+ * Chaque sort a donc désormais son propre corps : la brume du poison, l'aura
+ * jaillissante du dash, les cercles montants du soin, l'anneau de la Grue, les
+ * chaînes du Kusarigama, la glace de la Parade.
  *
- * Elle sert aux deux camps : sur soi pour les sorts qu'on s'applique, sur la
- * victime pour les sabotages. Une couleur par sort, toujours la même.
- *
- * Trois sorts s'en passent : la Grue a son anneau, la Parade sa glace et le
- * Kusarigama ses chaînes. Une bulle de plus ne les aurait pas racontés.
+ * La règle commune ne change pas : tant que l'effet se voit, l'effet court.
  */
-const AURA_VENT = 0x8fe6ff
-const AURA_THE = 0x8fce7a
-const AURA_SENBON = 0x9b5cff // le violet du poison
 
-interface Aura {
-  mesh: THREE.Mesh
+/** Une tache douce, pour la brume et les auras — dégradé radial en mémoire. */
+function makeBlobTexture(): THREE.CanvasTexture {
+  const cv = document.createElement('canvas')
+  cv.width = 64
+  cv.height = 64
+  const g = cv.getContext('2d')!
+  const grad = g.createRadialGradient(32, 32, 0, 32, 32, 32)
+  grad.addColorStop(0, 'rgba(255,255,255,0.95)')
+  grad.addColorStop(0.45, 'rgba(255,255,255,0.35)')
+  grad.addColorStop(1, 'rgba(255,255,255,0)')
+  g.fillStyle = grad
+  g.fillRect(0, 0, 64, 64)
+  return new THREE.CanvasTexture(cv)
+}
+const blobTex = makeBlobTexture()
+
+// ————— La brume : le corps du ☠️ Senbon et du 🌀 Vent —————
+// Plusieurs voiles doux qui dérivent chacun sur son orbite : c'est leur
+// chevauchement IRRÉGULIER qui fait « brume ». Alignés, ils redeviendraient la
+// boule qu'on cherche à éviter.
+//
+// Deux sorts s'en servent, à deux couleurs : le poison NOIE sa victime de
+// violet, le dash enveloppe le coureur de cyan. Même matière, deux lectures —
+// et une seule mécanique à régler.
+const BRUME_VOILES = 6
+const BRUME_POISON = 0x9b5cff
+const BRUME_VENT = 0x8fe6ff
+interface Brume {
+  group: THREE.Group
+  voiles: THREE.Mesh[]
   cible: THREE.Object3D
-  duree: number
   fin: number
+  duree: number
+  /** Le 🍵 Thé ne balaie que les afflictions — jamais ton propre dash. */
+  affliction: boolean
   actif: boolean
 }
-const auras: Aura[] = []
+const brumes: Brume[] = []
 
-/** Enveloppe `cible` de `couleur` pendant `duree` secondes. */
-function poserAura(cible: THREE.Object3D, couleur: number, duree: number) {
-  let a = auras.find((x) => !x.actif)
-  if (!a) {
-    const mesh = new THREE.Mesh(
-      new THREE.SphereGeometry(1.05, 16, 12),
-      new THREE.MeshBasicMaterial({
-        color: couleur,
-        transparent: true,
-        opacity: 0,
-        blending: THREE.AdditiveBlending,
-        depthWrite: false,
-      })
-    )
-    mesh.visible = false
-    scene.add(mesh)
-    a = { mesh, cible, duree, fin: 0, actif: false }
-    auras.push(a)
+function poserBrume(cible: THREE.Object3D, duree: number, couleur: number, affliction = true) {
+  let b = brumes.find((x) => !x.actif)
+  if (!b) {
+    const group = new THREE.Group()
+    const voiles: THREE.Mesh[] = []
+    for (let i = 0; i < BRUME_VOILES; i++) {
+      const m = new THREE.Mesh(
+        new THREE.PlaneGeometry(1.9, 1.9),
+        new THREE.MeshBasicMaterial({
+          map: blobTex,
+          transparent: true,
+          opacity: 0,
+          blending: THREE.AdditiveBlending,
+          depthWrite: false,
+        })
+      )
+      m.userData.phase = (i / BRUME_VOILES) * Math.PI * 2
+      voiles.push(m)
+      group.add(m)
+    }
+    group.visible = false
+    scene.add(group)
+    b = { group, voiles, cible, fin: 0, duree, affliction, actif: false }
+    brumes.push(b)
   }
-  ;(a.mesh.material as THREE.MeshBasicMaterial).color.setHex(couleur)
-  a.cible = cible
-  a.duree = duree
-  a.fin = time + duree
-  a.actif = true
-  a.mesh.visible = true
-  a.mesh.position.copy(cible.position).setY(0.85)
+  for (const v of b.voiles) (v.material as THREE.MeshBasicMaterial).color.setHex(couleur)
+  b.cible = cible
+  b.duree = duree
+  b.affliction = affliction
+  b.fin = time + duree
+  b.actif = true
+  b.group.visible = true
 }
+
+/** Dissipe les brumes SUBIES par `cible` (le 🍵 Thé les balaie). */
+function dissiperBrume(cible: THREE.Object3D) {
+  for (const b of brumes) {
+    if (b.actif && b.affliction && b.cible === cible) {
+      b.actif = false
+      b.group.visible = false
+    }
+  }
+}
+
+// ————— 🍵 Les cercles du Thé Purificateur —————
+// Des anneaux clairs qui MONTENT le long du corps, du sol vers la tête : le
+// sens de lecture du soin. Ils partent décalés dans le temps pour qu'on lise
+// une vague, pas un clignotement.
+const THE_CERCLES = 4
+const THE_DUREE = 1.15
+const theCercles: THREE.Mesh[] = []
+for (let i = 0; i < THE_CERCLES; i++) {
+  const m = new THREE.Mesh(
+    new THREE.TorusGeometry(0.62, 0.045, 8, 26),
+    new THREE.MeshBasicMaterial({
+      color: 0xc9ffd8, // vert très clair, presque blanc : ça doit apaiser
+      transparent: true,
+      opacity: 0,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+    })
+  )
+  m.rotation.x = -Math.PI / 2
+  m.visible = false
+  scene.add(m)
+  theCercles.push(m)
+}
+let theFin = 0
 
 // ————— 🕊️ L'anneau du Saut de la Grue —————
 // Un cercle vert qui te ceint. Il SUIT le saut — hauteur comprise : c'est un
@@ -615,7 +813,7 @@ function makeRefletTexture(): THREE.CanvasTexture {
 const miroirTex = makeRefletTexture()
 const miroirGroup = new THREE.Group()
 const miroirGlace = new THREE.Mesh(
-  new THREE.PlaneGeometry(2.1, 2.5),
+  new THREE.PlaneGeometry(1.25, 1.55),
   new THREE.MeshBasicMaterial({
     map: miroirTex,
     transparent: true,
@@ -626,7 +824,7 @@ const miroirGlace = new THREE.Mesh(
 )
 // Le cadre : sans lui, la glace flotte comme un simple carré de lumière
 const miroirCadre = new THREE.Mesh(
-  new THREE.PlaneGeometry(2.34, 2.74),
+  new THREE.PlaneGeometry(1.42, 1.72),
   new THREE.MeshBasicMaterial({
     color: 0xd6ac5a,
     transparent: true,
@@ -945,7 +1143,9 @@ function briserBouclier(nb: number, force: number) {
     const dx = Math.sin(ph) * Math.cos(th)
     const dy = Math.cos(ph)
     const dz = Math.sin(ph) * Math.sin(th)
-    e.mesh.position.set(p.x + dx * BOUCLIER_R, 0.85 + dy * BOUCLIER_R, p.z + dz * BOUCLIER_R)
+    // p.y : les éclats naissent sur la coque, donc à SA hauteur du moment —
+    // une armure qui vole en morceaux au sol pendant qu'on saute serait absurde.
+    e.mesh.position.set(p.x + dx * BOUCLIER_R, p.y + 0.85 + dy * BOUCLIER_R, p.z + dz * BOUCLIER_R)
     e.vx = dx * force
     e.vy = dy * force + 1.2 // un rien vers le haut : ça retombe joliment
     e.vz = dz * force
@@ -963,7 +1163,9 @@ function briserBouclier(nb: number, force: number) {
 function armureEncaisse(brisee: boolean) {
   if (brisee) {
     briserBouclier(20, 5.5) // toute la coque explose…
-    boom(new THREE.Vector3(player.mesh.position.x, 0.85, player.mesh.position.z)) // …dans un souffle
+    // Le souffle part de la coque elle-même, saut compris
+    const p = player.mesh.position
+    boom(new THREE.Vector3(p.x, p.y + 0.85, p.z)) // …dans un souffle
   } else {
     boucFlash = time + BOUC_CLAQUE // le dôme claque et tient bon
     briserBouclier(7, 2.6)
@@ -1169,7 +1371,9 @@ function updateEffets(dt: number, dz: number) {
   boucLignes.visible = bouclierOn
   if (bouclierOn) {
     const p = player.mesh.position
-    boucFill.position.set(p.x, 0.85, p.z)
+    // p.y : le dôme SUIT le saut. Resté au sol pendant qu'on vole, il dirait
+    // qu'on a laissé sa protection en bas — or c'est en l'air qu'on percute.
+    boucFill.position.set(p.x, p.y + 0.85, p.z)
     boucLignes.position.copy(boucFill.position)
     boucLignes.rotation.y += dt * 0.5
     boucFill.rotation.y = boucLignes.rotation.y
@@ -1468,6 +1672,19 @@ function cibleDevant(): Bot | undefined {
 }
 
 /** Lance le parchemin le plus ancien. Rien à faire s'il n'y en a pas. */
+/**
+ * 🔥 Les sorts qu'on JETTE — ceux qui méritent le geste du lancer.
+ *
+ * Ce sont les quatre qui partent de la main : le portail, l'aiguille, la
+ * fumée et la lame. Les autres se posent sur soi (l'armure, le thé, la grue)
+ * et n'ont rien à jeter — leur donner le même geste ferait mimer un tir dans
+ * le vide.
+ *
+ * Le geste ne part qu'au moment où le sort SORT vraiment : quand on mène
+ * déjà, le rouleau est rendu et rien ne doit s'animer.
+ */
+const SORTS_LANCES = new Set(['onmyoji', 'senbon', 'fumigene', 'kunai'])
+
 function lancerParchemin() {
   // Dans le sprint, tous les taps servent à marteler : pas de sort ici, sinon
   // le clavier pourrait encore lancer (touche E) là où le mobile ne peut plus.
@@ -1485,16 +1702,20 @@ function lancerParchemin() {
   toast(p.cri)
 
   // ————— Sur soi —————
-  // Chacun pose son aura pour SA durée : tant qu'elle brille, le sort court.
+  // Chacun a sa forme, et elle vit exactement le temps du sort.
   // L'armure fait exception — son dôme facetté joue déjà ce rôle, en mieux.
   if (kind === 'vent') {
     ventFin = time + VENT_DUREE
-    poserAura(player.mesh, AURA_VENT, VENT_DUREE)
+    // 🌀 Une brume cyan t'enveloppe — la même matière que le poison, l'autre
+    // couleur. `false` : ce n'est pas une affliction, le Thé ne l'emporte pas.
+    poserBrume(player.mesh, VENT_DUREE, BRUME_VENT, false)
   } else if (kind === 'grue') {
     grueFin = time + GRUE_DUREE // 🕊️ l'anneau vert suit `grueFin` tout seul
   } else if (kind === 'armure') armure = ARMURE_SOLIDITE
   else if (kind === 'miroir') {
-    miroirFin = time + MIROIR_DUREE // 🪞 la glace suit `miroirFin` tout seul
+    // 🪞 La glace tient TANT QU'ON N'Y TOUCHE PAS : elle ne s'éteint qu'en
+    // renvoyant un sort (cf. subirSort). C'est une garde, pas un minuteur.
+    miroirFin = Infinity
   } else if (kind === 'the') {
     // 🍵 Le thé lave TOUT d'un coup — y compris ce qu'on vient d'encaisser
     kusarigamaFin = 0
@@ -1503,17 +1724,21 @@ function lancerParchemin() {
     // Les marques des afflictions s'éteignent avec elles : sinon on se croirait
     // encore empoisonné et entravé alors qu'on vient de se purifier.
     libererChaines(player.mesh) // ⛓️ les chaînes tombent
-    for (const a of auras) {
-      if ((a.mesh.material as THREE.MeshBasicMaterial).color.getHex() === AURA_SENBON) {
-        a.actif = false
-        a.mesh.visible = false
-      }
-    }
-    poserAura(player.mesh, AURA_THE, 0.9) // une bouffée verte, courte : c'est instantané
+    dissiperBrume(player.mesh) // ☠️ la brume se lève
+    theFin = time + THE_DUREE // 🍵 les cercles montent
+    sonDeSoin()
   }
   // ————— 🔮 Le portail : il part, il ne vise pas —————
   else if (kind === 'onmyoji') {
-    portail = { d: distance, lane: player.currentLane }
+    // La couleur voyage AVEC le portail jusqu'à la brûlure qu'il laissera sur
+    // le mur : c'est lui qui la porte, pas les maillages.
+    const couleur = PORTAIL_BLEU
+    portail = { d: distance, lane: player.currentLane, couleur }
+    player.geste('lancer') // 🔥 le bras jette le portail devant lui
+    for (const m of [portailHalo, portailAnneau]) {
+      ;(m.material as THREE.MeshBasicMaterial).color.setHex(couleur)
+    }
+    for (const a of portailArcs) (a.material as THREE.LineBasicMaterial).color.setHex(couleur)
   }
   // ————— Offensif : ça part chez quelqu'un —————
   else if (p.cible === 'adversaire') {
@@ -1530,6 +1755,7 @@ function lancerParchemin() {
         return
       }
       lancerProjet(kind, player.mesh.position, cible.opp.mesh.position, cible.opp.mesh)
+      if (SORTS_LANCES.has(kind)) player.geste('lancer') // 🔥
       if (kind === 'fumigene') spawnFumeeZone(cible.opp.mesh)
       net.sendSpell(kind, cible.id)
       toast(`${p.icone} sur ${cible.name} !`)
@@ -1544,6 +1770,7 @@ function lancerParchemin() {
     // `subirSort` rejouera le vol dans l'autre sens : c'est le même maillage,
     // donc le retour écrase l'aller — on ne voit que le trajet qui compte.
     lancerProjet(kind, player.mesh.position, cible.mesh.position, cible.mesh)
+    if (SORTS_LANCES.has(kind)) player.geste('lancer') // 🔥
     if (kind === 'fumigene') spawnFumeeZone(cible.mesh)
 
     // Sa parade peut nous le renvoyer dans les dents : on l'a bien cherché
@@ -1797,10 +2024,12 @@ function backToMenu(banner?: string) {
     p.actif = false
     p.mesh.visible = false
   }
-  for (const a of auras) {
-    a.actif = false
-    a.mesh.visible = false
+  for (const b of brumes) {
+    b.actif = false
+    b.group.visible = false
   }
+  theFin = 0
+  for (const c of theCercles) c.visible = false
   for (const c of chaines) {
     c.actif = false
     c.group.visible = false
@@ -1857,15 +2086,19 @@ function startRace(seed: number) {
   fumigeneFin = 0
   senbonFin = 0
   portail = null
-  portailMesh.visible = false
+  portailGroup.visible = false
+  impactGroup.visible = false // ni orbe ni brûlure ne survivent à une course
+  impactFin = 0
   for (const p of projets) {
     p.actif = false
     p.mesh.visible = false
   }
-  for (const a of auras) {
-    a.actif = false
-    a.mesh.visible = false
+  for (const b of brumes) {
+    b.actif = false
+    b.group.visible = false
   }
+  theFin = 0
+  for (const c of theCercles) c.visible = false
   for (const c of chaines) {
     c.actif = false
     c.group.visible = false
@@ -2175,6 +2408,9 @@ const menu = new Menu({
     // Le guerrier qui court derrière le menu change tout de suite : on voit son
     // choix avant même de lancer la course.
     player.setFighter(f)
+    // Et si on est dans un salon, on prévient les autres : sans ça, changer de
+    // guerrier depuis le lobby ne se verrait que chez soi.
+    if (online) net.sendIdentity(identity())
   },
   onQuality(q) {
     applyQuality(q)
@@ -2349,7 +2585,11 @@ function tick(now?: number) {
       backToMenu('⚠️ Connexion perdue au départ.')
     }
     player.update(dt)
-    for (const r of rivals.values()) r.opp.update(dt, distance)
+    for (const r of rivals.values()) {
+      // Chacun entre dans le sprint a SA distance, pas a la notre
+      r.opp.presse = r.opp.distanceNow >= COURSE_LENGTH - SPRINT_ZONE
+      r.opp.update(dt, distance)
+    }
     // Les rivaux sont déjà sur la ligne de départ pendant le décompte
     for (const b of botsEnCourse()) b.placer(dt, distance)
     // 🌸 Les pétales tombent pendant tout le décompte (monde immobile : dz = 0)
@@ -2399,7 +2639,11 @@ function tick(now?: number) {
 
     distance += speed * dt
     player.update(dt)
-    for (const r of rivals.values()) r.opp.update(dt, distance)
+    for (const r of rivals.values()) {
+      // Chacun entre dans le sprint a SA distance, pas a la notre
+      r.opp.presse = r.opp.distanceNow >= COURSE_LENGTH - SPRINT_ZONE
+      r.opp.update(dt, distance)
+    }
     track.update(dt, speed, distance)
 
     // Chaque rival court sa propre course, sans jamais toucher à la nôtre
@@ -2460,14 +2704,20 @@ function tick(now?: number) {
       const dRival = rivalTouche ? rivalTouche.opp.distanceNow : Infinity
 
       if (dMur <= dBot && dMur <= dRival && dMur !== Infinity) {
+        // 💥 Il éclate SUR la paroi : on prend la position du mur, pas celle du
+        // portail — sinon la brûlure flotterait devant, dans le vide.
+        portailImpact(
+          new THREE.Vector3(LANES[portail.lane], 1.1, -(dMur - distance) + 0.3),
+          portail.couleur
+        )
         portail = null
-        portailMesh.visible = false
+        portailGroup.visible = false
         toast('🔮 Le portail se brise sur un mur…')
       } else if (botTouche && dBot <= dRival) {
         const sien = botTouche.distance
         botTouche.distance = distance
         portail = null
-        portailMesh.visible = false
+        portailGroup.visible = false
         echangerAvec(sien, botTouche.profil.nom, botTouche.mesh)
       } else if (rivalTouche) {
         // En ligne : on lui envoie NOTRE place, il prendra la sienne. Chacun
@@ -2475,17 +2725,44 @@ function tick(now?: number) {
         net.sendSpell('onmyoji', rivalTouche.id, distance)
         const sien = rivalTouche.opp.distanceNow
         portail = null
-        portailMesh.visible = false
+        portailGroup.visible = false
         echangerAvec(sien, rivalTouche.name, rivalTouche.opp.mesh)
       } else if (portail.d > COURSE_LENGTH) {
         // Aucun plafond de distance : sa portée est INFINIE. Seuls un rival ou
         // un mur l'arrêtent. Faute de quoi il finit par franchir le torii, et
         // il n'y a plus personne à échanger derrière.
         portail = null
-        portailMesh.visible = false
+        portailGroup.visible = false
       } else {
-        portailMesh.visible = true
-        portailMesh.position.set(LANES[portail.lane], 1.1, -(portail.d - distance))
+        // L'orbe file, l'anneau tourne, et les arcs se relancent à chaque image
+        portailGroup.visible = true
+        portailGroup.position.set(LANES[portail.lane], 1.1, -(portail.d - distance))
+        portailAnneau.rotation.z += dt * 5
+        portailCoeur.scale.setScalar(0.9 + Math.random() * 0.35) // le cœur palpite
+        for (const a of portailArcs) jitterArc(a, 0.62, 0.3)
+      }
+    }
+
+    // 💥 L'impact du portail : le crépitement claque, la brûlure s'attarde
+    if (impactGroup.visible) {
+      const reste = impactFin - time
+      if (reste <= 0) {
+        impactGroup.visible = false
+      } else {
+        impactGroup.position.z += speed * dt // elle reste collée à SA paroi
+        const age = IMPACT_TRACE - reste
+        // Les arcs ne crépitent qu'un instant, la trace lui survit
+        const crepite = age < IMPACT_CREPITE
+        for (const a of impactArcs) {
+          a.visible = crepite
+          if (crepite) {
+            jitterArc(a, 1.1, 0.55)
+            ;(a.material as THREE.LineBasicMaterial).opacity = 1 - age / IMPACT_CREPITE
+          }
+        }
+        const m = impactTrace.material as THREE.MeshBasicMaterial
+        m.opacity = 0.85 * (reste / IMPACT_TRACE) // la brûlure se refroidit
+        impactTrace.scale.setScalar(1 + (1 - reste / IMPACT_TRACE) * 0.4)
       }
     }
 
@@ -2508,27 +2785,57 @@ function tick(now?: number) {
         // ☠️ et ⛓️ marquent leur victime d'une aura, le temps de leur effet.
         // On retire le vol de la durée : l'aura doit s'éteindre AVEC le sort,
         // pas 0,28 s après — c'est une jauge, elle ne doit pas mentir.
-        if (p.kind === 'senbon') poserAura(p.cible, AURA_SENBON, SENBON_DUREE - PROJET_VOL)
+        if (p.kind === 'senbon') poserBrume(p.cible, SENBON_DUREE - PROJET_VOL, BRUME_POISON)
         // ⛓️ Le poids touche : les chaînes s'accrochent et retombent au sol
         else if (p.kind === 'kusarigama') poserChaines(p.cible, KUSARIGAMA_DUREE - PROJET_VOL)
       }
     }
 
-    // Les auras collent à leur porteur et battent doucement jusqu'à l'extinction
-    for (const a of auras) {
-      if (!a.actif) continue
-      const reste = a.fin - time
+    // ☠️ La brume : des voiles qui dérivent autour de la victime et la noient
+    for (const b of brumes) {
+      if (!b.actif) continue
+      const reste = b.fin - time
       if (reste <= 0) {
-        a.actif = false
-        a.mesh.visible = false
+        b.actif = false
+        b.group.visible = false
         continue
       }
-      a.mesh.position.copy(a.cible.position).setY(0.85)
-      const k = reste / a.duree // 1 → 0
-      const battement = 1 + Math.sin(time * 9) * 0.05
-      a.mesh.scale.setScalar(battement)
-      // Franche à l'apparition, elle s'efface sur la fin : on voit le sort mourir
-      ;(a.mesh.material as THREE.MeshBasicMaterial).opacity = 0.16 + Math.min(1, k * 2.2) * 0.16
+      const p = b.cible.position
+      const k = Math.min(1, reste / 0.5) // elle se lève sur la fin
+      b.voiles.forEach((v) => {
+        const ph = (v.userData.phase as number) + time * 0.8
+        // Chacun tourne à son rythme sur une orbite propre : c'est l'irrégularité
+        // qui fait « brume » — alignés, ils redeviendraient une boule.
+        v.position.set(
+          p.x + Math.cos(ph) * 0.5,
+          0.5 + Math.sin(ph * 1.7) * 0.45 + 0.5,
+          p.z + Math.sin(ph) * 0.5
+        )
+        v.rotation.z = ph * 0.5
+        v.lookAt(camera.position) // toujours face à l'œil : un voile n'a pas de dos
+        ;(v.material as THREE.MeshBasicMaterial).opacity = (0.3 + Math.sin(ph * 2) * 0.12) * k
+      })
+    }
+
+    // 🍵 Les cercles du Thé : ils montent du sol vers la tête, décalés
+    const theOn = time < theFin
+    if (theOn) {
+      const p = player.mesh.position
+      const ecoule = 1 - (theFin - time) / THE_DUREE // 0 → 1
+      theCercles.forEach((c, i) => {
+        // Chacun part un quart de seconde après le précédent : on lit une vague
+        const t = ecoule * 1.6 - i * 0.18
+        if (t <= 0 || t >= 1) {
+          c.visible = false
+          return
+        }
+        c.visible = true
+        c.position.set(p.x, p.y + 0.1 + t * 2.1, p.z)
+        c.scale.setScalar(1 + t * 0.35) // il s'évase en montant
+        ;(c.material as THREE.MeshBasicMaterial).opacity = (1 - t) * 0.85
+      })
+    } else {
+      for (const c of theCercles) c.visible = false
     }
 
     // 🕊️ L'anneau de la Grue : il te ceint et MONTE AVEC TOI quand tu sautes
@@ -2550,10 +2857,15 @@ function tick(now?: number) {
       const p = player.mesh.position
       miroirGroup.position.set(p.x, p.y + 1.25, p.z + 0.75)
       miroirTex.offset.x -= dt * 0.32 // le reflet glisse : c'est ça qui fait « miroir »
-      const k = (miroirFin - time) / MIROIR_DUREE
-      const fondu = Math.min(1, k * 4) // il s'efface quand la parade expire
-      ;(miroirGlace.material as THREE.MeshBasicMaterial).opacity = 0.62 * fondu
-      ;(miroirCadre.material as THREE.MeshBasicMaterial).opacity = 0.78 * fondu
+      // Discrète : la garde tient sans limite de temps, elle ne doit donc pas
+      // masquer la piste pendant toute la course. On la devine, le reflet la
+      // rappelle par éclats — juste assez pour savoir qu'on est couvert.
+      const respire = 0.5 + Math.sin(time * 2.4) * 0.5 // 0 → 1, lent
+      // Presque un fantôme : la garde tient sans limite de temps, elle ne doit
+      // surtout pas voiler la piste. On ne la voit vraiment qu'au passage du
+      // reflet — le reste du temps, on la devine.
+      ;(miroirGlace.material as THREE.MeshBasicMaterial).opacity = 0.05 + respire * 0.08
+      ;(miroirCadre.material as THREE.MeshBasicMaterial).opacity = 0.08 + respire * 0.09
     }
 
     // ⛓️ Les chaînes : accrochées à la hanche, elles retombent au sol derrière
@@ -2620,6 +2932,29 @@ function tick(now?: number) {
     // Le pan de mur s'achève : il nous relance en l'air, même si l'on aurait
     // pu tenir plus longtemps. On ne court pas sur du vide.
     if (player.surMur !== 0 && !track.murA(distance, player.surMur)) player.lacheMur()
+
+    /*
+     * 😖 L'encaissement se déclenche sur le FRONT MONTANT de `stumble`.
+     *
+     * On le guette ici plutôt qu'aux cinq endroits qui font trébucher (mur,
+     * kunai, coup d'un rival, armure entamée…) : un seul point d'écoute, et
+     * aucune source ne peut être oubliée en chemin.
+     */
+    if (stumble > stumblePrec) player.geste('impact')
+    stumblePrec = stumble
+
+    // 🥴 Empoisonné, aveuglé ou entravé : la foulée devient bancale.
+    player.gene = time < senbonFin || time < fumigeneFin || time < kusarigamaFin
+
+    /*
+     * 🔥 La foulée s'emballe sous le Souffle de Vent et dans le sprint final.
+     *
+     * On ne réutilise PAS `inSprintZone()` : elle englobe aussi le départ
+     * canon, où l'on martèle sans avoir encore commencé à courir. Le coureur
+     * sprinterait sur la ligne de départ.
+     */
+    player.presse =
+      time < ventFin || distance >= COURSE_LENGTH - SPRINT_ZONE
 
     // Trébuchement : toucher un obstacle RALENTIT (on ne meurt pas, c'est une course)
     // Sur la paroi on est hors de la piste : rien ne peut nous faucher.

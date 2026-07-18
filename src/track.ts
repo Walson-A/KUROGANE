@@ -292,12 +292,21 @@ export class Track {
       }
     }
 
-    // Les jarres, elles, restent posées au sol : rien ne bouge, seule la dorée
-    // pivote lentement pour se signaler de loin.
+    // Les jarres restent posées au sol : rien ne bouge, seule la dorée pivote
+    // lentement et RESPIRE pour se signaler de loin. Le battement n'est pas de
+    // la décoration : c'est le seul mouvement de la piste qui dise « celle-ci
+    // vaut le détour », et il se repère du coin de l'œil, en pleine course.
     for (const j of this.jarres) {
       if (!j.active) continue
       j.mesh.position.z += dz
-      if (j.kind === 'doree') j.mesh.rotation.y = this.tempsRouleaux * 1.1
+      if (j.kind === 'doree') {
+        j.mesh.rotation.y = this.tempsRouleaux * 1.1
+        const battement = 1 + Math.sin(this.tempsRouleaux * 3.4) * 0.14
+        // Les deux derniers enfants sont le halo et l'aura (cf. makeJarreMesh)
+        const n = j.mesh.children.length
+        j.mesh.children[n - 2].scale.setScalar(battement)
+        j.mesh.children[n - 1].scale.setScalar(battement)
+      }
       if (j.mesh.position.z > DESPAWN_Z) {
         j.active = false
         j.mesh.visible = false
@@ -773,6 +782,48 @@ function makeJarreMesh(kind: JarreKind): THREE.Group {
   col.position.y = 0.69
 
   g.add(ventre, col)
+
+  /*
+   * ————— La surbrillance —————
+   * Une poterie brune sur un sol brun, dans une nuit indigo, à 30 m/s : on la
+   * voyait au moment de la percuter, jamais avant. Or il faut DÉCIDER de
+   * frapper une grappe une seconde à l'avance.
+   *
+   * Deux couches, parce qu'elles répondent à deux questions différentes :
+   *  · le halo au SOL dit OÙ elle est — sur quelle ligne, à quelle distance ;
+   *  · l'aura autour du corps dit CE QUE c'est — et la dorée s'y distingue
+   *    d'un coup d'œil, ce qui vaut le détour qu'elle demande.
+   *
+   * Additif et sans écriture de profondeur : ça brille dans la nuit sans
+   * jamais masquer ce qu'il y a derrière.
+   */
+  const teinte = doree ? 0xffd98a : 0x9fc4ff
+  const halo = new THREE.Mesh(
+    new THREE.CircleGeometry(doree ? 0.62 : 0.5, 20),
+    new THREE.MeshBasicMaterial({
+      color: teinte,
+      transparent: true,
+      opacity: doree ? 0.4 : 0.22,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+    })
+  )
+  halo.rotation.x = -Math.PI / 2
+  halo.position.y = 0.02 // juste au-dessus du sol, sinon il z-fight avec lui
+
+  const aura = new THREE.Mesh(
+    new THREE.SphereGeometry(doree ? 0.56 : 0.48, 12, 10),
+    new THREE.MeshBasicMaterial({
+      color: teinte,
+      transparent: true,
+      opacity: doree ? 0.3 : 0.14,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+    })
+  )
+  aura.position.y = 0.4
+
+  g.add(halo, aura)
   return g
 }
 
