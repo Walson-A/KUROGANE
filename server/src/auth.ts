@@ -1,6 +1,7 @@
 import { betterAuth } from 'better-auth'
 import { anonymous, bearer } from 'better-auth/plugins'
 import { pool } from './db.js'
+import { fusionner } from './profil.js'
 
 /**
  * ————— L'AUTHENTIFICATION —————
@@ -31,6 +32,15 @@ import { pool } from './db.js'
  */
 const secret = process.env.AUTH_SECRET
 
+/**
+ * Google est-il configuré ? Il faut les DEUX clés, obtenues dans la Google
+ * Cloud Console. Sans elles, le jeu masque simplement le bouton : mieux vaut
+ * une option en moins qu'un bouton qui mène à une page d'erreur.
+ */
+export const GOOGLE_DISPO = Boolean(
+  process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET
+)
+
 if (!secret && process.env.NODE_ENV === 'production') {
   // En production on refuse de démarrer plutôt que de tourner avec un secret
   // par défaut : un serveur qui marche « quand même » est le pire des cas,
@@ -53,9 +63,40 @@ export const auth = pool
         requireEmailVerification: false,
       },
 
+      /**
+       * ————— Se connecter avec Google —————
+       * Activé SEULEMENT si les deux clés sont fournies. Sans elles, le bouton
+       * Google reste masqué côté jeu et tout le reste continue de marcher : un
+       * déploiement sans clés ne doit pas tomber en panne, juste proposer moins.
+       */
+      ...(GOOGLE_DISPO
+        ? {
+            socialProviders: {
+              google: {
+                clientId: process.env.GOOGLE_CLIENT_ID!,
+                clientSecret: process.env.GOOGLE_CLIENT_SECRET!,
+              },
+            },
+          }
+        : {}),
+
       plugins: [
-        // Le compte invisible : on joue d'abord, on s'inscrit si on veut.
-        anonymous(),
+        /*
+         * Le compte invisible : on joue d'abord, on s'inscrit si on veut.
+         *
+         * `onLinkAccount` est LE moment critique : quand un joueur anonyme se
+         * connecte pour de bon, Better Auth crée un nouveau compte et supprime
+         * l'ancien. Sans cette reprise, il perdrait ses Mon et ses achats
+         * exactement au moment où il décide enfin de s'inscrire.
+         */
+        anonymous({
+          onLinkAccount: async ({ anonymousUser, newUser }: any) => {
+            const avant = anonymousUser?.user?.id
+            const apres = newUser?.user?.id
+            if (!avant || !apres) return
+            await fusionner(avant, apres)
+          },
+        }),
         // Le jeu est une application, pas un site : il garde un jeton et
         // l'envoie en en-tête, plutôt que de dépendre des cookies.
         bearer(),

@@ -28,6 +28,7 @@ type ScreenName =
   | 'lobby'
   | 'results'
   | 'boutique'
+  | 'compte'
 
 export interface MenuCallbacks {
   onSolo(): void
@@ -57,6 +58,10 @@ export interface MenuCallbacks {
   onBoutique(): void
   /** Le joueur achete un article — le serveur tranche */
   onAcheter(code: string): void
+  /** Le joueur veut securiser son compte avec Google */
+  onGoogle(): void
+  /** Le joueur se deconnecte */
+  onDeconnexion(): void
 }
 
 /**
@@ -164,6 +169,13 @@ export class Menu {
     bourseHisui: document.getElementById('bourseHisui')!,
     boutiqueListe: document.getElementById('boutiqueListe')!,
     boutiqueVide: document.getElementById('boutiqueVide')!,
+    // ————— Compte —————
+    compteTitre: document.getElementById('compteTitre')!,
+    compteDetail: document.getElementById('compteDetail')!,
+    compteAlerte: document.getElementById('compteAlerte')!,
+    compteAide: document.getElementById('compteAide')!,
+    btnGoogle: document.getElementById('btnGoogle')!,
+    btnDeconnexion: document.getElementById('btnDeconnexion')!,
   }
 
   constructor(cb: MenuCallbacks) {
@@ -181,6 +193,7 @@ export class Menu {
       lobby: document.getElementById('scr-lobby')!,
       results: document.getElementById('scr-results')!,
       boutique: document.getElementById('scr-boutique')!,
+      compte: document.getElementById('scr-compte')!,
     }
 
     // — Écran-titre —
@@ -190,6 +203,9 @@ export class Menu {
     document.getElementById('btnOptions')!.addEventListener('click', () => this.show('options'))
     document.getElementById('btnHelp')!.addEventListener('click', () => this.show('help'))
     document.getElementById('btnBoutique')!.addEventListener('click', () => cb.onBoutique())
+    document.getElementById('btnCompte')!.addEventListener('click', () => this.show('compte'))
+    this.el.btnGoogle.addEventListener('click', () => cb.onGoogle())
+    this.el.btnDeconnexion.addEventListener('click', () => cb.onDeconnexion())
     this.el.cancel.addEventListener('click', () => cb.onCancel())
 
     /*
@@ -578,6 +594,47 @@ export class Menu {
 
   showBoutique() {
     this.show('boutique')
+  }
+
+  // ————— Le compte —————
+
+  /**
+   * Reflète l'état du compte.
+   *
+   * `anonyme` vient du serveur. Le ton change du tout au tout : un compte
+   * anonyme mérite un avertissement — ses Mon tiennent à un navigateur — là où
+   * un compte Google n'a besoin que d'être constaté.
+   */
+  setCompte(opts: {
+    anonyme: boolean
+    email: string | null
+    googleDispo: boolean
+    connecte: boolean
+  }) {
+    const { anonyme, email, googleDispo, connecte } = opts
+
+    if (!connecte) {
+      // Serveur injoignable : ni compte, ni promesse qu'on ne peut pas tenir.
+      this.el.compteTitre.textContent = 'Hors ligne'
+      this.el.compteDetail.textContent = "Le serveur ne répond pas — tes Mon ne sont pas accessibles."
+      this.el.compteAlerte.classList.add('hidden')
+      this.el.btnGoogle.classList.add('hidden')
+      this.el.btnDeconnexion.classList.add('hidden')
+      this.el.compteAide.classList.add('hidden')
+      return
+    }
+
+    this.el.compteTitre.textContent = anonyme ? 'Compte invité' : 'Compte connecté'
+    this.el.compteDetail.textContent = anonyme
+      ? 'Tu joues sans inscription. Tes Mon sont gardés côté serveur.'
+      : (email ?? 'Ta progression te suit sur tous tes appareils.')
+
+    this.el.compteAlerte.classList.toggle('hidden', !anonyme)
+    this.el.compteAide.classList.toggle('hidden', !anonyme)
+    // Le bouton Google n'apparaît que s'il MÈNE quelque part : sans les clés
+    // côté serveur, mieux vaut pas de bouton qu'un bouton qui échoue.
+    this.el.btnGoogle.classList.toggle('hidden', !anonyme || !googleDispo)
+    this.el.btnDeconnexion.classList.toggle('hidden', anonyme)
   }
 
   /** Une retouche du skin : on sauve et on réapplique (aperçu + jeu en direct). */

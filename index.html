@@ -125,6 +125,7 @@
               <b id="pickName">Yasuke</b>
             </span>
           </button>
+          <button id="btnCompte" class="ghost" aria-label="Ton compte">👤</button>
           <button id="btnOptions" class="ghost" aria-label="Options">⚙️</button>
           <button id="btnHelp" class="ghost" aria-label="Comment jouer">❓</button>
         </div>
@@ -139,6 +140,40 @@
             <span class="chev">🏪</span>
           </button>
         </div>
+      </section>
+
+      <!-- Ton compte : anonyme par défaut, sécurisable avec Google -->
+      <section id="scr-compte" class="screen hidden">
+        <header class="head">
+          <button class="back" data-back aria-label="Retour">‹</button>
+          <h2>Ton compte</h2>
+        </header>
+
+        <div class="etat-compte" id="etatCompte">
+          <b id="compteTitre">Compte invité</b>
+          <small id="compteDetail">Tes Mon sont gardés sur ce serveur.</small>
+        </div>
+
+        <!-- L'avertissement : il ne s'affiche QUE pour un compte anonyme -->
+        <p class="alerte hidden" id="compteAlerte">
+          ⚠️ Ce compte est lié à <b>ce navigateur seulement</b>. Si tu vides tes
+          données ou changes d'appareil, tu perds tes Mon et tes achats.
+        </p>
+
+        <div class="stack">
+          <button id="btnGoogle" class="hidden">
+            <span class="g">G</span> CONTINUER AVEC GOOGLE
+          </button>
+          <button id="btnDeconnexion" class="secondary hidden">SE DÉCONNECTER</button>
+        </div>
+
+        <p class="lead" id="compteAide">
+          Te connecter attache ta progression à ton compte Google : tu la
+          retrouves sur n'importe quel appareil. <b>Rien n'est perdu</b> — tes
+          Mon et tes couleurs suivent.
+        </p>
+
+        <button class="primary" data-back>OK</button>
       </section>
 
       <!-- La boutique — les vignettes sont fabriquées par menu.ts -->

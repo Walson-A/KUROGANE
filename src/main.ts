@@ -34,6 +34,11 @@ import {
   mesArticles,
   couleursDebloquees,
   acheter as acheterArticle,
+  connexionGoogle,
+  deconnecter,
+  estAnonyme,
+  monEmail,
+  googleActif,
 } from './compte'
 import { souffleDeVent, jouerBruit, setVolumeSfx, sonDeSoin } from './sfx'
 import type { Quality } from './settings'
@@ -2542,6 +2547,7 @@ function majCompte() {
  */
 void connecter().then(async () => {
   majAffichageBourse()
+  majCompte()
   if (monProfil()) {
     // On charge le catalogue en fond : c'est lui qui porte les couleurs
     // achetées, et le vestiaire doit les proposer sans attendre une visite

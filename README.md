@@ -883,6 +883,43 @@ range l'identifiant du compte dans une **Map privée**, jamais dans l'état
 synchronisé — le compte d'un joueur ne regarde pas ses adversaires. Sans jeton
 (hors-ligne), on court quand même : on ne gagne simplement rien.
 
+### Se connecter — et ne rien perdre
+
+Par défaut, le joueur est **anonyme** : il court dès la première seconde, sans
+inscription ni email (ils sont souvent mineurs). Ce compte vit dans le
+navigateur — c'est confortable, mais **perdable** : vider ses données ou changer
+de téléphone, et les Mon s'en vont. L'écran « 👤 Ton compte » le dit clairement
+et propose de se connecter avec Google.
+
+> ⚠️ **La fusion est le moment critique.** Quand un joueur anonyme se connecte,
+> Better Auth crée un NOUVEAU compte et supprime l'ancien. Sans reprise, il
+> perdrait tout **exactement au moment où il décide enfin de s'inscrire**. Le
+> greffon `anonymous` appelle donc `fusionner()` : monnaies additionnées, achats
+> repris (sans doublon), journal transféré, le tout en une transaction.
+> *Vérifié* : 200 Mon + 5 Hisui + une couleur → tout retrouvé sur le compte
+> Google ; et racheter la même couleur des deux côtés ne la duplique pas.
+
+**Le retour de Google** méritait une astuce. Après l'aller-retour, Better Auth
+pose un **cookie** sur le domaine du serveur — or le jeu vit sur un autre
+domaine (Vercel) et fonctionne au **jeton**, pas au cookie, que les navigateurs
+bloquent de plus en plus quand il est tiers.
+
+Google ne renvoie donc pas vers le jeu, mais vers `/api/relais` **sur le
+serveur** : à cet instant le navigateur est sur le domaine du serveur, le cookie
+est de première partie et lisible. Le relais lit la session et renvoie vers le
+jeu avec le jeton dans le **fragment** (`#jeton=…`) — jamais dans un paramètre
+`?`, car un fragment n'est pas envoyé aux serveurs et n'atterrit ni dans les
+journaux ni dans les en-têtes `Referer`. Le jeu le lit puis efface aussitôt la
+barre d'adresse.
+
+> ⚠️ Le relais **vérifie la destination** contre la liste blanche d'origines.
+> Sans ce contrôle, un lien forgé `/api/relais?vers=https://site-pirate`
+> repartirait avec le jeton de session d'un joueur — donc son compte et ses
+> achats. *Vérifié* : destination inconnue → 400, destination absente → 400.
+
+Sans les clés Google, **le bouton reste masqué** et tout le reste fonctionne :
+un déploiement sans clés propose moins, il ne tombe pas en panne.
+
 ### La boutique
 
 Elle ne vend **que des couleurs** — huit teintes traditionnelles, de 500 文 à

@@ -32,6 +32,9 @@ export interface Profil {
   mon: number
   hisui: number
   guerrier: string
+  /** Compte anonyme = perdable : le jeu propose de le securiser. */
+  anonyme?: boolean
+  email?: string | null
 }
 
 export interface Article {
@@ -109,6 +112,80 @@ async function creerCompteAnonyme(): Promise<boolean> {
   }
 }
 
+/** Google est-il configuré côté serveur ? (sinon on masque le bouton) */
+let googleDispo = false
+export function googleActif() {
+  return googleDispo
+}
+
+/** Es-tu un compte anonyme (donc perdable) ou un vrai compte ? */
+let anonyme = true
+export function estAnonyme() {
+  return anonyme
+}
+
+/** L'email du compte, s'il y en a un. */
+let email: string | null = null
+export function monEmail() {
+  return email
+}
+
+/**
+ * ————— Le retour de Google —————
+ *
+ * Le serveur nous renvoie avec le jeton dans le FRAGMENT (`#jeton=…`). On le
+ * récupère, on le garde, puis on NETTOIE la barre d'adresse : un jeton de
+ * session n'a rien à faire dans l'historique du navigateur, ni dans un lien
+ * qu'on partagerait par mégarde.
+ *
+ * Renvoie 'ok', 'echec' ou null (retour normal, sans connexion en cours).
+ */
+function lireRetourConnexion(): 'ok' | 'echec' | null {
+  const h = location.hash
+  if (!h || h.length < 2) return null
+
+  const params = new URLSearchParams(h.slice(1))
+  const recu = params.get('jeton')
+  const echec = params.get('connexion') === 'echec'
+  if (!recu && !echec) return null
+
+  // On efface le fragment SANS recharger la page ni ajouter une entrée à
+  // l'historique — sinon le bouton « précédent » ramènerait sur le jeton.
+  history.replaceState(null, '', location.pathname + location.search)
+
+  if (echec || !recu) return 'echec'
+  jeton = recu
+  try {
+    localStorage.setItem(CLE_JETON, recu)
+  } catch {
+    /* navigation privée : on jouera cette session-ci, sans être reconnu ensuite */
+  }
+  return 'ok'
+}
+
+/**
+ * Range ce que le serveur vient de dire de l'identité du joueur.
+ *
+ * Par défaut on se considère ANONYME : en cas de doute, le jeu proposera de
+ * sécuriser un compte qui l'était déjà — sans gravité. L'erreur inverse
+ * laisserait un joueur croire ses Mon à l'abri alors qu'ils sont perdables.
+ */
+function retenirIdentite() {
+  anonyme = profil?.anonyme !== false
+  email = profil?.email ?? null
+}
+
+/** Demande au serveur ce qu'il sait faire (Google configuré ou non). */
+async function sonderServeur() {
+  try {
+    const r = await fetch(`${API}/sante`)
+    const d = await r.json()
+    googleDispo = d?.google === true
+  } catch {
+    googleDispo = false
+  }
+}
+
 /**
  * Se connecte au démarrage : on réutilise le jeton de l'appareil s'il est
  * encore valable, sinon on ouvre un compte anonyme.
@@ -117,15 +194,23 @@ async function creerCompteAnonyme(): Promise<boolean> {
  * rester jouable. On se retrouve simplement sans solde ni boutique.
  */
 export async function connecter(): Promise<Profil | null> {
-  try {
-    jeton = localStorage.getItem(CLE_JETON)
-  } catch {
-    jeton = null
+  // Un retour de Google l'emporte sur le jeton déjà en mémoire : c'est le
+  // nouveau compte, éventuellement fusionné avec l'ancien anonyme.
+  const retour = lireRetourConnexion()
+  void sonderServeur()
+
+  if (retour !== 'ok') {
+    try {
+      jeton = localStorage.getItem(CLE_JETON)
+    } catch {
+      jeton = null
+    }
   }
 
   if (jeton) {
     try {
       profil = await appel('/api/profil')
+      retenirIdentite()
       return profil
     } catch (e: any) {
       // 401 = jeton périmé ou révoqué : on repart d'un compte neuf. Toute autre
@@ -139,10 +224,73 @@ export async function connecter(): Promise<Profil | null> {
   if (!(await creerCompteAnonyme())) return null
   try {
     profil = await appel('/api/profil')
+    retenirIdentite()
   } catch {
     profil = null
   }
   return profil
+}
+
+/**
+ * ————— Se connecter avec Google —————
+ *
+ * On ne quitte PAS le jeu vers Google directement : on passe par le relais du
+ * serveur (`/api/relais`), qui seul saura récupérer le jeton après l'aller-retour
+ * — cf. le commentaire détaillé dans server/src/index.ts.
+ *
+ * Si le joueur était anonyme, Better Auth fusionne son ancien compte dans le
+ * nouveau : ses Mon et ses achats le suivent.
+ */
+export async function connexionGoogle(): Promise<{ ok: boolean; raison?: string }> {
+  try {
+    // Où Google devra nous ramener : le relais du serveur, qui renverra ensuite
+    // ici même avec le jeton.
+    const relais = `${API}/api/relais?vers=${encodeURIComponent(location.origin + location.pathname)}`
+
+    const r = await fetch(`${API}/api/auth/sign-in/social`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        // Le jeton anonyme actuel : c'est LUI qui permet à Better Auth de
+        // savoir quel compte fusionner dans le nouveau.
+        ...(jeton ? { authorization: `Bearer ${jeton}` } : {}),
+      },
+      body: JSON.stringify({ provider: 'google', callbackURL: relais }),
+    })
+    const data = await r.json().catch(() => null)
+    if (!r.ok || !data?.url) return { ok: false, raison: data?.message ?? 'indisponible' }
+
+    // On quitte le jeu vers Google. Le retour se fera par le relais.
+    location.href = data.url
+    return { ok: true }
+  } catch {
+    return { ok: false, raison: 'hors-ligne' }
+  }
+}
+
+/**
+ * Se déconnecte : on oublie le jeton et on repart sur un compte anonyme neuf.
+ *
+ * ⚠️ Les Mon restent attachés au compte QUITTÉ, pas à l'appareil. Se
+ * déconnecter d'un compte anonyme revient donc à l'abandonner pour de bon —
+ * c'est au jeu de prévenir avant.
+ */
+export async function deconnecter(): Promise<void> {
+  try {
+    await appel('/api/auth/sign-out', {})
+  } catch {
+    /* même si le serveur ne répond pas, on oublie le jeton localement */
+  }
+  jeton = null
+  profil = null
+  articles = []
+  anonyme = true
+  email = null
+  try {
+    localStorage.removeItem(CLE_JETON)
+  } catch {
+    /* rien à faire */
+  }
 }
 
 /** Relit le solde (après une course, par exemple). */
@@ -150,6 +298,7 @@ export async function rafraichirProfil(): Promise<Profil | null> {
   if (!jeton) return null
   try {
     profil = await appel('/api/profil')
+    retenirIdentite()
   } catch {
     // On garde l'ancien solde à l'écran plutôt que d'afficher un vide anxiogène
   }

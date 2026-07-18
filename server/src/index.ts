@@ -2,7 +2,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'node:ht
 import { Server, LobbyRoom, WebSocketTransport } from 'colyseus'
 import { toNodeHandler } from 'better-auth/node'
 import { RaceRoom } from './RaceRoom.js'
-import { auth } from './auth.js'
+import { auth, GOOGLE_DISPO } from './auth.js'
 import { baseDispo, migrer } from './db.js'
 import { assureProfil } from './profil.js'
 import { acheter, catalogue } from './boutique.js'
@@ -110,7 +110,7 @@ async function lireCorps(req: IncomingMessage): Promise<any> {
 function avecSession(
   req: IncomingMessage,
   res: ServerResponse,
-  suite: (joueur: string, nom?: string) => Promise<void>
+  suite: (joueur: string, nom: string | undefined, user: any) => Promise<void>
 ) {
   if (!auth) {
     repondre(res, 503, { erreur: 'comptes indisponibles' }, req)
@@ -123,7 +123,7 @@ function avecSession(
         repondre(res, 401, { erreur: 'non connecté' }, req)
         return
       }
-      await suite(session.user.id, session.user.name)
+      await suite(session.user.id, session.user.name, session.user)
     })
     .catch((e) => {
       console.error('api :', e)
@@ -205,9 +205,16 @@ gameServer.listen(port).then(() => {
     // Le jeu ne fait que LIRE ici. Aucun solde n'est jamais accepté depuis le
     // navigateur : c'est le serveur qui crédite, à la fin d'une course.
     if (req.url === '/api/profil') {
-      avecSession(req, res, async (joueur, nom) => {
+      avecSession(req, res, async (joueur, nom, user) => {
         const profil = await assureProfil(joueur, nom)
-        repondre(res, 200, profil, req)
+        // On joint l'identite : le jeu doit savoir s'il s'agit d'un compte
+        // anonyme (donc perdable) pour proposer de le securiser.
+        repondre(
+          res,
+          200,
+          { ...profil, anonyme: user?.isAnonymous === true, email: user?.email ?? null },
+          req
+        )
       })
       return
     }
@@ -242,12 +249,85 @@ gameServer.listen(port).then(() => {
       return
     }
 
+    /*
+     * ————— Le relais de retour de Google —————
+     *
+     * Le problème : après un aller-retour chez Google, Better Auth crée la
+     * session et pose un COOKIE sur le domaine du serveur. Or le jeu vit sur un
+     * AUTRE domaine (Vercel) et fonctionne au jeton, pas au cookie — et les
+     * navigateurs bloquent de plus en plus les cookies tiers.
+     *
+     * La parade : Google ne renvoie pas directement vers le jeu, mais ICI.
+     * À cet instant précis, le navigateur est sur le domaine du serveur, donc le
+     * cookie est de première partie et parfaitement lisible. On lit la session,
+     * et on renvoie vers le jeu avec le jeton dans le FRAGMENT de l'adresse
+     * (`#jeton=…`).
+     *
+     * Le fragment plutôt qu'un paramètre `?` : il n'est jamais envoyé aux
+     * serveurs, n'apparaît donc ni dans les journaux ni dans les en-têtes
+     * `Referer`. Le jeu le lit puis l'efface aussitôt de la barre d'adresse.
+     */
+    if (req.url?.startsWith('/api/relais')) {
+      const url = new URL(req.url, 'http://x')
+      const vers = url.searchParams.get('vers') ?? ''
+
+      /*
+       * ⚠️ LA vérification qui compte : la destination doit figurer dans la
+       * liste blanche. Sans elle, n'importe qui pourrait forger un lien
+       * `/api/relais?vers=https://site-pirate` et repartir avec le jeton de
+       * session d'un joueur — donc son compte et ses achats.
+       */
+      let cible: URL
+      try {
+        cible = new URL(vers)
+      } catch {
+        repondre(res, 400, { erreur: 'destination invalide' })
+        return
+      }
+      if (!ORIGINES.has(cible.origin)) {
+        console.warn(`⚠️  relais refusé vers une origine inconnue : ${cible.origin}`)
+        repondre(res, 400, { erreur: 'destination non autorisée' })
+        return
+      }
+
+      if (!auth) {
+        res.writeHead(302, { location: cible.origin })
+        res.end()
+        return
+      }
+
+      auth.api
+        .getSession({ headers: enTetes(req) })
+        .then((session) => {
+          // Pas de session = la connexion a échoué ou a été annulée. On renvoie
+          // au jeu sans jeton : il repartira simplement en anonyme.
+          const jeton = session?.session?.token
+          const dest = jeton
+            ? `${cible.origin}${cible.pathname}#jeton=${encodeURIComponent(jeton)}`
+            : `${cible.origin}${cible.pathname}#connexion=echec`
+          res.writeHead(302, { location: dest })
+          res.end()
+        })
+        .catch(() => {
+          res.writeHead(302, { location: `${cible.origin}#connexion=echec` })
+          res.end()
+        })
+      return
+    }
+
     // ————— Un point de santé —————
     // Permet de vérifier d'un coup d'œil, depuis un navigateur, que le
     // déploiement répond et si les comptes sont bien actifs.
     if (req.url === '/sante') {
-      res.writeHead(200, { 'content-type': 'application/json' })
-      res.end(JSON.stringify({ ok: true, base: baseDispo(), comptes: authHandler !== null }))
+      // Le jeu interroge cette route pour savoir ce que le serveur sait faire
+      // (Google configuré ?). Elle a donc besoin des en-têtes CORS comme les
+      // autres — sans eux, le navigateur bloque et le jeu croit Google absent.
+      repondre(
+        res,
+        200,
+        { ok: true, base: baseDispo(), comptes: authHandler !== null, google: GOOGLE_DISPO },
+        req
+      )
       return
     }
 
