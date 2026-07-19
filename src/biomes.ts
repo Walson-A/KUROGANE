@@ -89,6 +89,117 @@ export interface Biome {
    * puisque les allonger est justement ce qu'on veut.
    */
   fabriquePlateforme?: (hauteur: number) => THREE.Group
+
+  /**
+   * La MATIÈRE du sol : une tuile qui se répète sous les pieds du joueur.
+   *
+   * ⚠️ Elle est MULTIPLIÉE par `sol` — c'est un relief, pas une couleur. D'où
+   * un dessin qui tourne autour du blanc : un gris moyen assombrirait tout le
+   * biome au lieu de le texturer. Voir `faitTexture`.
+   *
+   * Sans elle, le sol est un aplat parfait — et un aplat parfait bordé de deux
+   * pointillés réguliers, l'œil le lit comme du bitume, quoi qu'on plante
+   * autour. C'est cette texture qui dit « terre battue » plutôt que « route ».
+   */
+  texSol?: () => THREE.Texture
+  /** Combien de mètres couvre une tuile de `texSol` (défaut : 4). */
+  tuileSol?: number
+}
+
+/* ————————————————————————————————————————————————————————————————
+ *  Les sols : des tuiles peintes au canvas
+ * ———————————————————————————————————————————————————————————————— */
+
+/** Côté de la tuile, en pixels. 256 suffit : on la voit toujours en biais. */
+const TUILE = 256
+
+/**
+ * Peint une tuile RÉPÉTABLE et en fait une texture.
+ *
+ * Le dessin reçoit `tache()`, qui recopie automatiquement chaque forme de
+ * l'autre côté des bords : sans ça, une feuille posée près du bord serait
+ * tranchée net et l'on verrait la grille de répétition sur toute la piste.
+ *
+ * ⚠️ Les textures sont créées à la DEMANDE et gardées : en fabriquer une par
+ * course ferait fuir la mémoire vidéo, et les fabriquer toutes au chargement
+ * ferait payer les quatre biomes à qui n'en verra qu'un.
+ */
+function faitTexture(dessin: (t: Peintre) => void): THREE.Texture {
+  const cv = document.createElement('canvas')
+  cv.width = cv.height = TUILE
+  const ctx = cv.getContext('2d')!
+
+  const peintre: Peintre = {
+    ctx,
+    fond(couleur) {
+      ctx.fillStyle = couleur
+      ctx.fillRect(0, 0, TUILE, TUILE)
+    },
+    tache(x, y, forme) {
+      // Les 9 décalages : la forme déborde d'un bord et revient par l'autre.
+      for (let dx = -1; dx <= 1; dx++) {
+        for (let dy = -1; dy <= 1; dy++) {
+          ctx.save()
+          ctx.translate(x + dx * TUILE, y + dy * TUILE)
+          forme(ctx)
+          ctx.restore()
+        }
+      }
+    },
+  }
+  dessin(peintre)
+
+  const tex = new THREE.CanvasTexture(cv)
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping
+  tex.colorSpace = THREE.SRGBColorSpace
+  // Le sol est vu en enfilade, donc sous un angle très rasant : sans
+  // anisotropie il part en bouillie scintillante dès dix mètres.
+  tex.anisotropy = 4
+  return tex
+}
+
+interface Peintre {
+  ctx: CanvasRenderingContext2D
+  fond(couleur: string): void
+  /** Dessine `forme` en (x, y), et ses recopies de l'autre côté des bords. */
+  tache(x: number, y: number, forme: (ctx: CanvasRenderingContext2D) => void): void
+}
+
+/** Un tirage à graine fixe : la texture doit être la même pour les 2 joueurs. */
+function dé(graine: number): () => number {
+  let a = graine >>> 0
+  return () => {
+    a = (a + 0x6d2b79f5) | 0
+    let t = Math.imul(a ^ (a >>> 15), 1 | a)
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296
+  }
+}
+
+/** Une ellipse pleine, inclinée — la brique de base de tous les sols. */
+function galet(
+  ctx: CanvasRenderingContext2D,
+  rx: number,
+  ry: number,
+  angle: number,
+  couleur: string
+) {
+  ctx.rotate(angle)
+  ctx.fillStyle = couleur
+  ctx.beginPath()
+  ctx.ellipse(0, 0, rx, ry, 0, 0, Math.PI * 2)
+  ctx.fill()
+}
+
+/** Un cache par biome : voir `faitTexture`. */
+const _texCache = new Map<string, THREE.Texture>()
+function texturePour(clé: string, dessin: (t: Peintre) => void): THREE.Texture {
+  let t = _texCache.get(clé)
+  if (!t) {
+    t = faitTexture(dessin)
+    _texCache.set(clé, t)
+  }
+  return t
 }
 
 /**
@@ -316,20 +427,105 @@ const BAMBOUS: Biome = {
    * On garde donc 6 m, et l'on remplit.
    */
   ecartDecor: 6,
+
+  /*
+   * ————— Le sol de la bambouseraie —————
+   *
+   * Un sentier de terre battue sous une litière de bambou. Trois couches, dans
+   * l'ordre où on les pose, qui répondent chacune à un défaut précis :
+   *
+   *  · la TERRE — de larges taches lentes, plus claires au milieu. C'est ce qui
+   *    casse l'aplat : un sol parfaitement uni se lit comme du revêtement, quel
+   *    que soit le décor planté autour ;
+   *  · la LITIÈRE — des lames de feuilles sèches, toutes orientées à peu près
+   *    dans le sens de la course. L'orientation n'est pas un caprice : couchées
+   *    en travers, elles font des barres qui ressemblent à des marquages, et on
+   *    revient exactement au problème qu'on essaie de résoudre ;
+   *  · la MOUSSE — quelques plaques sombres et froides, qui donnent l'humidité
+   *    du sous-bois et empêchent la terre de virer au désert.
+   *
+   * Tout tourne autour du blanc cassé : le résultat est multiplié par `sol`
+   * (0x24301f, un vert très sombre), donc la tuile ne fait que le moduler.
+   */
+  texSol: () =>
+    texturePour('bambous', (t) => {
+      const r = dé(0x8a3b)
+      t.fond('#efe9dc')
+
+      // La terre : de grandes taches douces, du plus clair au plus creusé.
+      for (let i = 0; i < 26; i++) {
+        const v = 200 + Math.floor(r() * 46) // jamais en dessous de 200 : voir plus haut
+        t.tache(r() * TUILE, r() * TUILE, (ctx) =>
+          galet(ctx, 26 + r() * 40, 18 + r() * 30, r() * Math.PI, `rgb(${v},${v - 4},${v - 12})`)
+        )
+      }
+      // Les creux du chemin : plus sombres, plus rares, plus étirés en long.
+      for (let i = 0; i < 9; i++) {
+        const v = 168 + Math.floor(r() * 24)
+        t.tache(r() * TUILE, r() * TUILE, (ctx) =>
+          galet(ctx, 12 + r() * 22, 30 + r() * 40, (r() - 0.5) * 0.5, `rgb(${v},${v - 6},${v - 16})`)
+        )
+      }
+
+      // La mousse : sombre et légèrement verte, en plaques molles.
+      for (let i = 0; i < 12; i++) {
+        t.tache(r() * TUILE, r() * TUILE, (ctx) =>
+          galet(ctx, 8 + r() * 16, 7 + r() * 14, r() * Math.PI, `rgb(150,168,140)`)
+        )
+      }
+
+      // La litière : des lames sèches, dans le sens de la course (± 25°).
+      for (let i = 0; i < 90; i++) {
+        const chaud = r()
+        const c = `rgb(${228 - chaud * 34},${210 - chaud * 44},${170 - chaud * 46})`
+        t.tache(r() * TUILE, r() * TUILE, (ctx) =>
+          galet(ctx, 1.6 + r() * 1.4, 7 + r() * 9, (r() - 0.5) * 0.9, c)
+        )
+      }
+      // Quelques feuilles franchement claires : ce sont elles qu'on voit
+      // vraiment défiler, les autres ne font que peupler le fond.
+      for (let i = 0; i < 22; i++) {
+        t.tache(r() * TUILE, r() * TUILE, (ctx) =>
+          galet(ctx, 2 + r() * 1.6, 9 + r() * 11, (r() - 0.5) * 0.8, '#fbf4e2')
+        )
+      }
+    }),
+  tuileSol: 5,
+
   fabriqueDecor: (rng) => {
     const corps: Piece[] = []
     const feuilles: Piece[] = []
 
-    // ————— Plan rapproché : les tiges qu'on voit vraiment —————
-    const proches = 40 + Math.floor(rng() * 20)
-    for (let i = 0; i < proches; i++) {
+    /*
+     * ————— TROIS ÉTAGES, et le classement se fait sur le COÛT, pas la distance
+     *
+     * Le piège dans lequel je suis tombé deux fois : croire que « plan proche »
+     * et « plan lointain » suffisaient. Ça liait le DÉTAIL d'une tige à sa
+     * POSITION, et donc son prix aussi. Résultat, la bande la plus proche de la
+     * piste — celle qu'on voit le mieux, où le moindre trou saute aux yeux —
+     * était la MOINS fournie : mesuré, 8,4 tiges par mètre de largeur contre
+     * 11,5 pour le fond. Impossible d'en ajouter sans exploser le budget, une
+     * tige ornée coûtant douze fois une tige nue.
+     *
+     * On sépare donc les deux questions :
+     *   · DÉTAILLÉES (0→5 m)  — nœuds et feuillage. Peu nombreuses : ce sont
+     *     celles qu'on frôle, elles portent la lecture « bambou ».
+     *   · SIMPLES (0→11 m)    — de simples fûts à 6 pans. C'est ELLES qui
+     *     remplissent la bande proche, et elles ne coûtent presque rien.
+     *   · LOINTAINES (5→24 m) — 4 pans, quasi noires : la masse qui ferme
+     *     l'horizon.
+     *
+     * Les trois se chevauchent largement, donc plus aucune couture verticale.
+     */
+    const detaillees = 22 + Math.floor(rng() * 10)
+    for (let i = 0; i < detaillees; i++) {
       const h = 7 + rng() * 7
       const r = 0.085 + rng() * 0.05
-      const x = rng() * 5.5
+      const x = rng() * 5
       const z = (rng() - 0.5) * 22
       // Plus la tige est loin, plus elle est sombre : la profondeur se lit à la
       // valeur avant de se lire à la taille.
-      const recul = Math.min(1, x / 5.5)
+      const recul = Math.min(1, x / 5)
       const vert = teinte(0x6d8a42, 0x2f4423, recul * 0.65 + rng() * 0.2)
       const penche = (rng() - 0.5) * 0.14
 
@@ -374,22 +570,71 @@ const BAMBOUS: Biome = {
       }
     }
 
-    // ————— Plan lointain : la masse de la forêt —————
-    // Deux fois plus hautes, quasi noires, sans le moindre détail. C'est elles
-    // qui ferment l'horizon et donnent l'impression qu'on traverse quelque chose.
-    // Elles sont NOMBREUSES : c'est le rideau du fond, et le moindre trou
-    // dedans se voit comme un manque. Une tige lointaine ne coûte que quelques
-    // triangles, alors on en met beaucoup.
-    const loin = 60 + Math.floor(rng() * 30)
+    /*
+     * ————— Étage intermédiaire : le remplissage —————
+     *
+     * De simples fûts, sans nœuds ni feuillage, sur toute la bande proche. Ce
+     * sont eux qui font la DENSITÉ là où elle manquait : à trois fois moins de
+     * géométrie qu'une tige ornée, on peut en poser cinq fois plus.
+     *
+     * Ils gardent la hauteur et la teinte du premier plan — vus de la piste,
+     * rien ne les distingue d'une tige détaillée, sinon qu'on ne compte pas
+     * leurs nœuds à 28 m/s.
+     */
+    const simples = 130 + Math.floor(rng() * 50)
+    for (let i = 0; i < simples; i++) {
+      const h = 7 + rng() * 8
+      const r = 0.085 + rng() * 0.055
+      const x = rng() * 11
+      const recul = Math.min(1, x / 11)
+      corps.push({
+        geo: GEO.tigeCreuse.clone().scale(r, h, r),
+        couleur: teinte(0x6d8a42, 0x25361b, recul * 0.8 + rng() * 0.2),
+        x,
+        y: h / 2,
+        z: (rng() - 0.5) * 23,
+        rz: (rng() - 0.5) * 0.14,
+        rx: (rng() - 0.5) * 0.08,
+      })
+    }
+
+    /*
+     * ————— Plan lointain : la masse de la forêt —————
+     *
+     * Deux fois plus hautes, quasi noires, sans le moindre détail. C'est elles
+     * qui ferment l'horizon et donnent l'impression qu'on traverse quelque chose.
+     *
+     * ⚠️ CE QUI COMPTE ICI EST UNE DENSITÉ PAR SURFACE, PAS UN NOMBRE.
+     *
+     * L'erreur précédente : 75 tiges étalées sur 20 m de large, quand le plan
+     * rapproché en met 50 sur 5,5 m. Mesuré sommet par sommet, la matière
+     * s'effondrait d'un facteur **25** dès x = 10,5 m — le « rideau » n'était
+     * qu'une poignée de piquets isolés. Selon l'angle de la caméra, on voyait
+     * tantôt la bande dense, tantôt le vide derrière : d'où l'impression de
+     * bambou par à-coups alors que le comptage le long de la piste, lui, était
+     * parfaitement régulier.
+     *
+     * On raisonne donc en tiges par m² :
+     *   · plan rapproché ≈ 50 / (5,5 × 22)  = 0,41 /m²
+     *   · plan lointain  ≈ 230 / (18,5 × 24) = 0,52 /m²
+     *
+     * Le fond est volontairement un peu PLUS dense que le premier plan : c'est
+     * lui qui doit se lire comme une masse pleine, alors que devant on veut
+     * distinguer les tiges une à une.
+     *
+     * Le prix reste dérisoire : une tige lointaine fait 4 pans creux, soit
+     * 8 triangles, et le massif entier tient toujours en UN appel de dessin.
+     */
+    const loin = 200 + Math.floor(rng() * 60)
     for (let i = 0; i < loin; i++) {
       const h = 13 + rng() * 11
       const r = 0.11 + rng() * 0.08
       corps.push({
         geo: GEO.tigeLoin.clone().scale(r, h, r),
         couleur: teinte(0x2b3d22, 0x141d12, rng()),
-        // Jusqu'à 26 m : le rideau doit dépasser la portée de la brume (88 m),
-        // sinon on devine son bord en tournant la caméra.
-        x: 5.5 + rng() * 20,
+        // 5 → 24 m : le départ à 5 fait DÉBORDER ce plan sur l'intermédiaire
+        // (0 → 11), pour que les deux se mélangent au lieu de se toucher.
+        x: 5 + rng() * 19,
         y: h / 2,
         z: (rng() - 0.5) * 24,
         rz: (rng() - 0.5) * 0.1,
@@ -619,6 +864,43 @@ const VILLAGE: Biome = {
   ligne: 0x6b3a20,
   murCorps: 0x241610, // un mur de torchis noirci par le feu
   ecartDecor: 15,
+
+  /*
+   * Terre battue de village, jonchée de cendres et de débris calcinés. Les
+   * taches claires sont des braises retombées : elles doivent rester rares,
+   * sinon le sol se met à concurrencer les vrais feux du décor.
+   */
+  texSol: () =>
+    texturePour('village', (t) => {
+      const r = dé(0x51c2)
+      t.fond('#e8ded6')
+      for (let i = 0; i < 24; i++) {
+        const v = 176 + Math.floor(r() * 60)
+        t.tache(r() * TUILE, r() * TUILE, (ctx) =>
+          galet(ctx, 22 + r() * 40, 16 + r() * 30, r() * Math.PI, `rgb(${v},${v - 10},${v - 16})`)
+        )
+      }
+      // La cendre : des plaques grises et froides.
+      for (let i = 0; i < 16; i++) {
+        t.tache(r() * TUILE, r() * TUILE, (ctx) =>
+          galet(ctx, 10 + r() * 20, 8 + r() * 16, r() * Math.PI, 'rgb(214,210,206)')
+        )
+      }
+      // Les débris calcinés : petits, très sombres, éparpillés.
+      for (let i = 0; i < 60; i++) {
+        const v = 96 + Math.floor(r() * 40)
+        t.tache(r() * TUILE, r() * TUILE, (ctx) =>
+          galet(ctx, 1.4 + r() * 3, 2 + r() * 6, r() * Math.PI, `rgb(${v},${v - 6},${v - 8})`)
+        )
+      }
+      // Quelques braises retombées.
+      for (let i = 0; i < 7; i++) {
+        t.tache(r() * TUILE, r() * TUILE, (ctx) =>
+          galet(ctx, 1.5 + r() * 2, 1.5 + r() * 2, 0, 'rgb(255,236,206)')
+        )
+      }
+    }),
+  tuileSol: 6,
   fabriqueDecor: (rng) => {
     const corps: Piece[] = []
     const feux: Piece[] = []
@@ -713,6 +995,38 @@ const PONT: Biome = {
   ligne: 0x3d4560,
   murCorps: 0x2b3145, // la rambarde d'ardoise du pont — la teinte d'origine
   ecartDecor: 8,
+
+  /*
+   * Le tablier du pont : des PLANCHES, donc des bandes nettes en travers de la
+   * course. C'est le seul sol du jeu qui ait droit à un motif régulier, et ce
+   * n'est pas une entorse : une planche traverse toute la largeur, là où un
+   * marquage routier suit la course. La lecture est opposée.
+   *
+   * Et le défilement des joints donne à ce biome-là un repère de vitesse que
+   * le vide alentour lui refuse.
+   */
+  texSol: () =>
+    texturePour('pont', (t) => {
+      const r = dé(0x2f70)
+      t.fond('#e6e6ea')
+      const planches = 6
+      const pas = TUILE / planches
+      for (let i = 0; i < planches; i++) {
+        const v = 208 + Math.floor(r() * 40)
+        t.ctx.fillStyle = `rgb(${v},${v - 2},${v + 4})`
+        t.ctx.fillRect(0, i * pas, TUILE, pas - 2)
+        // Le joint entre deux planches.
+        t.ctx.fillStyle = 'rgb(150,150,162)'
+        t.ctx.fillRect(0, i * pas + pas - 2, TUILE, 2)
+        // Le fil du bois, dans le sens de la planche.
+        for (let k = 0; k < 7; k++) {
+          const w = 170 + Math.floor(r() * 50)
+          t.ctx.fillStyle = `rgb(${w},${w},${w + 6})`
+          t.ctx.fillRect(r() * TUILE, i * pas + 2 + r() * (pas - 6), 14 + r() * 50, 1)
+        }
+      }
+    }),
+  tuileSol: 4,
   fabriqueDecor: (rng) => {
     const corps: Piece[] = []
     const lueurs: Piece[] = []
@@ -778,6 +1092,37 @@ const FUJI: Biome = {
   ligne: 0x9aa9bd,
   murCorps: 0x5a6478, // une congère tassée, sombre pour trancher sur la neige
   ecartDecor: 13,
+
+  /*
+   * La neige tassée. Volontairement la texture la plus DISCRÈTE des quatre :
+   * c'est le biome clair, celui du sprint final, et de la neige contrastée
+   * ferait vibrer tout l'écran au moment précis où le joueur martèle. On se
+   * contente de creux bleutés — assez pour que ça ne soit pas du papier.
+   */
+  texSol: () =>
+    texturePour('fuji', (t) => {
+      const r = dé(0x9ee1)
+      t.fond('#fdfdff')
+      for (let i = 0; i < 22; i++) {
+        t.tache(r() * TUILE, r() * TUILE, (ctx) =>
+          galet(ctx, 20 + r() * 40, 14 + r() * 30, r() * Math.PI, 'rgb(232,238,250)')
+        )
+      }
+      // Les congères : de longues ondulations dans le sens de la pente.
+      for (let i = 0; i < 10; i++) {
+        t.tache(r() * TUILE, r() * TUILE, (ctx) =>
+          galet(ctx, 6 + r() * 12, 36 + r() * 40, (r() - 0.5) * 0.6, 'rgb(220,229,246)')
+        )
+      }
+      // Quelques cailloux qui percent : la limite des neiges, pas une plaine.
+      for (let i = 0; i < 10; i++) {
+        const v = 150 + Math.floor(r() * 50)
+        t.tache(r() * TUILE, r() * TUILE, (ctx) =>
+          galet(ctx, 2 + r() * 4, 2 + r() * 3, r() * Math.PI, `rgb(${v},${v + 4},${v + 12})`)
+        )
+      }
+    }),
+  tuileSol: 7,
   fabriqueDecor: (rng) => {
     const corps: Piece[] = []
 
@@ -849,6 +1194,20 @@ export interface Ambiance {
   ligne: THREE.Color
   /** Le biome dominant — celui dont on affiche le nom, et dont on tire le décor. */
   index: number
+
+  /**
+   * Le fondu à l'état BRUT : de quel biome on part, vers lequel on va, et où
+   * l'on en est (0 → 1).
+   *
+   * Les couleurs ci-dessus sont déjà mélangées, mais une TEXTURE ne se mélange
+   * pas : on ne peut pas interpoler de la litière de bambou vers des cendres.
+   * La piste s'en sert pour superposer deux sols et faire monter l'opacité du
+   * second — un vrai fondu enchaîné, là où un simple échange de texture
+   * claquerait sous les pieds du joueur.
+   */
+  iA: number
+  iB: number
+  melange: number
 }
 
 // Réutilisés d'une image à l'autre : allouer quatre THREE.Color par frame
@@ -902,5 +1261,8 @@ export function ambianceA(distance: number, length: number): Ambiance {
     // après, du B. Comme le décor apparaît 85 m devant, la bascule se voit
     // arriver au loin pendant que les couleurs, elles, glissent déjà.
     index: melange > 0.5 ? suivant : i,
+    iA: i,
+    iB: suivant,
+    melange,
   }
 }
