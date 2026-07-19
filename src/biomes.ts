@@ -397,8 +397,21 @@ const BAMBOUS: Biome = {
   nom: 'Forêt de bambous',
   kanji: '竹',
   brume: 0x1c2e24,
-  brumeNear: 32,
-  brumeFar: 88,
+  brumeNear: 26,
+  /*
+   * ⚠️ 68 m, et pas 88.
+   *
+   * Voir à 88 m dans une bambouseraie n'a aucun sens : un vrai sous-bois se
+   * referme bien avant. Et c'est cette portée excessive qui EXPOSAIT les
+   * trouées — plus on voit loin, plus on accumule de chances qu'un rayon passe
+   * entre deux tiges. Resserrer la brume densifie la forêt gratuitement, sans
+   * un triangle de plus.
+   *
+   * 68 m reste large pour le jeu : les obstacles apparaissent à 85 m, donc on
+   * les découvre à 68 m, soit 2,6 s d'anticipation à la vitesse de croisière.
+   * C'est plus que ce que laisse un runner classique.
+   */
+  brumeFar: 68,
   sol: 0x24301f,
   ligne: 0x40573f,
   murCorps: 0x2c3a23, // une palissade de bambou serré, sombre
@@ -450,43 +463,63 @@ const BAMBOUS: Biome = {
   texSol: () =>
     texturePour('bambous', (t) => {
       const r = dé(0x8a3b)
-      t.fond('#efe9dc')
+      t.fond('#e9e3d4')
 
-      // La terre : de grandes taches douces, du plus clair au plus creusé.
-      for (let i = 0; i < 26; i++) {
-        const v = 200 + Math.floor(r() * 46) // jamais en dessous de 200 : voir plus haut
+      /*
+       * ⚠️ Le CONTRASTE avant tout le reste.
+       *
+       * Première version : de larges galets sombres sur fond clair. Une tuile
+       * de 5 m dessinée avec des taches de 40 px, ça fait des taches d'un mètre
+       * — et vu d'en haut, ça ne donnait pas un sous-bois mais un motif de
+       * CAMOUFLAGE, des trous noirs mous répartis sur le vert.
+       *
+       * La terre, ça n'est pas de grandes taches contrastées : c'est un grain
+       * FIN et beaucoup de variations LENTES et faibles. D'où la refonte :
+       * amplitude divisée par trois, et le détail reporté sur le grain.
+       */
+
+      // Les variations lentes du terrain : larges, mais à peine perceptibles.
+      for (let i = 0; i < 14; i++) {
+        const v = 222 + Math.floor(r() * 20)
         t.tache(r() * TUILE, r() * TUILE, (ctx) =>
-          galet(ctx, 26 + r() * 40, 18 + r() * 30, r() * Math.PI, `rgb(${v},${v - 4},${v - 12})`)
+          galet(ctx, 30 + r() * 46, 24 + r() * 40, r() * Math.PI, `rgb(${v},${v - 3},${v - 10})`)
         )
       }
-      // Les creux du chemin : plus sombres, plus rares, plus étirés en long.
-      for (let i = 0; i < 9; i++) {
-        const v = 168 + Math.floor(r() * 24)
+
+      // Le grain de la terre : c'est LUI le sujet. Des dizaines de petits
+      // cailloux et grumeaux, trop fins pour se lire un par un, mais qui
+      // enlèvent définitivement l'aspect « surface lisse ».
+      for (let i = 0; i < 300; i++) {
+        const v = 196 + Math.floor(r() * 54)
         t.tache(r() * TUILE, r() * TUILE, (ctx) =>
-          galet(ctx, 12 + r() * 22, 30 + r() * 40, (r() - 0.5) * 0.5, `rgb(${v},${v - 6},${v - 16})`)
+          galet(ctx, 1.5 + r() * 4, 1.5 + r() * 3.5, r() * Math.PI, `rgb(${v},${v - 4},${v - 12})`)
         )
       }
 
-      // La mousse : sombre et légèrement verte, en plaques molles.
-      for (let i = 0; i < 12; i++) {
+      // La mousse : verte et à peine plus sombre que la terre. Elle donne
+      // l'humidité du sous-bois, pas des trous dans le sol.
+      for (let i = 0; i < 16; i++) {
         t.tache(r() * TUILE, r() * TUILE, (ctx) =>
-          galet(ctx, 8 + r() * 16, 7 + r() * 14, r() * Math.PI, `rgb(150,168,140)`)
+          galet(ctx, 9 + r() * 18, 7 + r() * 15, r() * Math.PI, 'rgb(214,230,206)')
         )
       }
 
       // La litière : des lames sèches, dans le sens de la course (± 25°).
-      for (let i = 0; i < 90; i++) {
+      // Couchées en travers, elles feraient des barres — et l'on retomberait
+      // sur le marquage routier qu'on cherche justement à effacer.
+      for (let i = 0; i < 130; i++) {
         const chaud = r()
-        const c = `rgb(${228 - chaud * 34},${210 - chaud * 44},${170 - chaud * 46})`
+        const c = `rgb(${250 - chaud * 26},${238 - chaud * 34},${206 - chaud * 40})`
         t.tache(r() * TUILE, r() * TUILE, (ctx) =>
-          galet(ctx, 1.6 + r() * 1.4, 7 + r() * 9, (r() - 0.5) * 0.9, c)
+          galet(ctx, 1.8 + r() * 1.6, 8 + r() * 11, (r() - 0.5) * 0.9, c)
         )
       }
-      // Quelques feuilles franchement claires : ce sont elles qu'on voit
-      // vraiment défiler, les autres ne font que peupler le fond.
-      for (let i = 0; i < 22; i++) {
+      // Et quelques brindilles sombres : sans elles, la litière n'a que des
+      // feuilles claires et le sol se met à briller uniformément.
+      for (let i = 0; i < 26; i++) {
+        const v = 176 + Math.floor(r() * 26)
         t.tache(r() * TUILE, r() * TUILE, (ctx) =>
-          galet(ctx, 2 + r() * 1.6, 9 + r() * 11, (r() - 0.5) * 0.8, '#fbf4e2')
+          galet(ctx, 1 + r() * 1, 6 + r() * 12, (r() - 0.5) * 1, `rgb(${v},${v - 8},${v - 22})`)
         )
       }
     }),
@@ -586,16 +619,45 @@ const BAMBOUS: Biome = {
       const h = 7 + rng() * 8
       const r = 0.085 + rng() * 0.055
       const x = rng() * 11
+      const z = (rng() - 0.5) * 23
       const recul = Math.min(1, x / 11)
       corps.push({
         geo: GEO.tigeCreuse.clone().scale(r, h, r),
         couleur: teinte(0x6d8a42, 0x25361b, recul * 0.8 + rng() * 0.2),
         x,
         y: h / 2,
-        z: (rng() - 0.5) * 23,
+        z,
         rz: (rng() - 0.5) * 0.14,
         rx: (rng() - 0.5) * 0.08,
       })
+
+      /*
+       * ⚠️ ELLES AUSSI PORTENT DES FEUILLES. C'était LE manque.
+       *
+       * Mesuré : la densité de fûts atteignait déjà 3 tiges/m² — une tous les
+       * 58 cm — et seuls 19 % des rayons de la caméra traversaient. Ajouter
+       * encore des fûts ne pouvait donc rien donner. Ce qu'on voyait n'était
+       * pas une forêt trop clairsemée, c'était **un parc à poteaux** : seules
+       * les 25 tiges détaillées avaient du feuillage, les 155 d'ici et les 230
+       * du fond étaient nues.
+       *
+       * Or une bambouseraie se lit à sa MASSE DE FEUILLES, jamais à ses fûts.
+       * Deux ou trois lames par tige suffisent — à 2 triangles pièce, c'est
+       * l'ajout le moins cher et le plus décisif du décor.
+       */
+      const lames = 2 + Math.floor(rng() * 3)
+      for (let k = 0; k < lames; k++) {
+        const hy = h * (0.6 + rng() * 0.38)
+        feuilles.push({
+          geo: GEO.feuille.clone().scale(1.3 + rng() * 1.2, 0.2 + rng() * 0.16, 1),
+          couleur: teinte(0x6f9243, 0x2b4322, recul * 0.6 + rng() * 0.4),
+          x: x + (rng() - 0.5) * 1.3,
+          y: hy,
+          z: z + (rng() - 0.5) * 1.3,
+          ry: rng() * Math.PI,
+          rz: (rng() - 0.5) * 1.2,
+        })
+      }
     }
 
     /*
@@ -638,6 +700,38 @@ const BAMBOUS: Biome = {
         y: h / 2,
         z: (rng() - 0.5) * 24,
         rz: (rng() - 0.5) * 0.1,
+      })
+    }
+
+    /*
+     * ————— LA CANOPÉE : ce qui ferme le haut du cadre —————
+     *
+     * L'autre grand absent. Sur les captures, tout le haut de l'écran était
+     * vide : on courait au fond d'un couloir à ciel ouvert bordé de perches.
+     * Or ce qui fait dire « forêt » avant tout le reste, c'est d'avoir quelque
+     * chose AU-DESSUS de la tête — la lumière filtrée, le ciel bouché.
+     *
+     * Des lames larges entre 9 et 17 m, penchées vers la piste pour couvrir
+     * jusqu'au-dessus du joueur. Elles ne descendent jamais sous 9 m : à
+     * 2,4 m de saut maximum, elles ne peuvent gêner aucune lecture de jeu.
+     *
+     * 2 triangles pièce : c'est l'élément le plus rentable du décor.
+     */
+    const canopee = 34 + Math.floor(rng() * 16)
+    for (let i = 0; i < canopee; i++) {
+      const hy = 9 + rng() * 8
+      feuilles.push({
+        geo: GEO.feuille.clone().scale(2.4 + rng() * 2.6, 0.5 + rng() * 0.9, 1),
+        couleur: teinte(0x4c6c33, 0x1b2b16, rng() * 0.9),
+        // Jusqu'à -3 : le feuillage DÉBORDE au-dessus de la piste. C'est ce
+        // débordement qui fait la voûte, et non deux haies qui se regardent.
+        x: -3 + rng() * 16,
+        y: hy,
+        z: (rng() - 0.5) * 24,
+        ry: rng() * Math.PI,
+        // Inclinée : une lame horizontale disparaît vue de dessous.
+        rz: 0.5 + rng() * 0.9,
+        rx: (rng() - 0.5) * 0.8,
       })
     }
 
