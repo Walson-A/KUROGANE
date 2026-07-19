@@ -121,6 +121,34 @@ kurogane/
 l'aperçu 3D lisent tous la même fiche. Pour ajouter un guerrier, il suffit
 d'ajouter une entrée dans `ROSTER` — le reste du jeu suit tout seul.
 
+## ⚡ Ce qu'on ne refabrique pas
+
+Le dessin n'est **pas** le goulot : au pire moment d'une course, la scène ne
+compte que **135 meshes visibles**. Ce qui dérivait, c'est autre chose —
+mesuré sur une course complète :
+
+| | 240 m | 1 900 m |
+|---|---|---|
+| matériaux | 27 | **118** |
+| géométries | 139 | **318** |
+
+**318 géométries pour 332 meshes** : presque aucun partage. Les objets sont
+recyclés dans des réserves, mais chaque nouvelle entrée se taillait ses propres
+formes et ses propres matériaux — une jarre née à 1 600 m avait les siens,
+identiques à ceux de celle de 200 m.
+
+Les obstacles (trois sortes) et les rouleaux (tous identiques) sont désormais
+taillés **une seule fois** : **118 → 71 matériaux**, **318 → 270 géométries**.
+
+> ⚠️ Ce partage n'est possible **que** parce que rien ne mute ces matériaux. Les
+> **murs** (dont la couleur suit le biome traversé) et les **auras de jarres**
+> (dont l'opacité bat à chaque image) gardent les leurs en propre — les mettre
+> en commun ferait déteindre un objet sur tous les autres.
+
+```bash
+node --import ./tools/resolveur-ts.mjs tools/mesurer-scene.ts
+```
+
 ## 🎋 Les plateformes arrêtent — sauf le radeau de bambou
 
 Une plateforme **pleine** arrête le corps *et* les sorts. Le **radeau de

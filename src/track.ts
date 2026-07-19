@@ -1703,32 +1703,65 @@ function texRayon(): THREE.CanvasTexture {
  * Le visuel d'un rouleau : le MÊME pour les trois parchemins.
  * On ne découvre son contenu qu'en le ramassant — comme une boîte de Mario Kart.
  */
-function makeRouleauMesh(): THREE.Group {
+/*
+ * ————— Ce qu'on ne refabrique pas —————
+ *
+ * Les rouleaux sont TOUS identiques et rien ne les modifie en jeu. Or ils
+ * naissent d'une reserve qui s'agrandit au fil de la course : chaque nouvelle
+ * entree se taillait ses propres cylindres et ses propres materiaux. Mesure sur
+ * une course complete : 318 geometries et 118 materiaux pour 332 meshes —
+ * presque aucun partage, et le compte grimpait de 27 materiaux a 240 m jusqu'a
+ * 118 a l'arrivee.
+ *
+ * On les taille donc UNE fois, a la premiere demande, et tout le monde s'en
+ * sert. C'est le meme dessin a l'ecran pour beaucoup moins de memoire et
+ * beaucoup moins de changements d'etat GPU.
+ *
+ * ⚠️ Ce partage n'est possible QUE parce que rien ne mute ces materiaux. Les
+ * murs (dont la couleur suit le biome traverse) et les auras de jarres (dont
+ * l'opacite bat a chaque image) gardent les leurs, en propre — les mettre en
+ * commun ferait deteindre un objet sur tous les autres.
+ */
+let _rouleau: { geo: THREE.BufferGeometry[]; mat: THREE.Material[] } | null = null
+function piecesRouleau() {
+  if (!_rouleau) {
+    _rouleau = {
+      geo: [
+        new THREE.CylinderGeometry(0.17, 0.17, 0.78, 12), // le papier
+        new THREE.CylinderGeometry(0.2, 0.2, 0.09, 12), // les embouts
+        new THREE.CylinderGeometry(0.19, 0.19, 0.1, 12), // le lien
+        new THREE.SphereGeometry(0.5, 10, 10), // le halo
+      ],
+      mat: [
+        new THREE.MeshStandardMaterial({ color: 0xf0e8d8, roughness: 0.85 }),
+        new THREE.MeshStandardMaterial({ color: 0xc33a2c, roughness: 0.5 }),
+        new THREE.MeshBasicMaterial({ color: 0xd6ac5a, transparent: true, opacity: 0.12 }),
+      ],
+    }
+  }
+  return _rouleau
+}
+
+export function makeRouleauMesh(): THREE.Group {
   const g = new THREE.Group()
+  const { geo, mat } = piecesRouleau()
 
   // Le papier : un cylindre couche en travers de la piste
-  const papier = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.17, 0.17, 0.78, 12),
-    new THREE.MeshStandardMaterial({ color: 0xf0e8d8, roughness: 0.85 })
-  )
+  const papier = new THREE.Mesh(geo[0], mat[0])
   papier.rotation.z = Math.PI / 2
 
   // Les deux embouts vermillon, et le lien rouge au centre
-  const bois = new THREE.MeshStandardMaterial({ color: 0xc33a2c, roughness: 0.5 })
   for (const x of [-0.42, 0.42]) {
-    const embout = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.2, 0.09, 12), bois)
+    const embout = new THREE.Mesh(geo[1], mat[1])
     embout.rotation.z = Math.PI / 2
     embout.position.x = x
     g.add(embout)
   }
-  const lien = new THREE.Mesh(new THREE.CylinderGeometry(0.19, 0.19, 0.1, 12), bois)
+  const lien = new THREE.Mesh(geo[2], mat[1])
   lien.rotation.z = Math.PI / 2
 
   // Une lueur doree : le rouleau doit accrocher l'oeil dans la nuit
-  const halo = new THREE.Mesh(
-    new THREE.SphereGeometry(0.5, 10, 10),
-    new THREE.MeshBasicMaterial({ color: 0xd6ac5a, transparent: true, opacity: 0.12 })
-  )
+  const halo = new THREE.Mesh(geo[3], mat[2])
 
   g.add(papier, lien, halo)
   g.position.y = 1.15
@@ -1746,18 +1779,28 @@ function makeRouleauMesh(): THREE.Group {
  * ⚠️ Comme les habillages de biome, son origine est AU SOL (y = 0) : la hauteur
  * est portée par la géométrie. `hits()` ne lit que x et z.
  */
-function makeObstacleMesh(kind: Kind): THREE.Mesh {
-  const t = TAILLE_OBSTACLE[kind]
-  const couleur =
-    kind === 'saut' ? 0xc33a2c : kind === 'glissade' ? 0xd6ac5a : 0x3a4258
+/**
+ * Trois sortes d'obstacles, donc trois blocs — et non un par obstacle croise.
+ * Ils sont les plus nombreux de la course et rien ne les modifie : les tailler
+ * une fois par sorte suffit (cf. la note sur le partage, plus haut).
+ */
+const _obstacle = new Map<Kind, { geo: THREE.BufferGeometry; mat: THREE.Material }>()
 
-  const geo = new THREE.BoxGeometry(t.larg, t.haut, t.prof)
-  geo.translate(0, t.y, 0)
-  return new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ color: couleur, roughness: 0.7 }))
+export function makeObstacleMesh(kind: Kind): THREE.Mesh {
+  let piece = _obstacle.get(kind)
+  if (!piece) {
+    const t = TAILLE_OBSTACLE[kind]
+    const couleur = kind === 'saut' ? 0xc33a2c : kind === 'glissade' ? 0xd6ac5a : 0x3a4258
+    const geo = new THREE.BoxGeometry(t.larg, t.haut, t.prof)
+    geo.translate(0, t.y, 0)
+    piece = { geo, mat: new THREE.MeshStandardMaterial({ color: couleur, roughness: 0.7 }) }
+    _obstacle.set(kind, piece)
+  }
+  return new THREE.Mesh(piece.geo, piece.mat)
 }
 
 /** Le torii sacré de l'arrivée : plus grand, tout en OR, avec la ligne au sol */
-function makeFinishGate(): THREE.Group {
+export function makeFinishGate(): THREE.Group {
   const g = new THREE.Group()
   const gold = new THREE.MeshStandardMaterial({
     color: 0xd6ac5a,
