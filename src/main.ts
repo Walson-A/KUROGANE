@@ -2,7 +2,7 @@ import * as THREE from 'three'
 import './style.css'
 import { Player, LANES } from './player'
 import { Opponent } from './opponent'
-import { Track, SPRINT_ZONE, COURSE_LENGTH, PLATEFORME_H } from './track'
+import { Track, SPRINT_ZONE, COURSE_LENGTH, PLATEFORME_H, TAILLE_OBSTACLE } from './track'
 import { ajouterScore } from './scores'
 import { Input } from './input'
 import { Net, type RemotePlayer, type LobbyView } from './net'
@@ -1967,7 +1967,7 @@ function tenteMur(cote: -1 | 1): boolean {
    * il faut avoir sauté AVANT d'arriver à sa hauteur.
    */
   const surVoieExterieure = player.currentLane === (cote === -1 ? 0 : 2)
-  const flanc = track.flancA(player.currentLane, cote)
+  const flanc = track.flancA(player.currentLane, cote, player.mesh.position.y)
 
   let accroche = false
   let msg = ''
@@ -2745,12 +2745,40 @@ new Input(document.body, {
   // et comme une jarre garantit une ligne sans obstacle, s'y jeter est sûr.
   left: () => {
     if (state !== 'course') return
-    // Sur la paroi de droite, swiper à gauche = s'en détacher (elle nous relance)
-    if (player.surMur === 1) return player.lacheMur()
+    /*
+     * ————— Collé à une paroi, aucun swipe ne change de ligne —————
+     * Vers la paroi OPPOSÉE (ici : mur à droite, swipe à gauche) on s'en
+     * détache, elle nous relance. Vers la paroi qu'on longe, il n'y a rien à
+     * faire : on est déjà contre elle.
+     *
+     * ⚠️ Ce `return` est le correctif d'un bug tenace. Sans lui, swiper VERS le
+     * mur qu'on longe traversait tout : `surMur === 1` était faux (on est en
+     * -1), `tenteMur` échouait (`accrocheMur` refuse quand `mur !== 0`), et
+     * l'on tombait dans `moveLeft()`. La ligne changeait donc EN SILENCE
+     * pendant qu'on était plaqué au flanc — rien à l'écran ne le disait. Au
+     * relâchement, le corps ne revenait pas sur sa ligne de départ mais filait
+     * sur celle de la plateforme, 80 cm sous son plateau : `heurte`, et l'on
+     * escaladait au milieu du convoi au lieu d'être renvoyé sur sa voie.
+     */
+    if (player.surMur !== 0) {
+      if (player.surMur === 1) player.lacheMur()
+      return
+    }
     if (tenteMur(-1)) return
     const de = player.currentLane
     donneCoup()
-    player.moveLeft()
+    /*
+     * 🚃 Le flanc d'une plateforme est SOLIDE : on ne s'y glisse pas de côté.
+     *
+     * Le swipe part quand même — la lame sort, c'est `donneCoup` juste au-dessus
+     * — mais le corps reste sur sa voie. Sans ce garde-fou, entrer latéralement
+     * dans un plateau faisait glisser le `x` DANS sa colonne, pieds sous le
+     * pont : `supportSous` renvoyait `heurte`, et l'on escaladait un convoi par
+     * le travers. Or on n'escalade que de FACE — à son nez, là où `flancA` ne
+     * répond plus (cf. le `zAvant < 1` là-bas). Les deux règles sont les deux
+     * moitiés de la même : de face on monte, de côté c'est un mur.
+     */
+    if (track.flancA(de, -1, player.mesh.position.y) === null) player.moveLeft()
     if (player.currentLane !== de) {
       ligneCharge = 0 // quitter sa voie coûte l'élan accumulé
       if (player.spark) flashSpark(LANES[de], LANES[player.currentLane])
@@ -2759,11 +2787,17 @@ new Input(document.body, {
   },
   right: () => {
     if (state !== 'course') return
-    if (player.surMur === -1) return player.lacheMur()
+    // Symétrique de `left` : sur une paroi, on s'en détache ou l'on ne fait
+    // rien — jamais de changement de ligne en douce (cf. le commentaire là-haut).
+    if (player.surMur !== 0) {
+      if (player.surMur === -1) player.lacheMur()
+      return
+    }
     if (tenteMur(1)) return
     const de = player.currentLane
     donneCoup()
-    player.moveRight()
+    // 🚃 Le flanc reste solide de ce côté aussi (cf. le commentaire dans `left`).
+    if (track.flancA(de, 1, player.mesh.position.y) === null) player.moveRight()
     if (player.currentLane !== de) {
       ligneCharge = 0
       if (player.spark) flashSpark(LANES[de], LANES[player.currentLane])
@@ -3258,7 +3292,7 @@ function tick(now?: number) {
     if (
       player.surMur !== 0 &&
       !track.murA(distance, player.surMur) &&
-      track.flancA(player.currentLane, player.surMur) === null
+      track.flancA(player.currentLane, player.surMur, player.mesh.position.y) === null
     ) {
       player.lacheMur()
     }
@@ -3314,22 +3348,31 @@ function tick(now?: number) {
     /*
      * ————— Ce qui se GRIMPE —————
      *
-     * Le flanc d'une plateforme, mais aussi le MUR ordinaire : les deux font
-     * 2,40 m, la même hauteur, et aucun des deux ne se saute (apex 2,07 m).
-     * Les traiter différemment n'avait aucun sens — on butait contre un mur en
-     * trébuchant alors qu'on escaladait la structure identique d'à côté.
+     * Le flanc d'une plateforme, mais aussi le MUR ordinaire. Ce qui les réunit
+     * n'est pas une hauteur commune, c'est qu'AUCUN DES DEUX NE SE SAUTE :
+     * l'apex du saut vaut 2,07 m, le mur 2,40 m et la plateforme 2,70 m. Les
+     * traiter différemment n'aurait aucun sens — on buterait contre l'un en
+     * trébuchant alors qu'on escalade l'autre.
      *
      * Un mur n'a que 50 cm d'épaisseur : on l'enjambe et l'on retombe de
      * l'autre côté. Une plateforme est longue : on reste dessus. Même geste,
      * même prix, deux issues — et c'est la piste qui les distingue, pas une
      * règle à retenir.
+     *
+     * ⚠️ ON SE HISSE À LA HAUTEUR DE CE QU'ON GRIMPE. Les deux ont longtemps
+     * fait 2,40 m, si bien qu'une seule constante suffisait ; la plateforme est
+     * passée à 2,70 m et le mur est resté à 2,40 m. Continuer à toujours viser
+     * la hauteur de plateforme ferait flotter le joueur 30 cm au-dessus du mur
+     * qu'il vient d'enjamber.
      */
-    const aGrimper =
-      player.surMur === 0 &&
-      (touche === 'mur' ||
-        track.supportSous(player.mesh.position.x, player.mesh.position.y).heurte)
+    const flancPlateforme = track.supportSous(
+      player.mesh.position.x,
+      player.mesh.position.y
+    ).heurte
+    const aGrimper = player.surMur === 0 && (touche === 'mur' || flancPlateforme)
+    const hautGrimpe = flancPlateforme ? PLATEFORME_H : TAILLE_OBSTACLE.mur.haut
 
-    if (stumble <= 0 && aGrimper && armure === 0 && player.escalader(PLATEFORME_H)) {
+    if (stumble <= 0 && aGrimper && armure === 0 && player.escalader(hautGrimpe)) {
       escaladeT = ESCALADE_FREIN_DUREE
       jouerBruit('chute')
       toast('🧗 Escalade !')

@@ -87,8 +87,13 @@ export interface Biome {
    * la longueur voulue. Tout ce qui s'étire mal en Z est donc à proscrire : on
    * privilégie les formes qui courent le long de la plateforme (des perches),
    * puisque les allonger est justement ce qu'on veut.
+   *
+   * ⚠️ La LARGEUR est passée en paramètre, elle n'est pas importée. C'est
+   * `PLATEFORME_LARG`, qui vit dans track.ts — et biomes.ts ne peut pas importer
+   * de valeur depuis track.ts sans créer un cycle (track importe déjà BIOMES).
+   * C'est la même raison qui fait que `Kind` n'est importé qu'en `type`.
    */
-  fabriquePlateforme?: (hauteur: number) => THREE.Group
+  fabriquePlateforme?: (hauteur: number, largeur: number) => THREE.Group
 
   /**
    * La MATIÈRE du sol : une tuile qui se répète sous les pieds du joueur.
@@ -504,6 +509,32 @@ function barriereSimple(f: FaçonBarriere, rng: () => number): THREE.Group {
   return groupe(assemble(p, MAT_SOLIDE))
 }
 
+/**
+ * La hauteur des pans de mur qu'on longe.
+ *
+ * Passée de 3 à **6 m** : à 3 m, la paroi arrivait à peine plus haut que le
+ * coureur et la piste restait une plaine avec des bouts de clôture. À 6 m on
+ * court dans quelque chose — le regard bute, et la vitesse se lit sur les
+ * parois qui défilent.
+ *
+ * ⚠️ C'est une hauteur PUREMENT visuelle, et c'est ce qui la rend sûre : on
+ * court sur la paroi à `MUR_HAUTEUR` (1,6 m) quoi qu'il arrive, et l'accroche
+ * ne dépend que de la position en x. Doubler le mur ne change pas une seule
+ * règle du jeu.
+ *
+ * ⚠️ En revanche elle entraîne les TORII, qui doivent enjamber la piste : un
+ * linteau posé à 4,6 m passerait maintenant sous le haut des murs.
+ */
+export const MUR_HAUT = 6
+
+/**
+ * Là où le mur dit « accroche-toi ici ».
+ *
+ * Un peu au-dessus de la hauteur de course sur paroi (1,6 m), pour que le
+ * repère reste visible au lieu de passer derrière le coureur.
+ */
+const Y_ACCROCHE = 1.85
+
 interface FaçonMur {
   /** Le corps plein du mur. */
   corps: number
@@ -511,6 +542,8 @@ interface FaçonMur {
   bandes: { y: number; e: number; couleur: number; ronde?: boolean }[]
   /** Un soubassement plus sombre, au pied (facultatif). */
   socle?: number
+  /** Le couronnement : la matière qui coiffe le mur, propre au biome. */
+  couronne: number
 }
 
 /**
@@ -526,9 +559,9 @@ function murSimple(f: FaçonMur): THREE.Group {
   const corps: Piece[] = []
 
   corps.push({
-    geo: GEO.bloc.clone().scale(0.5, 3, 1),
+    geo: GEO.bloc.clone().scale(0.5, MUR_HAUT, 1),
     couleur: f.corps,
-    x: 0, y: 1.5, z: 0,
+    x: 0, y: MUR_HAUT / 2, z: 0,
   })
   if (f.socle !== undefined) {
     corps.push({
@@ -553,13 +586,42 @@ function murSimple(f: FaçonMur): THREE.Group {
     }
   }
 
-  // Le liseré vermillon, qui coiffe le mur sur toute sa longueur.
+  /*
+   * ————— Le sommet : du biome, pas du rouge —————
+   *
+   * Le mur était coiffé d'une barre vermillon de 18 cm sur toute sa longueur.
+   * Ça marchait comme signal, mais ça faisait courir un ruban rouge d'un bout
+   * à l'autre de chaque décor — et sur un mur de 6 m, la barre serait devenue
+   * franchement envahissante.
+   *
+   * Le sommet prend donc la MATIÈRE du biome (une tuile de bambou, une arête
+   * de glace…), et le vermillon se réduit à deux traits fins :
+   *  · une arête sous la lèvre du couronnement, qui souligne le haut ;
+   *  · un trait à hauteur d'accroche, qui dit OÙ l'on s'agrippe.
+   *
+   * Le second n'existait pas avant, et c'est le mur de 6 m qui l'impose : le
+   * repère était en haut parce que le haut était à portée de main. Il ne l'est
+   * plus. Un signal d'action doit se trouver là où se fait l'action.
+   */
+  corps.push({
+    geo: GEO.bloc.clone().scale(0.62, 0.26, 1),
+    couleur: f.couronne,
+    x: 0, y: MUR_HAUT - 0.13, z: 0,
+  })
+
   const liser: Piece[] = [
+    // L'arête du couronnement.
     {
-      geo: GEO.bloc.clone().scale(0.58, 0.18, 1),
+      geo: GEO.bloc.clone().scale(0.66, 0.05, 1),
       couleur: VERMILLON,
-      x: 0, y: 2.95, z: 0,
+      x: 0, y: MUR_HAUT - 0.29, z: 0,
     },
+    // Le repère d'accroche, sur les deux faces.
+    ...[-0.26, 0.26].map((x) => ({
+      geo: GEO.bloc.clone().scale(0.04, 0.07, 1),
+      couleur: VERMILLON,
+      x, y: Y_ACCROCHE, z: 0,
+    })),
   ]
 
   return groupe(assemble(corps, MAT_SOLIDE), assemble(liser, MAT_LUMIERE))
@@ -758,12 +820,18 @@ const BAMBOUS: Biome = {
     murSimple({
       corps: 0x2c3a23,
       socle: 0x1a2214,
+      couronne: 0x5a6b34, // une lisse de bambou clair en guise de chapeau
       bandes: [
         { y: 0.42, e: 0.13, couleur: 0x4d5c30, ronde: true },
         { y: 1.02, e: 0.13, couleur: 0x3e4b27, ronde: true },
         { y: 1.62, e: 0.13, couleur: 0x4d5c30, ronde: true },
         { y: 2.22, e: 0.13, couleur: 0x3e4b27, ronde: true },
-        { y: 2.74, e: 0.11, couleur: 0x5a6b34, ronde: true },
+        { y: 2.82, e: 0.13, couleur: 0x4d5c30, ronde: true },
+        { y: 3.42, e: 0.13, couleur: 0x3e4b27, ronde: true },
+        { y: 4.02, e: 0.13, couleur: 0x4d5c30, ronde: true },
+        { y: 4.62, e: 0.13, couleur: 0x3e4b27, ronde: true },
+        { y: 5.22, e: 0.13, couleur: 0x4d5c30, ronde: true },
+        { y: 5.7, e: 0.11, couleur: 0x5a6b34, ronde: true },
       ],
     }),
 
@@ -887,7 +955,7 @@ const BAMBOUS: Biome = {
        * Deux ou trois lames par tige suffisent — à 2 triangles pièce, c'est
        * l'ajout le moins cher et le plus décisif du décor.
        */
-      const lames = 2 + Math.floor(rng() * 3)
+      const lames = 3 + Math.floor(rng() * 3)
       for (let k = 0; k < lames; k++) {
         const hy = h * (0.6 + rng() * 0.38)
         feuilles.push({
@@ -896,8 +964,20 @@ const BAMBOUS: Biome = {
           x: x + (rng() - 0.5) * 1.3,
           y: hy,
           z: z + (rng() - 0.5) * 1.3,
-          ry: rng() * Math.PI,
-          rz: (rng() - 0.5) * 1.2,
+          /*
+           * ⚠️ ry BRIDÉ À ±0,5 rad, et surtout pas tiré sur un demi-tour.
+           *
+           * Une feuille est un PLAN : de face elle couvre, par la tranche elle
+           * DISPARAÎT. En tirant ry entre 0 et π, la moitié des feuilles se
+           * présentaient de profil et ne comptaient pour rien — d'où une forêt
+           * qui semblait fournie ici et vide trois mètres plus loin, sans que
+           * la quantité de géométrie ait bougé d'un pouce.
+           *
+           * Le désordre passe donc par rz, qui fait tourner la lame DANS son
+           * plan : elle reste visible quel que soit l'angle.
+           */
+          ry: (rng() - 0.5) * 1.0,
+          rz: rng() * Math.PI,
         })
       }
     }
@@ -959,12 +1039,31 @@ const BAMBOUS: Biome = {
      *
      * 2 triangles pièce : c'est l'élément le plus rentable du décor.
      */
-    const canopee = 93 + Math.floor(rng() * 47)
+    /*
+     * ⚠️ DES LAMES PETITES ET COUCHÉES, pas grandes et tirées au hasard.
+     *
+     * La version précédente est ce qui faisait « respirer » la forêt : de
+     * grandes lames (jusqu'à 6 m) dont l'orientation était tirée sur un
+     * demi-tour complet. Une lame de face bouchait un pan entier de ciel ; la
+     * même de profil disparaissait. On tombait donc, au hasard des massifs, sur
+     * des amas très denses puis sur du vide — alors que la quantité de
+     * géométrie, elle, ne variait pas de 1 % (mesuré sur toute la course, et
+     * sur dix graines).
+     *
+     * Deux corrections, et elles vont ensemble :
+     *  · les lames sont COUCHÉES (rx ≈ −90°, donc face tournée vers le sol).
+     *    On regarde une canopée par en dessous : couchée, elle couvre toujours,
+     *    quel que soit l'angle. Le désordre passe par ry, qui la fait pivoter
+     *    à plat — sans jamais la faire disparaître ;
+     *  · elles sont trois fois plus PETITES et deux fois plus nombreuses. Cent
+     *    petites lames se moyennent ; trente grandes clignotent.
+     */
+    const canopee = 190 + Math.floor(rng() * 70)
     for (let i = 0; i < canopee; i++) {
       const hy = 8 + rng() * 12
       feuilles.push({
-        geo: GEO.feuille.clone().scale(2.8 + rng() * 3.4, 0.6 + rng() * 1.1, 1),
-        couleur: teinte(0x4c6c33, 0x18260f, rng() * 0.95),
+        geo: GEO.feuille.clone().scale(1.2 + rng() * 1.6, 0.7 + rng() * 1.0, 1),
+        couleur: teinte(0x4c6c33, 0x22331a, rng() * 0.9),
         /*
          * ⚠️ De -10 à +18. Le début NÉGATIF est le point clé : le feuillage
          * traverse au-dessus de la piste et rejoint celui d'en face. Sans ce
@@ -974,10 +1073,10 @@ const BAMBOUS: Biome = {
         x: -10 + rng() * 28,
         y: hy,
         z: (rng() - 0.5) * 24,
-        ry: rng() * Math.PI,
-        // Inclinée : une lame horizontale disparaît vue de dessous.
-        rz: 0.4 + rng() * 1.0,
-        rx: (rng() - 0.5) * 0.9,
+        // Couchée, face vers le sol : c'est de là qu'on la regarde.
+        rx: -Math.PI / 2 + (rng() - 0.5) * 0.7,
+        ry: rng() * Math.PI, // pivote à plat : reste visible d'en dessous
+        rz: (rng() - 0.5) * 0.4,
       })
     }
 
@@ -1140,30 +1239,37 @@ const BAMBOUS: Biome = {
    * le langage des surfaces qu'on UTILISE, par opposition aux obstacles qu'on
    * subit.
    */
-  fabriquePlateforme: (hauteur) => {
+  fabriquePlateforme: (hauteur, largeur) => {
     const p: Piece[] = []
 
-    // Le corps : quatre perches côte à côte, couchées en long.
-    for (let i = 0; i < 4; i++) {
-      const x = -0.62 + 0.41 * i
+    // Le corps : cinq perches côte à côte, couchées en long. Cinq et non
+    // quatre depuis l'élargissement des lignes — à quatre, le radeau montrait
+    // des jours entre ses troncs.
+    const perches = 5
+    const pas = (largeur - 0.44) / (perches - 1)
+    for (let i = 0; i < perches; i++) {
       p.push({
         geo: GEO.tige.clone().scale(0.22, 1, 0.22),
         couleur: i % 2 ? 0x4d5c30 : 0x3e4b27,
-        x, y: hauteur - 0.55, z: 0,
+        x: -(largeur - 0.44) / 2 + pas * i,
+        y: hauteur - 0.55,
+        z: 0,
         rx: Math.PI / 2, // couchée le long de la plateforme
       })
     }
 
-    // Le tablier du dessus, sur lequel on court.
+    // Le tablier du dessus, sur lequel on court. C'est LUI qu'on voit d'en
+    // haut : il reste en bambou clair, et c'est ce qui remplace l'ancienne
+    // barre vermillon qui coiffait la plateforme.
     p.push({
-      geo: GEO.bloc.clone().scale(1.7, 0.22, 1),
+      geo: GEO.bloc.clone().scale(largeur, 0.22, 1),
       couleur: 0x6b7d3f,
       x: 0, y: hauteur - 0.11, z: 0,
     })
 
     // Les montants sous le tablier, jusqu'au sol : la plateforme doit avoir
     // l'air posée sur quelque chose, pas de léviter.
-    for (const x of [-0.7, 0.7]) {
+    for (const x of [-largeur / 2 + 0.15, largeur / 2 - 0.15]) {
       p.push({
         geo: GEO.bloc.clone().scale(0.16, hauteur - 0.66, 1),
         couleur: 0x2b3320,
@@ -1171,11 +1277,13 @@ const BAMBOUS: Biome = {
       })
     }
 
-    // Le liseré vermillon : « on peut monter là-dessus ».
+    // Le vermillon ne subsiste qu'en ARÊTE, sur le nez du tablier : « on peut
+    // monter là-dessus ». Cinq centimètres au lieu de dix, et le dessus n'est
+    // plus rouge du tout.
     p.push({
-      geo: GEO.bloc.clone().scale(1.76, 0.1, 1),
-      couleur: 0xc33a2c,
-      x: 0, y: hauteur, z: 0,
+      geo: GEO.bloc.clone().scale(largeur + 0.06, 0.05, 1),
+      couleur: VERMILLON,
+      x: 0, y: hauteur - 0.02, z: 0,
     })
 
     return groupe(assemble(p, MAT_SOLIDE))
@@ -1259,9 +1367,12 @@ const VILLAGE: Biome = {
     murSimple({
       corps: 0x241610,
       socle: 0x120b07,
+      couronne: 0x1a100c, // les tuiles noircies qui coiffent le mur
       bandes: [
         { y: 1.05, e: 0.16, couleur: 0x1a100c },
-        { y: 2.3, e: 0.16, couleur: 0x1a100c },
+        { y: 2.4, e: 0.16, couleur: 0x1a100c },
+        { y: 3.75, e: 0.16, couleur: 0x1a100c },
+        { y: 5.05, e: 0.16, couleur: 0x1a100c },
       ],
     }),
   fabriqueDecor: (rng) => {
@@ -1413,10 +1524,14 @@ const PONT: Biome = {
     murSimple({
       corps: 0x2b3145,
       socle: 0x1f2433,
+      couronne: 0x434b68, // la pierre de couronnement du parapet
       bandes: [
         { y: 0.85, e: 0.1, couleur: 0x39405a },
         { y: 1.75, e: 0.1, couleur: 0x39405a },
-        { y: 2.6, e: 0.12, couleur: 0x434b68 },
+        { y: 2.65, e: 0.1, couleur: 0x39405a },
+        { y: 3.55, e: 0.1, couleur: 0x39405a },
+        { y: 4.45, e: 0.1, couleur: 0x39405a },
+        { y: 5.35, e: 0.12, couleur: 0x434b68 },
       ],
     }),
   fabriqueDecor: (rng) => {
@@ -1539,9 +1654,12 @@ const FUJI: Biome = {
     murSimple({
       corps: 0x5a6478,
       socle: 0x49536a,
+      couronne: 0xf2f6fb, // la crête de neige fraîche, tout en haut
       bandes: [
         { y: 1.2, e: 0.12, couleur: 0xdfe7f2 },
         { y: 2.45, e: 0.14, couleur: 0xe8eef6 },
+        { y: 3.7, e: 0.12, couleur: 0xdfe7f2 },
+        { y: 4.95, e: 0.14, couleur: 0xe8eef6 },
       ],
     }),
   fabriqueDecor: (rng) => {
