@@ -339,6 +339,16 @@ let distance = 0 // mètres parcourus
 let speed = 0
 let countdown = 0 // secondes avant le GO !
 let stumble = 0 // invincibilité après un trébuchement
+/**
+ * 🧪 Le banc d'essai fige la course (cf. le guichet `__sorts` en fin de
+ * fichier). Le monde s'arrête, mais TOUT LE RESTE continue de tourner : les
+ * sorts, leurs minuteurs, les brumes, les chaînes. C'est ce qui permet de
+ * regarder un effet posément au lieu de le subir en esquivant des barrières.
+ *
+ * `import.meta.env.DEV` fait disparaître le guichet du bundle de production —
+ * ce drapeau y reste donc à `false` pour toujours.
+ */
+let gele = false
 let escaladeT = 0 // temps de freinage restant après une escalade
 let stumblePrec = 0 // sa valeur à l'image d'avant : sert à repérer le choc
 let netTimer = 0 // pour n'envoyer notre position que 10 fois/s
@@ -2991,7 +3001,10 @@ function tick(now?: number) {
     // 🧗 On se hisse : la course est presque à l'arrêt le temps de passer.
     escaladeT = Math.max(0, escaladeT - dt)
     if (escaladeT > 0) cruise *= ESCALADE_FREIN
+    // 🧪 Banc d'essai : le décor s'immobilise, le reste de la course vit.
+    if (gele) cruise = 0
     speed += (cruise - speed) * Math.min(1, dt * 1.2)
+    if (gele) speed = 0 // sans ça, l'inertie ferait encore glisser le décor
 
     distance += speed * dt
 
@@ -3357,6 +3370,9 @@ function tick(now?: number) {
      */
     player.presse =
       time < ventFin || distance >= COURSE_LENGTH - SPRINT_ZONE
+    // 🧪 Banc d'essai figé : on se tient debout au lieu de pédaler sur place.
+    // La foulée « repos » existe déjà pour la grille de départ, on la réutilise.
+    player.auRepos = gele
 
     // Trébuchement : toucher un obstacle RALENTIT (on ne meurt pas, c'est une course)
     // Sur la paroi on est hors de la piste : rien ne peut nous faucher.
@@ -3667,6 +3683,20 @@ if (import.meta.env.DEV) {
       if (kind === 'onmyoji') echangerAvec(distance + 20, `le banc d'essai`)
       else subirSort(kind)
     },
+    /**
+     * 🧪 Fige ou relâche la course. Gelée, la piste ne défile plus et rien ne
+     * vient te percuter : on regarde un sort posément au lieu de l'encaisser
+     * en esquivant des barrières. Les minuteurs, eux, continuent — sinon un
+     * effet à durée resterait affiché pour l'éternité et on ne verrait jamais
+     * comment il se dissipe.
+     */
+    geler(v: boolean) {
+      gele = v
+    },
+    /** Quitter la course et revenir au menu, sans recharger la page. */
+    quitter() {
+      backToMenu()
+    },
     /** Ce que le jeu retient de nous, pour l'afficher en direct. */
     etat() {
       return {
@@ -3684,6 +3714,7 @@ if (import.meta.env.DEV) {
         terre: terreEl.classList.contains('on'),
         treve: Math.max(0, FANTOME_DUREE - time),
         enCourse: state === 'course',
+        gele,
       }
     },
   }

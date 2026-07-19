@@ -62,6 +62,10 @@
         cursor: pointer;
       }
       .mode button.on { background: #e24b3a; border-color: #e24b3a; color: #fff; }
+      /* La séance : figer la piste, et en sortir. Vert pour « immobile », gris
+         pour « quitter » — deux gestes qui n'ont rien à voir avec les sorts. */
+      .mode.seance button.on { background: #1d9e75; border-color: #1d9e75; }
+      .mode.seance button.sortie { flex: 0 0 62px; }
 
       .ligne { display: flex; gap: 6px; padding: 2px 6px; line-height: 1.6; }
       .ligne b { color: #f0e8d8; font-weight: 500; }
@@ -126,6 +130,14 @@
        * On démarre sur « subir » : c'est ce qu'on vient chercher ici.
        */
       let mode = 'subir'
+      /*
+       * 🧪 La piste figée : le décor s'arrête, plus rien ne vient te percuter,
+       * et tu regardes l'effet posément. Les minuteurs continuent de tourner —
+       * sinon on ne verrait jamais comment un sort se dissipe.
+       *
+       * On démarre FIGÉ : on vient ici pour observer, pas pour courir.
+       */
+      let fige = true
 
       // Chaque effet avec sa durée pleine, pour dessiner une jauge honnête.
       const ETATS = [
@@ -154,11 +166,17 @@
           `<button data-m="subir" class="${mode === 'subir' ? 'on' : ''}">Subir</button>` +
           `<button data-m="lancer" class="${mode === 'lancer' ? 'on' : ''}">Lancer</button>` +
           `</div>` +
+          `<div class="mode seance">` +
+          `<button data-g="1" class="${fige ? 'on' : ''}">${fige ? 'Immobile' : 'Figer'}</button>` +
+          `<button data-q="1" class="sortie">Quitter</button>` +
+          `</div>` +
           `<div class="aide">${EFFETS[TIRAGE[idx]]}</div>` +
           `<div class="aide"><kbd>o</kbd> / <kbd>i</kbd> choisir · <kbd>e</kbd> déclencher<br />` +
-          `<kbd>t</kbd> changer de mode · <kbd>r</kbd> tout nettoyer</div>`
+          `<kbd>t</kbd> mode · <kbd>f</kbd> figer · <kbd>r</kbd> nettoyer · <kbd>q</kbd> quitter</div>`
         for (const b of panneau.querySelectorAll('.mode button')) {
           b.addEventListener('click', () => {
+            if (b.dataset.q) return quitter()
+            if (b.dataset.g) return basculerGel()
             mode = b.dataset.m
             appliquer()
           })
@@ -186,6 +204,18 @@
 
       /** 🍵 Le thé lave tout : c'est le bouton « remise à zéro » du banc. */
       const nettoyer = () => guichet.subir('the')
+
+      function basculerGel() {
+        fige = !fige
+        guichet.geler(fige)
+        dessiner()
+      }
+
+      /** On quitte la course et on revient au menu, sans recharger la page. */
+      function quitter() {
+        guichet.quitter()
+        dessiner()
+      }
 
       addEventListener(
         'keydown',
@@ -237,15 +267,26 @@
           `<div class="ligne${s.terre ? '' : ' eteint'}"><b>🎯 Terre</b>` +
           `<span class="v">${s.terre ? 'collée' : '—'}</span></div>` +
           `<div class="ligne${treve ? '' : ' eteint'}"><b>👻 Trêve</b>` +
-          `<span class="v">${treve ? s.treve.toFixed(1) + 's' : '—'}</span></div>`
+          `<span class="v">${treve ? s.treve.toFixed(1) + 's' : '—'}</span></div>` +
+          `<div class="ligne${s.gele ? '' : ' eteint'}"><b>🧪 Piste</b>` +
+          `<span class="v">${s.gele ? 'figée' : 'défile'}</span></div>`
       }
 
       // On redonne le sort tenu à chaque nouvelle course : `startRace` vide les
       // slots, et sans ça on repartirait les mains vides sans comprendre.
+      // On redonne le sort ET on refige à chaque nouvelle course : `startRace`
+      // repart d'une piste neuve, sans rien savoir du banc d'essai.
       const btnGo = document.getElementById('btnGo')
-      if (btnGo) btnGo.addEventListener('click', () => setTimeout(appliquer, 0))
+      if (btnGo)
+        btnGo.addEventListener('click', () =>
+          setTimeout(() => {
+            appliquer()
+            guichet.geler(fige)
+          }, 0)
+        )
 
       appliquer()
+      guichet.geler(fige)
       suivre()
     </script>
   </body>

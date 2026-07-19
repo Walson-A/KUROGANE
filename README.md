@@ -755,11 +755,26 @@ dos, à trente mètres. « Subir » emprunte le chemin d'arrivée — celui-là 
 qu'un rival déclenche chez nous — et on voit enfin la fumée, la boue, les
 chaînes et le poison sur son propre écran.
 
+**La piste est figée par défaut.** On vient ici pour observer, pas pour courir :
+le décor s'arrête, plus rien ne vient te percuter, et le coureur se tient
+debout au lieu de pédaler sur place (il réutilise la foulée « repos » de la
+grille de départ). Les **minuteurs continuent** de tourner — les geler aussi
+laisserait un effet affiché pour l'éternité, et on ne verrait jamais comment il
+se dissipe. La course ne se termine jamais non plus, puisque la distance
+n'avance plus : on reste aussi longtemps qu'on veut.
+
 Le panneau de droite liste **ce qu'on subit** en direct, avec le temps restant
 et une jauge : sans lui, on voit un effet sans savoir combien il dure ni ce qui
-se cumule avec quoi. <kbd>o</kbd>/<kbd>i</kbd> choisir, <kbd>e</kbd>
-déclencher, <kbd>t</kbd> changer de mode, <kbd>r</kbd> tout nettoyer (c'est le
-🍵 thé qui sert de remise à zéro).
+se cumule avec quoi.
+
+| Touche | |
+|---|---|
+| <kbd>o</kbd> / <kbd>i</kbd> | choisir le parchemin |
+| <kbd>e</kbd> | le déclencher |
+| <kbd>t</kbd> | subir ↔ lancer |
+| <kbd>f</kbd> | figer ↔ laisser défiler |
+| <kbd>r</kbd> | tout nettoyer (le 🍵 thé sert de remise à zéro) |
+| <kbd>q</kbd> | quitter, retour au menu sans recharger |
 
 > Le guichet qui rend tout ça possible (`window.__sorts`) vit derrière
 > `import.meta.env.DEV` : **il disparaît du bundle de production**. Impossible
