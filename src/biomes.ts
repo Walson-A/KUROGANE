@@ -454,6 +454,12 @@ interface FaçonBarriere {
  * ⚠️ Le premier pieu est posé à `-LONG/2` et le dernier EXCLU : deux tronçons
  * bout à bout partageraient sinon un pieu au même endroit, et l'on verrait un
  * poteau double tous les 12 m.
+ *
+ * ⚠️ Et `ecart` DOIT diviser `LONG_BARRIERE` exactement. Sinon le dernier pieu
+ * d'un tronçon tombe trop près du premier du suivant : avec un écart de 1,6 m,
+ * les pieux se suivaient à 1,6 m partout sauf au raccord, où ils se serraient à
+ * 0,8 m — un hoquet dans le rythme, tous les 12 m, sur toute la course. C'est
+ * le genre de motif que l'œil finit toujours par attraper.
  */
 function barriereSimple(f: FaçonBarriere, rng: () => number): THREE.Group {
   const p: Piece[] = []
@@ -627,9 +633,15 @@ const BAMBOUS: Biome = {
    * dessin d'un tiers — 175, au-dessus du confortable — pour le même résultat
    * que charger chaque massif, qui lui ne coûte RIEN de plus (tout est soudé).
    *
-   * On garde donc 6 m, et l'on remplit.
+   * On garde donc un écartement large, et l'on remplit chaque massif.
+   *
+   * 7 m plutôt que 6 : le décor est devenu si fourni (feuillage, canopée) que
+   * les massifs visibles coûtaient 156 appels de dessin, au-dessus des ~150
+   * confortables. En les espaçant d'un mètre et en chargeant chacun d'autant
+   * (× 7/6), la densité au mètre est INCHANGÉE et l'on récupère 14 % d'appels.
+   * C'est exactement le levier que la mesure avait désigné.
    */
-  ecartDecor: 6,
+  ecartDecor: 7,
 
   /*
    * ————— Le sol de la bambouseraie —————
@@ -723,7 +735,7 @@ const BAMBOUS: Biome = {
   fabriqueBarriere: () =>
     barriereSimple(
       {
-        pieu: { couleur: [0x6d8a42, 0x435c2a], r: 0.06, h: 1.15, ecart: 1.6 },
+        pieu: { couleur: [0x6d8a42, 0x435c2a], r: 0.06, h: 1.15, ecart: 1.5 },
         lisses: [
           { y: 0.44, r: 0.05, couleur: 0x54683a },
           { y: 0.94, r: 0.05, couleur: 0x54683a },
@@ -780,7 +792,7 @@ const BAMBOUS: Biome = {
      *
      * Les trois se chevauchent largement, donc plus aucune couture verticale.
      */
-    const detaillees = 22 + Math.floor(rng() * 10)
+    const detaillees = 26 + Math.floor(rng() * 12)
     for (let i = 0; i < detaillees; i++) {
       const h = 7 + rng() * 7
       const r = 0.085 + rng() * 0.05
@@ -844,7 +856,7 @@ const BAMBOUS: Biome = {
      * rien ne les distingue d'une tige détaillée, sinon qu'on ne compte pas
      * leurs nœuds à 28 m/s.
      */
-    const simples = 130 + Math.floor(rng() * 50)
+    const simples = 152 + Math.floor(rng() * 58)
     for (let i = 0; i < simples; i++) {
       const h = 7 + rng() * 8
       const r = 0.085 + rng() * 0.055
@@ -917,7 +929,7 @@ const BAMBOUS: Biome = {
      * Le prix reste dérisoire : une tige lointaine fait 4 pans creux, soit
      * 8 triangles, et le massif entier tient toujours en UN appel de dessin.
      */
-    const loin = 200 + Math.floor(rng() * 60)
+    const loin = 233 + Math.floor(rng() * 70)
     for (let i = 0; i < loin; i++) {
       const h = 13 + rng() * 11
       const r = 0.11 + rng() * 0.08
@@ -947,7 +959,7 @@ const BAMBOUS: Biome = {
      *
      * 2 triangles pièce : c'est l'élément le plus rentable du décor.
      */
-    const canopee = 80 + Math.floor(rng() * 40)
+    const canopee = 93 + Math.floor(rng() * 47)
     for (let i = 0; i < canopee; i++) {
       const hy = 8 + rng() * 12
       feuilles.push({
@@ -1235,7 +1247,7 @@ const VILLAGE: Biome = {
   fabriqueBarriere: () =>
     barriereSimple(
       {
-        pieu: { couleur: [0x2f1e15, 0x140c08], r: 0.075, h: 1.05, ecart: 1.35 },
+        pieu: { couleur: [0x2f1e15, 0x140c08], r: 0.075, h: 1.05, ecart: 1.2 },
         lisses: [{ y: 0.7, r: 0.055, couleur: 0x241811 }],
         pointe: 0x120b07,
       },

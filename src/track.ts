@@ -30,10 +30,21 @@ export type Kind = 'saut' | 'glissade' | 'mur'
  * `y` est la hauteur du CENTRE de la boîte au-dessus du sol.
  */
 export const TAILLE_OBSTACLE: Record<Kind, { larg: number; haut: number; prof: number; y: number }> = {
-  saut: { larg: 1.7, haut: 0.6, prof: 0.5, y: 0.3 }, // barrière basse → sauter
-  glissade: { larg: 1.7, haut: 0.5, prof: 0.5, y: 1.55 }, // barre haute → glisser dessous
-  mur: { larg: 1.7, haut: 2.4, prof: 0.5, y: 1.2 }, // bloc complet → changer de ligne
+  saut: { larg: 2.15, haut: 0.6, prof: 0.5, y: 0.3 }, // barrière basse → sauter
+  glissade: { larg: 2.15, haut: 0.5, prof: 0.5, y: 1.55 }, // barre haute → glisser dessous
+  mur: { larg: 2.15, haut: 2.4, prof: 0.5, y: 1.2 }, // bloc complet → changer de ligne
 }
+/*
+ * ⚠️ `larg` a suivi l'élargissement des lignes (1,70 → 2,15 m quand l'écart est
+ * passé de 2,20 à 2,80 m). Ce qui compte n'est pas la largeur absolue mais la
+ * PART DU PAS qu'un obstacle couvre : 77 % avant, 77 % après. Laisser 1,70 m
+ * aurait ramené cette part à 61 % et rendu toutes les esquives sensiblement
+ * plus faciles — un changement d'équilibrage déguisé en changement de décor.
+ *
+ * ⚠️ `haut` du `mur`, lui, ne bouge SURTOUT pas : 2,40 m est la valeur sur
+ * laquelle `JUMP_SPEED` est calibrée (Yasuke plafonne à 2,07 m et reste bloqué,
+ * Hana monte à 2,89 m et passe). Y toucher redistribuerait le roster.
+ */
 
 const LOOKAHEAD = 85 // les obstacles apparaissent 85 m devant (cachés par la brume)
 /** L'écart entre deux pointillés — et donc la période de leur défilement. */
@@ -293,6 +304,8 @@ export class Track {
    * Sans lui, tout le décor planté au-delà de 7 m flottait au-dessus du vide.
    */
   private matSolForet: THREE.MeshStandardMaterial
+  /** Les copies de texture du sol de forêt, une par biome (cf. texForet). */
+  private texturesForet = new Map<number, THREE.Texture | null>()
   /** Le défilement de la matière du sol, en tuiles. Gardé dans [0, 1[. */
   private defileSol = 0
   private matLigne: THREE.MeshBasicMaterial
@@ -737,17 +750,61 @@ export class Track {
     }
 
     /*
-     * Le sol de forêt suit la teinte du biome, en plus SOMBRE (×0,62).
+     * ————— Le sol de forêt : plus CLAIR que la brume, et texturé —————
      *
-     * Deux raisons de l'assombrir plutôt que de le peindre à l'identique :
-     * un sous-bois est à l'ombre quand le chemin prend la lumière, et surtout
-     * la piste doit rester lisible d'un coup d'œil. Un sol uniforme jusqu'à
-     * l'horizon effacerait la bande sur laquelle on court.
+     * ⚠️ Deux erreurs corrigées ici, et la première était grossière.
      *
-     * Il prend la couleur DÉJÀ MÉLANGÉE (`amb.sol`) : pas besoin d'un second
-     * plan en fondu comme la piste, puisqu'il n'a pas de matière à croiser.
+     * 1. IL ÉTAIT PLUS SOMBRE QUE LE FOND. Je l'avais assombri (×0,62) en me
+     *    disant qu'un sous-bois est à l'ombre — en oubliant que la couleur de
+     *    la brume EST l'arrière-plan. Mesuré : luminance 0,0160 contre 0,0233
+     *    pour la brume. Tout ce qui est plus sombre que le fond ne se lit pas
+     *    comme une surface mais comme un TROU. On avait donc bien ajouté un
+     *    sol, et il ressemblait toujours à du vide.
+     *
+     *    Il est maintenant légèrement plus clair (×1,08) : une surface qui
+     *    accroche le clair de lune et s'enfonce dans la brume.
+     *
+     * 2. UN APLAT NE PEUT PAS SE LIRE COMME UN SOL. Sans le moindre détail,
+     *    l'œil n'a aucun repère de distance ni d'échelle. Il reprend donc la
+     *    matière du biome — la même que la piste, mais sur sa propre copie de
+     *    texture : `repeat` et `offset` sont portés par l'objet Texture, et
+     *    partager celui de la piste ferait que chacun écraserait le réglage de
+     *    l'autre à chaque image.
+     *
+     * La piste, elle, reste lisible par sa texture propre et ses pointillés —
+     * pas par un contraste d'obscurité.
      */
-    this.matSolForet.color.copy(amb.sol).multiplyScalar(0.62)
+    const F = amb.melange > 0.5 ? B : A
+    this.matSolForet.color.copy(amb.sol).multiplyScalar(1.08)
+    const texF = this.texForet(amb.melange > 0.5 ? amb.iB : amb.iA, F)
+    if (this.matSolForet.map !== texF) {
+      this.matSolForet.map = texF
+      this.matSolForet.needsUpdate = true
+    }
+    if (texF) {
+      const tuile = (F.tuileSol ?? 4) * 3 // plus grosses mailles : on la voit de loin
+      texF.repeat.set(260 / tuile, 300 / tuile)
+      texF.offset.y = (this.defileSol / tuile) % 1
+    }
+  }
+
+  /**
+   * La copie de texture réservée au sol de forêt, une par biome.
+   *
+   * ⚠️ On CLONE plutôt que de réutiliser celle de la piste : `repeat` et
+   * `offset` vivent sur l'objet Texture, pas sur le matériau. Deux surfaces de
+   * tailles différentes qui partagent une texture se battraient pour ces deux
+   * valeurs à chaque image. Le clone partage l'image (donc rien de plus en
+   * mémoire vidéo) mais garde ses propres réglages.
+   */
+  private texForet(i: number, b: (typeof BIOMES)[number]): THREE.Texture | null {
+    const dejaLa = this.texturesForet.get(i)
+    if (dejaLa !== undefined) return dejaLa
+    const source = b.texSol?.() ?? null
+    const copie = source ? source.clone() : null
+    if (copie) copie.needsUpdate = true
+    this.texturesForet.set(i, copie)
+    return copie
   }
 
   update(dt: number, speed: number, distance = -1) {
@@ -900,7 +957,23 @@ export class Track {
     this.brume.color.copy(amb.brume)
     this.brume.near = amb.brumeNear
     this.brume.far = amb.brumeFar
-    this.fond.copy(amb.brume)
+    /*
+     * ————— Le fond de scène : ce qu'on prend pour le CIEL —————
+     *
+     * ⚠️ Il vaut la couleur de brume ÉCLAIRCIE, pas la couleur de brume.
+     *
+     * À l'identique, tout ce qui dépasse la portée de la brume se confondait
+     * exactement avec le fond : plus aucune ligne d'horizon, plus aucune
+     * différence entre « le ciel » et « la forêt au loin ». L'écran se
+     * terminait en un aplat unique, et l'on avait beau planter des bambous et
+     * poser un sol, il n'y avait toujours ni haut ni bas.
+     *
+     * × 1,45 suffit : la brume garde son rôle (fondre les lointains) mais le
+     * ciel reste plus lumineux qu'elle. La cime des bambous s'y détache, et
+     * la voûte de feuillage se lit enfin comme une voûte — quelque chose de
+     * sombre DEVANT quelque chose de clair.
+     */
+    this.fond.copy(amb.brume).multiplyScalar(1.45)
     this.matLigne.color.copy(amb.ligne)
     this.appliqueSol(amb, dz)
 
