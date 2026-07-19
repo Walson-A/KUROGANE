@@ -113,26 +113,82 @@
     <!-- Un seul écran est visible à la fois ; c'est menu.ts qui aiguille. -->
     <div id="overlay">
       <section id="scr-title" class="screen">
-        <div class="jp">黒鉄</div>
-        <h1>KUROGANE</h1>
+        <!-- ————— L'enseigne : shuriken, encre, pinceau —————
+             Le titre n'est pas écrit, il est PEINT à l'ouverture. Tout est
+             piloté par la classe `joue` posée par menu.ts : sans elle, rien ne
+             s'anime et l'enseigne s'affiche telle quelle — c'est ce qui la rend
+             sautable d'un simple retrait de classe. -->
+        <div id="enseigne">
+          <!-- Les gouttes d'encre projetées par la lame -->
+          <svg id="encre" viewBox="0 0 320 200" aria-hidden="true">
+            <g class="tache t1"><circle cx="94" cy="96" r="34" /></g>
+            <g class="tache t2"><circle cx="176" cy="88" r="28" /></g>
+            <g class="tache t3"><circle cx="140" cy="120" r="20" /></g>
+            <g class="eclab e1"><circle cx="58" cy="70" r="5" /></g>
+            <g class="eclab e2"><circle cx="228" cy="118" r="7" /></g>
+            <g class="eclab e3"><circle cx="206" cy="52" r="4" /></g>
+            <g class="eclab e4"><circle cx="86" cy="146" r="6" /></g>
+          </svg>
+
+          <!-- Les coulures : l'encre fraîche qui redescend sous son poids.
+               C'est ce détail qui fait lire « peinture » plutôt que « forme ». -->
+          <svg id="coulures" viewBox="0 0 320 200" aria-hidden="true">
+            <g class="goutte g1"><rect x="92" y="112" width="5" height="30" rx="2.5" /></g>
+            <g class="goutte g2"><rect x="174" y="106" width="4" height="24" rx="2" /></g>
+            <g class="goutte g3"><rect x="138" y="132" width="3" height="18" rx="1.5" /></g>
+          </svg>
+
+          <!-- 🌀 Deux shuriken : le premier ouvre, le second referme. Le second
+               vole en sens inverse — sinon on croit voir le premier revenir. -->
+          <svg id="shuriken" class="lame" viewBox="-30 -30 60 60" aria-hidden="true">
+            <path
+              d="M0-26 6-8 26 0 6 8 0 26 -6 8 -26 0 -6-8Z"
+              fill="#c9d3e8"
+              stroke="#151a2c"
+              stroke-width="2.5"
+              stroke-linejoin="round"
+            />
+            <circle r="4.5" fill="#151a2c" />
+          </svg>
+          <svg id="shuriken2" class="lame" viewBox="-30 -30 60 60" aria-hidden="true">
+            <path
+              d="M0-26 6-8 26 0 6 8 0 26 -6 8 -26 0 -6-8Z"
+              fill="#9aa4c0"
+              stroke="#151a2c"
+              stroke-width="2.5"
+              stroke-linejoin="round"
+            />
+            <circle r="4.5" fill="#151a2c" />
+          </svg>
+
+          <!-- 🖌️ Le pinceau qui descend écrire le kanji -->
+          <div id="pinceau" aria-hidden="true">🖌️</div>
+
+          <!-- Le kanji, révélé par un balayage : c'est le trait de pinceau -->
+          <div class="jp" id="titreJp">黒鉄</div>
+          <h1 id="titreFr">KUROGANE</h1>
+
+          <!-- 🔴 Le sceau, apposé en dernier — comme on signe une estampe une
+               fois l'encre sèche. C'est lui qui dit « c'est fini ». -->
+          <div id="sceau" aria-hidden="true">鉄</div>
+        </div>
         <div class="tagline">« Acier noir » — le Tournoi des Voies</div>
         <p id="banner" class="banner hidden"></p>
+
+        <!-- Cinq portes, et une seule mène au jeu : le reste est du réglage.
+             « JOUER » est donc seul en primaire, les autres en rang. -->
+        <!-- L'icône est dans son propre <span> : c'est elle seule qui s'anime au
+             survol, jamais le libellé. Un mot qui tourne est illisible. -->
         <div class="stack">
-          <button id="btnOnline">⚔️ COURSE EN LIGNE</button>
-          <button id="btnSolo" class="secondary">🏋️ ENTRAÎNEMENT SOLO</button>
+          <button id="btnJouer" class="anime"><span class="ic">▶️</span> JOUER</button>
         </div>
         <div class="row">
-          <button id="btnRoster" class="ghost grow">
-            <span class="jp-mini" id="pickJp">弥助</span>
-            <span class="lines">
-              <small>Ton guerrier</small>
-              <b id="pickName">Yasuke</b>
-            </span>
-          </button>
-          <button id="btnScores" class="ghost" aria-label="Meilleurs temps">🏆</button>
-          <button id="btnCompte" class="ghost" aria-label="Ton compte">👤</button>
-          <button id="btnOptions" class="ghost" aria-label="Options">⚙️</button>
-          <button id="btnHelp" class="ghost" aria-label="Comment jouer">❓</button>
+          <button id="btnScores" class="ghost grow anime"><span class="ic">🏆</span> Scores</button>
+          <button id="btnCompte" class="ghost grow anime"><span class="ic">👤</span> Compte</button>
+        </div>
+        <div class="row">
+          <button id="btnOptions" class="ghost grow anime"><span class="ic">⚙️</span> Paramètres</button>
+          <button id="btnHelp" class="ghost grow anime"><span class="ic">❓</span> Aide</button>
         </div>
 
         <!-- La bourse : masquée tant qu'on n'a pas joint le serveur -->
@@ -321,6 +377,19 @@
           <small>Sauts, jarres, coups, décompte.</small>
         </div>
 
+        <!-- Les pseudos au-dessus des têtes. Un interrupteur et non une
+             réglette : c'est oui ou non, il n'y a rien à doser. -->
+        <div class="field">
+          <label class="bascule" for="optNoms">
+            <span class="lines">
+              <b>Prénoms des joueurs</b>
+              <small>Les étiquettes au-dessus des coureurs, en piste.</small>
+            </span>
+            <input id="optNoms" type="checkbox" checked />
+            <span class="glissiere" aria-hidden="true"></span>
+          </label>
+        </div>
+
         <button class="primary" data-back>OK</button>
       </section>
 
@@ -397,6 +466,13 @@
           <button class="back" data-back aria-label="Retour">‹</button>
           <h2>Meilleurs temps</h2>
         </header>
+        <!-- Trois lectures du même sujet : les meilleurs de tous, les tiens sur
+             cet appareil, et ce que tu viens de courir. -->
+        <div class="seg" id="scoresOnglets">
+          <button data-t="mondial">🌍 Mondial</button>
+          <button data-t="local">📱 Local</button>
+          <button data-t="recentes">🕓 Récentes</button>
+        </div>
         <p class="lead" id="scoresLead"></p>
         <div id="scoresBody" class="scores"></div>
         <div class="row">
@@ -415,6 +491,32 @@
         <div id="botrow"></div>
         <div id="botnames"></div>
         <button id="btnGo" class="primary">⛩️ EN PISTE</button>
+      </section>
+
+      <!-- ▶️ JOUER : les quatre façons d'entrer en piste, plus le vestiaire.
+           Le vestiaire est ICI et non au titre parce qu'on change de guerrier
+           en pensant à la course qui vient, jamais en passant. -->
+      <section id="scr-jouer" class="screen hidden">
+        <header class="head">
+          <button class="back" data-back aria-label="Retour">‹</button>
+          <h2>Jouer</h2>
+        </header>
+        <div class="stack">
+          <button id="btnQuickJouer">⚡ PARTIE RAPIDE</button>
+          <button id="btnSolo" class="secondary">🏋️ ENTRAÎNEMENT</button>
+          <button id="btnCreateJouer" class="secondary">🏮 CRÉER UN SALON</button>
+          <button id="btnRejoindre" class="ghost">🔑 REJOINDRE UN SALON</button>
+        </div>
+        <div class="row">
+          <button id="btnRoster" class="ghost grow">
+            <span class="jp-mini" id="pickJp">弥助</span>
+            <span class="lines">
+              <small>Ton guerrier</small>
+              <b id="pickName">Yasuke</b>
+            </span>
+            <span class="chev">🥷</span>
+          </button>
+        </div>
       </section>
 
       <!-- Jouer en ligne : créer / rejoindre / partie rapide / liste publique -->

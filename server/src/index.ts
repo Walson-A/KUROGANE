@@ -4,8 +4,32 @@ import { toNodeHandler } from 'better-auth/node'
 import { RaceRoom } from './RaceRoom.js'
 import { auth, GOOGLE_DISPO, BASE_URL } from './auth.js'
 import { baseDispo, migrer } from './db.js'
-import { assureProfil } from './profil.js'
+import { assureProfil, crediter } from './profil.js'
 import { acheter, catalogue } from './boutique.js'
+import { mondial, recentes } from './classement.js'
+
+/**
+ * ————— 🟢 Le plafond des pots verts —————
+ *
+ * Deux pots au maximum par course, 10 Mon chacun : ces chiffres doivent rester
+ * d'accord avec POTS_VERTS_MAX et le tirage 1–10 de src/track.ts. Ils sont
+ * recopiés ici et non importés, parce que track.ts dépend de Three.js et n'a
+ * rien à faire dans un serveur — mais s'ils divergent, le plafond serrera trop
+ * ou pas assez.
+ */
+const POTS_MAX_MON = 2 * 10
+/**
+ * Et le jade. Le plafond suppose le PIRE cas — deux pots, tous deux du jade,
+ * tous deux au maximum — alors qu'en pratique un pot sur cinq seulement en
+ * contient. Un plafond se calcule sur ce qui est possible, jamais sur ce qui
+ * est probable : sinon il refuserait un jour un joueur parfaitement honnête.
+ */
+const POTS_MAX_HISUI = 2 * 6
+/** La fenêtre entre deux versements : la durée d'une course propre. */
+const POTS_DELAI_MS = 60_000
+/** Le dernier versement de chaque joueur. En mémoire : un redémarrage la vide,
+ *  ce qui offre au pire une fenêtre de plus — sans conséquence à ce plafond. */
+const dernierPot = new Map<string, number>()
 
 /**
  * Le serveur de jeu KUROGANE.
@@ -264,6 +288,82 @@ gameServer.listen(port).then(() => {
           return
         }
         repondre(res, 200, { profil: r.profil, articles: await catalogue(joueur) }, req)
+      })
+      return
+    }
+
+    /*
+     * ————— 🏆 Le classement —————
+     *
+     * En LECTURE seule. Il n'existe volontairement aucune route d'écriture :
+     * les scores n'entrent que par RaceRoom, avec un temps déjà borné par le
+     * serveur (cf. classement.ts). Une route d'écriture ici, même bien gardée,
+     * accepterait par construction un chrono venu du navigateur.
+     */
+    if (req.url?.startsWith('/api/classement')) {
+      avecSession(req, res, async (joueur) => {
+        const url = new URL(req.url!, 'http://x')
+        const longueur = Number(url.searchParams.get('longueur')) || 1920
+        const onglet = url.searchParams.get('onglet')
+        const lignes =
+          onglet === 'recentes'
+            ? await recentes(joueur, longueur)
+            : await mondial(longueur, joueur)
+        repondre(res, 200, { lignes }, req)
+      })
+      return
+    }
+
+    /*
+     * ————— 🟢 Les pots verts —————
+     *
+     * Le jeu annonce ce qu'il a ramassé pendant la course. Deux gardes, parce
+     * que la valeur vient du CLIENT et qu'on ne peut pas la croire :
+     *
+     *  · le plafond par course — deux pots à 10 Mon, jamais davantage ;
+     *  · le délai — pas deux versements dans la même fenêtre qu'une course.
+     *
+     * ⚠️ Ce n'est PAS une vérification, c'est un plafond. Un client modifié peut
+     * réclamer 20 Mon par tranche de 60 s. C'est délibérément moins rentable que
+     * de courir (100 Mon pour une victoire en ~75 s) : tricher sur les pots fait
+     * PERDRE de l'argent, ce qui est la meilleure protection à ce prix-là.
+     *
+     * Pour vérifier vraiment, il faudrait que le serveur rejoue buildJarrePlan
+     * à partir de la graine — donc extraire les planificateurs de track.ts, qui
+     * importe Three.js, dans un module commun sans dépendance graphique.
+     */
+    if (req.url === '/api/pot' && req.method === 'POST') {
+      avecSession(req, res, async (joueur) => {
+        const corps = await lireCorps(req)
+        // Plafonné ET arrondi : un décimal ou un NaN ne doit pas passer.
+        const borner = (v: unknown, max: number) => {
+          const n = Number(v)
+          return Number.isFinite(n) && n > 0 ? Math.min(max, Math.floor(n)) : 0
+        }
+        const mon = borner(corps?.mon, POTS_MAX_MON)
+        const hisui = borner(corps?.hisui, POTS_MAX_HISUI)
+        if (mon <= 0 && hisui <= 0) {
+          repondre(res, 400, { erreur: 'montant invalide' }, req)
+          return
+        }
+        const dernier = dernierPot.get(joueur) ?? 0
+        const maintenant = Date.now()
+        if (maintenant - dernier < POTS_DELAI_MS) {
+          repondre(res, 429, { erreur: 'trop tôt' }, req)
+          return
+        }
+        dernierPot.set(joueur, maintenant)
+        await assureProfil(joueur)
+        /*
+         * Deux crédits séquentiels, jamais en parallèle : `crediter` renvoie le
+         * profil APRÈS son écriture, et deux écritures concurrentes rendraient
+         * chacune un solde ignorant l'autre. On garde le dernier, qui les a vues
+         * toutes les deux.
+         */
+        let profil = null
+        if (mon > 0) profil = await crediter(joueur, 'mon', mon, 'pot-vert')
+        if (hisui > 0) profil = await crediter(joueur, 'hisui', hisui, 'pot-vert:jade')
+        repondre(res, 200, { profil }, req)
       })
       return
     }

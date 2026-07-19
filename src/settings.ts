@@ -27,6 +27,15 @@ export interface Settings {
   volumeMusique: number
   /** Volume des bruitages, séparé : on veut pouvoir garder les sons sans la musique. */
   volumeSfx: number
+  /**
+   * Affiche-t-on les pseudos au-dessus des coureurs ?
+   *
+   * Allumé par défaut : en duel, savoir QUI l'on double fait partie du jeu. Mais
+   * à cinq sur la ligne de départ, cinq étiquettes se chevauchent juste devant
+   * les obstacles — d'où le bouton. Il ne touche QUE l'affichage 3D : la colonne
+   * de progression à gauche garde ses noms, puisqu'elle ne masque rien de la piste.
+   */
+  afficherNoms: boolean
 }
 
 /** Le volume par défaut : présent sans couvrir le reste. */
@@ -96,6 +105,9 @@ export function loadSettings(): Settings {
       typeof raw.volumeSfx === 'number' && raw.volumeSfx >= 0 && raw.volumeSfx <= 1
         ? raw.volumeSfx
         : 0.7,
+    // Absent d'une vieille sauvegarde = allumé : on ne fait pas disparaître les
+    // pseudos chez qui ne les a jamais éteints.
+    afficherNoms: raw.afficherNoms !== false,
   }
 }
 

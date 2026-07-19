@@ -71,7 +71,7 @@ export interface LobbyView {
 export interface NetCallbacks {
   /** Le salon a changé (arrivée, départ, prêt, hôte…) — hors course */
   onLobby(view: LobbyView): void
-  /** La partie est lancée : décompte de 10 s, avec la graine de la piste */
+  /** La partie est lancée : décompte commun, avec la graine de la piste */
   onCountdown(seed: number): void
   /** GO officiel du serveur */
   onGo(): void

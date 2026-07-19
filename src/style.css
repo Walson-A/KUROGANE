@@ -646,6 +646,307 @@ body {
   display: none;
 }
 
+/* ————————————————————————————————————————————————————————————
+   🌀 L'ENSEIGNE — le titre est PEINT, pas affiché
+   ————————————————————————————————————————————————————————————
+   Sept temps, sur 3,4 s :
+     0,00  le premier shuriken traverse en tournant
+     0,70  l'encre éclabousse dans son sillage
+     1,05  un second shuriken repasse en sens inverse
+     1,30  le pinceau descend, le kanji se révèle sous son trait
+     2,15  l'encre fraîche coule sous son poids
+     2,40  KUROGANE se resserre
+     2,90  le sceau s'appose — la signature de l'estampe
+
+   ⚠️ Tout est suspendu à la classe `joue`. Sans elle, aucune animation ne
+   tourne et l'enseigne est simplement LÀ, lisible. C'est ce qui rend l'intro
+   sautable — menu.ts retire la classe et l'écran est immédiatement dans son
+   état final, sans transition à interrompre ni minuteur à annuler.
+   ———————————————————————————————————————————————————————————— */
+#enseigne {
+  position: relative;
+  width: 100%;
+  /* Une hauteur FIXE : les pièces de l'enseigne sont en absolu, et sans elle
+     le bloc s'effondrerait à zéro en emportant la mise en page des boutons. */
+  height: 132px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Les couches décoratives ne captent jamais le doigt : elles couvrent le
+   titre, et un tap dessus doit passer au travers pour sauter l'intro. */
+#encre,
+#coulures,
+.lame,
+#pinceau,
+#sceau {
+  position: absolute;
+  pointer-events: none;
+}
+
+#encre,
+#coulures {
+  width: 260px;
+  height: 162px;
+  fill: #e24b3a;
+}
+#encre {
+  opacity: 0.34;
+  /* Le flou fait la différence entre « des cercles » et « de l'encre » */
+  filter: blur(7px);
+}
+#encre g {
+  transform-origin: center;
+  transform: scale(0);
+}
+/* Chaque tache éclot à son tour, après le passage de la lame */
+.joue #encre .tache { animation: tacheEclot 0.54s cubic-bezier(0.2, 1.6, 0.4, 1) forwards; }
+.joue #encre .t1 { animation-delay: 0.7s; }
+.joue #encre .t2 { animation-delay: 0.79s; }
+.joue #encre .t3 { animation-delay: 0.88s; }
+.joue #encre .eclab { animation: tacheEclot 0.46s cubic-bezier(0.2, 1.6, 0.4, 1) forwards; }
+.joue #encre .e1 { animation-delay: 0.76s; }
+.joue #encre .e2 { animation-delay: 0.83s; }
+.joue #encre .e3 { animation-delay: 0.9s; }
+.joue #encre .e4 { animation-delay: 0.96s; }
+/* Sans `joue`, l'encre est déjà posée : c'est l'état final */
+#enseigne:not(.joue) #encre g { transform: scale(1); }
+@keyframes tacheEclot {
+  from { transform: scale(0); }
+  to { transform: scale(1); }
+}
+
+/* ——— Les coulures ———
+   Elles s'étirent VERS LE BAS depuis leur haut (transform-origin: top), ce qui
+   imite une goutte qui descend plutôt qu'un trait qui grandit des deux côtés. */
+#coulures {
+  opacity: 0.28;
+  filter: blur(2.5px);
+}
+#coulures g {
+  transform-origin: top;
+  transform: scaleY(0);
+}
+.joue #coulures .goutte { animation: goutteCoule 0.9s cubic-bezier(0.3, 0, 0.5, 1) forwards; }
+.joue #coulures .g1 { animation-delay: 2.15s; }
+.joue #coulures .g2 { animation-delay: 2.28s; }
+.joue #coulures .g3 { animation-delay: 2.4s; }
+#enseigne:not(.joue) #coulures g { transform: scaleY(1); }
+@keyframes goutteCoule {
+  from { transform: scaleY(0); }
+  to { transform: scaleY(1); }
+}
+
+.lame {
+  width: 54px;
+  height: 54px;
+  opacity: 0;
+}
+#shuriken { top: 34px; }
+/* Le second passe plus haut et plus petit : la perspective suggère qu'il vole
+   plus loin, et deux lames sur la même ligne se liraient comme un aller-retour. */
+#shuriken2 { top: 8px; width: 36px; height: 36px; }
+.joue #shuriken { animation: lamePasse 0.9s cubic-bezier(0.35, 0, 0.5, 1) forwards; }
+.joue #shuriken2 { animation: lameRepasse 0.78s cubic-bezier(0.35, 0, 0.5, 1) 1.05s forwards; }
+@keyframes lamePasse {
+  0%   { opacity: 0; transform: translateX(-200px) rotate(0deg); }
+  10%  { opacity: 1; }
+  86%  { opacity: 1; }
+  100% { opacity: 0; transform: translateX(200px) rotate(1260deg); }
+}
+@keyframes lameRepasse {
+  0%   { opacity: 0; transform: translateX(190px) rotate(0deg); }
+  14%  { opacity: 0.85; }
+  84%  { opacity: 0.85; }
+  100% { opacity: 0; transform: translateX(-190px) rotate(-900deg); }
+}
+
+#pinceau {
+  font-size: 2.1rem;
+  top: -6px;
+  opacity: 0;
+  /* L'émoji pinceau pointe en haut à droite : on le retourne pour que sa
+     pointe suive le trait, sinon il « écrit » avec son manche. */
+  transform: scaleX(-1) rotate(-16deg);
+}
+.joue #pinceau { animation: pinceauEcrit 1.05s ease-in-out 1.3s forwards; }
+@keyframes pinceauEcrit {
+  0%   { opacity: 0; transform: translate(-96px, -40px) scaleX(-1) rotate(-16deg); }
+  14%  { opacity: 1; }
+  /* Le léger sursaut à mi-course imite la pression qu'on relâche entre deux
+     traits — un déplacement parfaitement linéaire ressemble à une machine. */
+  46%  { transform: translate(4px, -10px) scaleX(-1) rotate(-22deg); }
+  84%  { opacity: 1; transform: translate(92px, 8px) scaleX(-1) rotate(-14deg); }
+  100% { opacity: 0; transform: translate(120px, 16px) scaleX(-1) rotate(-14deg); }
+}
+
+/* ——— Le kanji : révélé SOUS le pinceau ———
+   Un dégradé qui balaie de gauche à droite. C'est le geste d'écriture : le
+   trait apparaît là où la pointe vient de passer, jamais avant. */
+#titreJp {
+  position: relative;
+  z-index: 2;
+}
+.joue #titreJp {
+  -webkit-mask-image: linear-gradient(90deg, #000 0 35%, transparent 55%);
+  mask-image: linear-gradient(90deg, #000 0 35%, transparent 55%);
+  -webkit-mask-size: 300% 100%;
+  mask-size: 300% 100%;
+  -webkit-mask-position: 100% 0;
+  mask-position: 100% 0;
+  animation: kanjiPeint 1.05s ease-in-out 1.3s forwards;
+}
+@keyframes kanjiPeint {
+  to {
+    -webkit-mask-position: 0 0;
+    mask-position: 0 0;
+  }
+}
+
+#titreFr {
+  position: relative;
+  z-index: 2;
+}
+.joue #titreFr {
+  opacity: 0;
+  animation: titreParait 0.62s cubic-bezier(0.2, 0.9, 0.3, 1) 2.4s forwards;
+}
+@keyframes titreParait {
+  from { opacity: 0; letter-spacing: 1.1em; margin-right: -1.1em; filter: blur(5px); }
+  to   { opacity: 1; letter-spacing: 0.35em; margin-right: -0.35em; filter: blur(0); }
+}
+
+/* ——— Le sceau ———
+   Il TOMBE et rebondit : un sceau se presse, il ne se pose pas. Légèrement de
+   travers, comme une main qui appuie. */
+#sceau {
+  right: 8px;
+  bottom: 6px;
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  font-family: "Yu Mincho", "Hiragino Mincho ProN", serif;
+  font-size: 1.15rem;
+  color: #f4eedf;
+  background: #c33a2c;
+  border-radius: 5px;
+  transform: rotate(-8deg);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.45);
+}
+.joue #sceau { opacity: 0; animation: sceauAppose 0.5s cubic-bezier(0.3, 1.7, 0.5, 1) 2.9s forwards; }
+@keyframes sceauAppose {
+  0%   { opacity: 0; transform: rotate(-8deg) scale(2.4); }
+  60%  { opacity: 1; }
+  100% { opacity: 1; transform: rotate(-8deg) scale(1); }
+}
+
+/* La tagline et les boutons entrent en DERNIER, et l'un après l'autre : on ne
+   propose pas de choisir avant d'avoir fini de dire où l'on est. */
+.joue ~ .tagline,
+.joue ~ .stack,
+.joue ~ .row {
+  opacity: 0;
+  animation: monteDoux 0.46s ease-out forwards;
+}
+.joue ~ .tagline { animation-delay: 2.62s; }
+.joue ~ .stack { animation-delay: 2.86s; }
+.joue ~ .row { animation-delay: 3.02s; }
+.joue ~ .row ~ .row { animation-delay: 3.16s; }
+@keyframes monteDoux {
+  from { opacity: 0; transform: translateY(11px); }
+  to   { opacity: 1; transform: none; }
+}
+
+/* ————— Le survol des boutons —————
+   ⚠️ Sous `hover: hover` UNIQUEMENT. Sur un écran tactile, `:hover` reste collé
+   après le tap : le bouton qu'on vient de toucher garderait son engrenage en
+   rotation jusqu'au tap suivant. Ce n'est pas un détail cosmétique — c'est ce
+   qui distingue un effet de survol d'un effet qui ne s'éteint plus. */
+@media (hover: hover) and (pointer: fine) {
+  #overlay button.anime {
+    transition: transform 0.16s ease, border-color 0.16s ease, background 0.16s ease;
+  }
+  #overlay button.anime:hover {
+    transform: translateY(-2px);
+  }
+  #overlay button.anime:active {
+    transform: translateY(0);
+  }
+  .anime .ic {
+    display: inline-block; /* un <span> en ligne ignore transform */
+    transition: transform 0.25s ease;
+  }
+
+  /* ⚙️ L'engrenage TOURNE — un engrenage, ça tourne : le geste dit la fonction */
+  #btnOptions:hover .ic {
+    animation: rouage 1.6s linear infinite;
+  }
+  @keyframes rouage {
+    to { transform: rotate(360deg); }
+  }
+
+  /* ▶️ La lecture pousse vers l'avant : la flèche part en piste */
+  #btnJouer:hover .ic { transform: translateX(4px) scale(1.15); }
+
+  /* 🏆 La coupe qu'on soulève */
+  #btnScores:hover .ic { animation: souleve 0.7s ease-in-out infinite; }
+  @keyframes souleve {
+    50% { transform: translateY(-4px) scale(1.1); }
+  }
+
+  /* 👤 On se présente : un léger salut */
+  #btnCompte:hover .ic { animation: salut 0.9s ease-in-out infinite; }
+  @keyframes salut {
+    30% { transform: rotate(-12deg); }
+    60% { transform: rotate(9deg); }
+  }
+
+  /* ❓ La question qui insiste */
+  #btnHelp:hover .ic { animation: interroge 0.85s ease-in-out infinite; }
+  @keyframes interroge {
+    25% { transform: rotate(-14deg) scale(1.12); }
+    75% { transform: rotate(14deg) scale(1.12); }
+  }
+}
+
+/* Qui préfère le calme n'a pas à subir tout ça : on coupe l'intro ET les
+   survols. Les états finaux sont ceux d'un #enseigne sans `joue`, donc il n'y
+   a presque rien à réécrire. */
+@media (prefers-reduced-motion: reduce) {
+  .joue #encre .tache,
+  .joue #encre .eclab,
+  .joue #coulures .goutte,
+  .joue .lame,
+  .joue #pinceau,
+  .joue #titreJp,
+  .joue #titreFr,
+  .joue #sceau,
+  .joue ~ .tagline,
+  .joue ~ .stack,
+  .joue ~ .row,
+  .anime .ic,
+  #btnOptions:hover .ic,
+  #btnScores:hover .ic,
+  #btnCompte:hover .ic,
+  #btnHelp:hover .ic {
+    animation: none;
+    transition: none;
+  }
+  .joue #encre g { transform: scale(1); }
+  .joue #coulures g { transform: scaleY(1); }
+  .joue #titreJp { -webkit-mask-image: none; mask-image: none; }
+  .joue #titreFr,
+  .joue #sceau,
+  .joue ~ .tagline,
+  .joue ~ .stack,
+  .joue ~ .row { opacity: 1; }
+  .lame, #pinceau { opacity: 0; }
+}
+
+
 /* ——— L'écran-titre ——— */
 #overlay .jp {
   font-family: "Yu Mincho", "Hiragino Mincho ProN", serif;
@@ -959,6 +1260,79 @@ body {
   opacity: 0.6;
   line-height: 1.4;
 }
+/* ——— L'interrupteur des réglages ———
+   Une case à cocher native est minuscule au doigt et ne se teinte pas. On garde
+   donc l'<input> pour le clavier et les lecteurs d'écran, mais on le rend
+   invisible et on dessine la glissière à côté. */
+.field > label.bascule {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  cursor: pointer;
+  /* On annule le style des libellés de champ : ici c'est une phrase, pas un
+     en-tête de rubrique en petites capitales. */
+  font-size: inherit;
+  letter-spacing: normal;
+  text-transform: none;
+  color: inherit;
+}
+.bascule .lines {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.bascule b {
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+/* Invisible mais TOUJOURS focalisable : c'est lui qui porte l'état.
+   Sélecteur préfixé par #overlay : la règle générique `#overlay input` plus bas
+   porte un identifiant et l'emporterait sinon, rhabillant la case en champ de
+   saisie. */
+#overlay .bascule input {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+  padding: 0;
+  border: 0;
+  pointer-events: none;
+}
+.glissiere {
+  flex: none;
+  position: relative;
+  width: 50px;
+  height: 28px;
+  border-radius: 100px;
+  background: rgba(21, 26, 44, 0.9);
+  border: 1px solid #3d4560;
+  transition: background 0.18s, border-color 0.18s;
+}
+.glissiere::after {
+  content: "";
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: #6b7594;
+  transition: transform 0.18s, background 0.18s;
+}
+.bascule input:checked ~ .glissiere {
+  background: rgba(214, 172, 90, 0.28);
+  border-color: #d6ac5a;
+}
+.bascule input:checked ~ .glissiere::after {
+  background: #d6ac5a;
+  transform: translateX(22px);
+}
+/* Au clavier, on doit voir où l'on est */
+.bascule input:focus-visible ~ .glissiere {
+  box-shadow: 0 0 0 3px rgba(214, 172, 90, 0.35);
+}
+
 #overlay input {
   font-family: inherit;
   font-size: 1.05rem;
@@ -1459,6 +1833,18 @@ body {
 .score.premier {
   border-color: #d6ac5a;
   background: rgba(214, 172, 90, 0.1);
+}
+/* Ta ligne dans le classement mondial. Vermillon et non or : l'or dit « le
+   meilleur », le vermillon dit « toi » — deux informations différentes, qui
+   peuvent tomber sur la même ligne le jour où l'on est premier. */
+.score.moi {
+  border-color: #e24b3a;
+  background: rgba(226, 75, 58, 0.12);
+}
+.score.moi.premier {
+  border-color: #d6ac5a;
+  background: rgba(214, 172, 90, 0.16);
+  box-shadow: inset 3px 0 0 #e24b3a;
 }
 .scorerang {
   flex: none;

@@ -2,6 +2,7 @@ import { Room, Client, updateLobby } from 'colyseus'
 import { Schema, MapSchema, type } from '@colyseus/schema'
 import { compteDe } from './auth.js'
 import { assureProfil, crediter, GAIN_COURSE } from './profil.js'
+import { enregistrer } from './classement.js'
 
 /**
  * ————— Le salon de course KUROGANE —————
@@ -12,8 +13,8 @@ import { assureProfil, crediter, GAIN_COURSE } from './profil.js'
  *    automatiquement un salon public.
  *
  * Le départ est à la « Among Us » : chacun se déclare PRÊT, et l'hôte lance
- * la partie dès qu'au moins la moitié des joueurs le sont. Un décompte de
- * 10 secondes, commun à tous, précède le GO.
+ * la partie dès qu'au moins la moitié des joueurs le sont. Un décompte commun
+ * à tous (COUNTDOWN_MS) précède le GO.
  */
 
 /** Tout ce que le serveur sait d'un joueur, synchronisé vers tous les autres. */
@@ -65,8 +66,14 @@ export class RaceState extends Schema {
 /** Le salon accueille jusqu'à 10 guerriers. */
 const MAX_CLIENTS = 10
 
-/** Décompte avant le GO, une fois la partie lancée (ms). */
-const COUNTDOWN_MS = 10_000
+/**
+ * Décompte avant le GO, une fois la partie lancée (ms).
+ *
+ * ⚠️ C'est le serveur qui fait autorité : il pose `startAt` et le jeu ne fait
+ * qu'afficher ce qui l'en sépare. Changer ce chiffre suffit donc — il n'y a pas
+ * de durée à tenir en accord côté client.
+ */
+const COUNTDOWN_MS = 6_000
 /**
  * 👻 La trêve du départ : 5 s après le GO, aucune attaque ne passe — ni sort,
  * ni coup. Le client affiche la même fenêtre ; ICI elle est appliquée pour de
@@ -420,7 +427,7 @@ export class RaceRoom extends Room<{ state: RaceState }> {
     this.refreshMetadata()
   }
 
-  /** Lance la partie : verrou, décompte de 10 s commun, puis GO. */
+  /** Lance la partie : verrou, décompte commun (COUNTDOWN_MS), puis GO. */
   private lancer() {
     this.lock()
     this.state.phase = 'countdown'
@@ -478,6 +485,22 @@ export class RaceRoom extends Room<{ state: RaceState }> {
         await assureProfil(joueur, p.name)
         await crediter(joueur, 'mon', gain, p.rank === 1 ? 'course:victoire' : 'course')
         console.log(`💰 ${p.name || sessionId} : +${gain} Mon (${p.rank}ᵉ)`)
+
+        /*
+         * 🏆 Et au classement. C'est ICI, et nulle part ailleurs, que le tableau
+         * mondial se remplit : `p.time` a déjà été borné par le serveur à
+         * l'arrivée (cf. 'finished'), alors qu'une route ouverte au navigateur
+         * accepterait n'importe quel chrono.
+         */
+        await enregistrer({
+          joueur,
+          pseudo: p.name,
+          temps: p.time,
+          longueur: COURSE_LENGTH,
+          fighter: p.fighter,
+          partants: this.state.players.size,
+          rang: p.rank,
+        })
       } catch (e) {
         // Une panne de base ne doit pas faire tomber le salon : la course est
         // finie et jouée, seul le gain est perdu.

@@ -18,6 +18,10 @@ import { montant } from './icones'
 import type { LobbyView, SalonInfo } from './net'
 import { COURSE_LENGTH } from './track'
 import { chargerScores, effacerScores, formaterTemps, MAX_SCORES } from './scores'
+import { lireClassement } from './compte'
+
+/** Les trois lectures du classement, cf. buildScores. */
+type OngletScore = 'mondial' | 'local' | 'recentes'
 
 type ScreenName =
   | 'title'
@@ -30,6 +34,7 @@ type ScreenName =
   | 'lobby'
   | 'results'
   | 'scores'
+  | 'jouer'
   | 'boutique'
   | 'compte'
 
@@ -144,6 +149,11 @@ export class Menu {
   private apercu?: THREE.Object3D
   /** Le guerrier montré dans la vignette — il a sa propre foulée. */
   private fighterAffiche: Fighter = ROSTER[0]
+  /**
+   * L'onglet ouvert du classement. On démarre sur « mondial » : c'est celui qui
+   * donne une raison de rejouer. « Local » ne montre que ce qu'on sait déjà.
+   */
+  private ongletScore: OngletScore = 'mondial'
   /** Les couleurs achetées (0xrrggbb), ajoutées aux palettes du vestiaire. */
   private couleursAchetees: number[] = []
   private anim = new Anim()
@@ -224,13 +234,24 @@ export class Menu {
       lobby: document.getElementById('scr-lobby')!,
       results: document.getElementById('scr-results')!,
       scores: document.getElementById('scr-scores')!,
+      jouer: document.getElementById('scr-jouer')!,
       boutique: document.getElementById('scr-boutique')!,
       compte: document.getElementById('scr-compte')!,
     }
 
     // — Écran-titre —
+    document.getElementById('btnJouer')!.addEventListener('click', () => this.ouvrir('jouer'))
+
+    // — Écran « Jouer » : les quatre entrées en piste —
     document.getElementById('btnSolo')!.addEventListener('click', () => cb.onSolo())
-    document.getElementById('btnOnline')!.addEventListener('click', () => cb.onOnline())
+    document.getElementById('btnQuickJouer')!.addEventListener('click', () => cb.onQuick())
+    document.getElementById('btnCreateJouer')!.addEventListener('click', () => cb.onCreateSalon())
+    // « Rejoindre » ouvre l'écran des salons : c'est lui qui porte le champ de
+    // code et la liste publique. Créer et partie rapide y figurent aussi — un
+    // doublon assumé, parce qu'on n'a pas envie de revenir en arrière quand on
+    // s'aperçoit qu'aucun salon ne tourne.
+    document.getElementById('btnRejoindre')!.addEventListener('click', () => cb.onOnline())
+
     document.getElementById('btnRoster')!.addEventListener('click', () => this.ouvrir('roster'))
     document.getElementById('btnOptions')!.addEventListener('click', () => this.ouvrir('options'))
     document.getElementById('btnHelp')!.addEventListener('click', () => this.ouvrir('help'))
@@ -246,6 +267,12 @@ export class Menu {
       effacerScores(COURSE_LENGTH)
       this.buildScores()
     })
+    for (const b of document.querySelectorAll<HTMLElement>('#scoresOnglets button')) {
+      b.addEventListener('click', () => {
+        this.ongletScore = (b.dataset.t ?? 'mondial') as OngletScore
+        this.buildScores()
+      })
+    }
 
     document.getElementById('btnBoutique')!.addEventListener('click', () => cb.onBoutique())
     document.getElementById('btnCompte')!.addEventListener('click', () => this.ouvrir('compte'))
@@ -291,6 +318,7 @@ export class Menu {
     this.buildOptions()
     this.buildSalon()
     this.applyFighter(this.settings.fighter)
+    this.jouerEnseigne()
   }
 
   get fighter(): Fighter {
@@ -473,6 +501,41 @@ export class Menu {
     this.el.banner.innerHTML = banner ?? ''
     this.el.banner.classList.toggle('hidden', !banner)
     this.show('title')
+  }
+
+  /**
+   * ————— 🌀 L'enseigne peinte —————
+   *
+   * Jouée UNE FOIS, au tout premier affichage du titre. Pas à chaque retour :
+   * on repasse par le titre après chaque course, et une intro qu'on subit dix
+   * fois par session cesse d'être une entrée en matière pour devenir un péage.
+   *
+   * Et toujours sautable. Un tap, une touche, et l'on est à l'état final —
+   * il suffit de retirer la classe, puisque c'est elle seule qui anime.
+   */
+  private jouerEnseigne() {
+    const e = document.getElementById('enseigne')
+    if (!e) return
+    e.classList.add('joue')
+
+    const couper = () => {
+      e.classList.remove('joue')
+      removeEventListener('pointerdown', couper)
+      removeEventListener('keydown', couper)
+      clearTimeout(minuteur)
+    }
+    /*
+     * Le minuteur n'est PAS ce qui termine l'animation (les keyframes le font
+     * en `forwards`) : il ne sert qu'à retirer les écouteurs une fois l'intro
+     * passée, pour qu'un tap sur un bouton ne soit plus intercepté.
+     *
+     * ⚠️ Il doit couvrir TOUTE la chorégraphie (3,4 s, cf. style.css) plus une
+     * marge. Trop court, il retirerait la classe en plein geste et couperait
+     * l'intro chez tout le monde — un « saut » que personne n'a demandé.
+     */
+    const minuteur = setTimeout(couper, 3800)
+    addEventListener('pointerdown', couper)
+    addEventListener('keydown', couper)
   }
 
   /**
@@ -830,43 +893,92 @@ export class Menu {
    * en ligne, d'inconnus). `textContent` les pose tels quels, sans qu'un
    * pseudo contenant des chevrons puisse devenir du balisage.
    */
+  /**
+   * Pose une ligne du tableau. Commune aux trois onglets : ils montrent le même
+   * objet — un temps, un guerrier, un contexte — et devaient donc se lire pareil.
+   *
+   * Tout passe par `textContent` : les pseudos viennent des joueurs, et en
+   * mondial d'inconnus. Un nom contenant des chevrons doit rester un nom.
+   */
+  private ligneScore(o: {
+    rang: string
+    jp: string
+    nom: string
+    detail: string
+    temps: string
+    premier?: boolean
+    moi?: boolean
+  }) {
+    const ligne = document.createElement('div')
+    ligne.className = 'score' + (o.premier ? ' premier' : '') + (o.moi ? ' moi' : '')
+
+    const rang = document.createElement('span')
+    rang.className = 'scorerang'
+    rang.textContent = o.rang
+
+    const jp = document.createElement('span')
+    jp.className = 'scorejp'
+    jp.textContent = o.jp
+
+    const corps = document.createElement('div')
+    corps.className = 'scorecorps'
+    const nom = document.createElement('b')
+    nom.textContent = o.nom
+    const sous = document.createElement('small')
+    sous.textContent = o.detail
+    corps.append(nom, sous)
+
+    const temps = document.createElement('span')
+    temps.className = 'scoretemps'
+    temps.textContent = o.temps
+
+    ligne.append(rang, jp, corps, temps)
+    return ligne
+  }
+
+  /** Le podium se lit d'un coup d'œil ; au-delà, le chiffre suffit. */
+  private medaille(i: number) {
+    return ['🥇', '🥈', '🥉'][i] ?? String(i + 1)
+  }
+
   private buildScores() {
     const hote = document.getElementById('scoresBody')
     const lead = document.getElementById('scoresLead')
     if (!hote || !lead) return
 
-    const scores = chargerScores(COURSE_LENGTH)
-    const clear = document.getElementById('btnScoresClear')
-    // Rien à effacer quand la table est vide : le bouton ne sert à rien.
-    clear?.classList.toggle('hidden', scores.length === 0)
+    // L'onglet actif se marque tout de suite, avant même que le serveur réponde :
+    // sur un réseau lent, un onglet qui ne réagit pas au doigt donne l'impression
+    // d'un bouton mort, et on le tape trois fois.
+    for (const b of document.querySelectorAll<HTMLElement>('#scoresOnglets button')) {
+      b.classList.toggle('on', b.dataset.t === this.ongletScore)
+    }
+    // « Effacer » ne concerne QUE la table locale : les autres onglets vivent
+    // sur le serveur, on n'efface pas le record d'autrui.
+    document
+      .getElementById('btnScoresClear')
+      ?.classList.toggle('hidden', this.ongletScore !== 'local')
 
+    if (this.ongletScore === 'local') {
+      this.buildScoresLocal(hote, lead)
+      return
+    }
+    void this.buildScoresServeur(hote, lead, this.ongletScore)
+  }
+
+  /** 📱 L'appareil : les temps solo comme en ligne, gardés ici et nulle part ailleurs. */
+  private buildScoresLocal(hote: HTMLElement, lead: HTMLElement) {
+    const scores = chargerScores(COURSE_LENGTH)
+    document.getElementById('btnScoresClear')?.classList.toggle('hidden', scores.length === 0)
+
+    hote.replaceChildren()
     if (scores.length === 0) {
       lead.textContent = `Aucun temps pour l'instant. Franchis le torii une fois et ta ligne s'inscrira ici.`
-      hote.replaceChildren()
       return
     }
     lead.textContent = `Tes ${MAX_SCORES} meilleurs temps sur les ${COURSE_LENGTH} m, gardés sur cet appareil.`
 
-    hote.replaceChildren()
     scores.forEach((s, i) => {
       const f = fighterById(s.fighter)
-      const ligne = document.createElement('div')
-      ligne.className = i === 0 ? 'score premier' : 'score'
-
-      const rang = document.createElement('span')
-      rang.className = 'scorerang'
-      // Le podium se lit d'un coup d'œil ; au-delà, le chiffre suffit.
-      rang.textContent = ['🥇', '🥈', '🥉'][i] ?? String(i + 1)
-
-      const jp = document.createElement('span')
-      jp.className = 'scorejp'
-      jp.textContent = f.jp
-
-      const corps = document.createElement('div')
-      corps.className = 'scorecorps'
-      const nom = document.createElement('b')
-      nom.textContent = s.nom
-      const sous = document.createElement('small')
       // Ce qui rend deux temps comparables : le mode et le nombre d'adversaires.
       // « rival » fait « rivaux » : le pluriel change le mot entier, on ne peut
       // pas se contenter de coller une terminaison.
@@ -877,15 +989,69 @@ export class Menu {
             ? `🏋️ ${s.rivaux} ${s.rivaux > 1 ? 'rivaux' : 'rival'}`
             : '🏋️ en solitaire'
       const quand = s.date ? ` · ${new Date(s.date).toLocaleDateString('fr-FR')}` : ''
-      sous.textContent = `${f.name} · ${quoi}${quand}`
-      corps.append(nom, sous)
+      hote.append(
+        this.ligneScore({
+          rang: this.medaille(i),
+          jp: f.jp,
+          nom: s.nom,
+          detail: `${f.name} · ${quoi}${quand}`,
+          temps: formaterTemps(s.temps),
+          premier: i === 0,
+        })
+      )
+    })
+  }
 
-      const temps = document.createElement('span')
-      temps.className = 'scoretemps'
-      temps.textContent = formaterTemps(s.temps)
+  /** 🌍 / 🕓 Les onglets servis par le serveur. */
+  private async buildScoresServeur(
+    hote: HTMLElement,
+    lead: HTMLElement,
+    onglet: 'mondial' | 'recentes'
+  ) {
+    hote.replaceChildren()
+    lead.textContent = '⏳ Lecture du classement…'
 
-      ligne.append(rang, jp, corps, temps)
-      hote.append(ligne)
+    // On retient l'onglet demandé : si l'on change d'onglet pendant que le
+    // serveur répond, la réponse en retard ne doit pas écraser l'écran courant.
+    const demande = onglet
+    const lignes = await lireClassement(onglet, COURSE_LENGTH)
+    if (this.ongletScore !== demande) return
+
+    hote.replaceChildren()
+    if (lignes === null) {
+      lead.textContent =
+        '📡 Classement indisponible — pas de compte, ou serveur injoignable. Tes temps restent dans l’onglet Local.'
+      return
+    }
+    if (lignes.length === 0) {
+      lead.textContent =
+        onglet === 'mondial'
+          ? 'Personne n’a encore couru en ligne sur cette distance. La première place est libre.'
+          : 'Aucune course en ligne pour l’instant. Seules les courses en ligne sont enregistrées ici.'
+      return
+    }
+    lead.textContent =
+      onglet === 'mondial'
+        ? `Le meilleur temps de chaque guerrier sur les ${COURSE_LENGTH} m. Seules les courses en ligne comptent : ce sont les seules dont le serveur chronomètre lui-même.`
+        : 'Tes dernières courses en ligne, la plus fraîche en tête.'
+
+    lignes.forEach((l, i) => {
+      const f = fighterById(l.fighter)
+      const quand = new Date(l.cree_le).toLocaleDateString('fr-FR')
+      const place = `${l.rang}ᵉ sur ${l.partants}`
+      hote.append(
+        this.ligneScore({
+          // En « récentes », le rang du tableau n'a pas de sens : ce n'est pas un
+          // classement mais une chronologie. On y montre la place à l'arrivée.
+          rang: onglet === 'mondial' ? this.medaille(i) : `${l.rang}ᵉ`,
+          jp: f.jp,
+          nom: l.pseudo || 'Guerrier anonyme',
+          detail: `${f.name} · ${place} · ${quand}`,
+          temps: formaterTemps(l.temps_ms / 1000),
+          premier: onglet === 'mondial' && i === 0,
+          moi: l.moi,
+        })
+      )
     })
   }
 

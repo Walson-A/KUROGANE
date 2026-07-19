@@ -94,7 +94,41 @@ interface Rouleau {
  * les MÊMES jarres : la dorée devient un point de friction — on ne court plus
  * seulement contre le chrono, on se bat pour un objet que l'autre convoite.
  */
-export type JarreKind = 'vide' | 'doree'
+export type JarreKind = 'vide' | 'doree' | 'verte'
+
+/**
+ * 🟢 Le pot vert : la trouvaille. Il donne des Mon, entre 1 et 10.
+ *
+ * Deux au maximum par course, et rarement tirés — voir buildJarrePlan. Ces deux
+ * chiffres tiennent l'économie du jeu : ils sont ici, côte à côte, pour qu'on ne
+ * puisse pas en changer un en oubliant l'autre.
+ */
+export const POTS_VERTS_MAX = 2
+/**
+ * La rareté, écrite en clair. Un seul tirage `de` les départage :
+ *   de < 0,03            → deux pots   (3 % des courses)
+ *   de < 0,20            → un pot      (17 %)
+ *   sinon                → aucun       (80 %)
+ * Quatre courses sur cinq n'en voient donc aucun — c'est ce qui rend le vert
+ * remarquable quand il apparaît.
+ */
+export const CHANCE_DEUX_POTS = 0.03
+export const CHANCE_UN_POT = 0.2
+
+/**
+ * ————— Ce que le pot contient —————
+ *
+ * Une fois sur cinq, du JADE plutôt que des pièces. Le jade est la monnaie rare
+ * du jeu : trouver un pot est déjà peu fréquent (une course sur cinq), et un
+ * pot sur cinq porte du jade — soit une course sur vingt-cinq environ. C'est ce
+ * cumul qui en fait un vrai événement, et non le chiffre pris isolément.
+ *
+ * Le jade se compte plus petit (1 à 6) que les pièces (1 à 10) : une monnaie
+ * rare qui tomberait par poignées ne serait plus rare, juste renommée.
+ */
+export const CHANCE_JADE = 0.2
+export const MON_MAX = 10
+export const JADE_MAX = 6
 
 export interface PlannedJarre {
   d: number
@@ -102,12 +136,28 @@ export interface PlannedJarre {
   kind: JarreKind
   /** Ce que la dorée recèle (ignoré pour une jarre vide) */
   parchemin: ParcheminKind
+  /** Ce que le pot vert recèle (ignoré pour les autres sortes) */
+  tresor?: Tresor
+}
+
+/**
+ * ————— Ce qu'on trouve dans un pot vert —————
+ *
+ * Deux monnaies, et non une seule quantité : le jade est la monnaie rare du
+ * jeu, il ne se compte pas dans la même unité que les pièces. Un pot donne
+ * l'une OU l'autre, jamais les deux — sinon « rare » ne veut plus rien dire,
+ * puisqu'on en aurait à chaque fois.
+ */
+export interface Tresor {
+  monnaie: 'mon' | 'hisui'
+  quantite: number
 }
 
 interface Jarre {
   mesh: THREE.Group
   kind: JarreKind
   parchemin: ParcheminKind
+  tresor: Tresor | null
   active: boolean
 }
 
@@ -635,18 +685,22 @@ export class Track {
     for (const j of this.jarres) {
       if (!j.active) continue
       j.mesh.position.z += dz
-      if (j.kind === 'doree') {
+      if (j.kind === 'doree' || j.kind === 'verte') {
         j.mesh.rotation.y = this.tempsRouleaux * 1.1
         const battement = 1 + Math.sin(this.tempsRouleaux * 3.4) * 0.14
-        // Les deux derniers enfants sont le halo et le rayon (cf. makeJarreMesh)
-        const n = j.mesh.children.length
-        j.mesh.children[n - 2].scale.setScalar(battement)
+        // Les pièces lumineuses sont nommées, pas comptées : le pot vert en a
+        // une de plus, et un rang codé en dur animerait la mauvaise.
+        const halo = j.mesh.userData.halo as THREE.Mesh | undefined
+        halo?.scale.setScalar(battement)
         // Le rayon respire en INTENSITÉ, pas en taille : le mettre à l'échelle
         // l'allongerait aussi, et une colonne de lumière qui grandit vers le
         // ciel se lit comme un sort qu'on lance, pas comme un objet à ramasser.
-        const ray = j.mesh.children[n - 1] as THREE.Mesh
-        const mr = ray.material as THREE.MeshBasicMaterial
-        mr.opacity = (ray.userData.op as number) * battement
+        for (const cle of ['rayon', 'aura'] as const) {
+          const m = j.mesh.userData[cle] as THREE.Mesh | undefined
+          if (!m) continue
+          const mat = m.material as THREE.MeshBasicMaterial
+          mat.opacity = (m.userData.op as number) * battement
+        }
       }
       if (j.mesh.position.z > DESPAWN_Z) {
         j.active = false
@@ -926,11 +980,20 @@ export class Track {
     // Les deux sortes n'ont pas le même corps : on recycle par sorte.
     let j = this.jarres.find((j) => !j.active && j.kind === p.kind)
     if (!j) {
-      j = { mesh: makeJarreMesh(p.kind), kind: p.kind, parchemin: p.parchemin, active: false }
+      j = {
+        mesh: makeJarreMesh(p.kind),
+        kind: p.kind,
+        parchemin: p.parchemin,
+        tresor: p.tresor ?? null,
+        active: false,
+      }
       this.jarres.push(j)
       this.scene.add(j.mesh)
     }
     j.parchemin = p.parchemin
+    // Le trésor suit le plan, pas le maillage recyclé : deux pots verts d'une
+    // même course ne contiennent pas forcément la même chose.
+    j.tresor = p.tresor ?? null
     j.mesh.position.x = LANES[p.lane]
     j.mesh.position.z = z
     j.mesh.rotation.y = 0
@@ -952,6 +1015,8 @@ export class Track {
   casseAuContact(playerBox: THREE.Box3): {
     touchee: boolean
     parchemin: ParcheminKind | null
+    /** Le contenu d'un pot vert. `null` pour toute autre jarre. */
+    tresor: Tresor | null
     /** Le sommet de la jarre : c'est de LÀ qu'on rebondit. */
     sommet: number
   } {
@@ -968,11 +1033,12 @@ export class Track {
         return {
           touchee: true,
           parchemin: j.kind === 'doree' ? j.parchemin : null,
+          tresor: j.kind === 'verte' ? j.tresor : null,
           sommet,
         }
       }
     }
-    return { touchee: false, parchemin: null, sommet: 0 }
+    return { touchee: false, parchemin: null, tresor: null, sommet: 0 }
   }
 
   /**
@@ -1309,6 +1375,48 @@ export function buildJarrePlan(
   if (eligibles.length > 0 && !plan.some((j) => j.kind === 'doree')) {
     plan[eligibles[Math.floor(rng() * eligibles.length)]].kind = 'doree'
   }
+
+  /*
+   * ————— 🟢 Les pots verts : la trouvaille rare —————
+   *
+   * On tire d'abord COMBIEN de pots, puis où les mettre.
+   *
+   * J'avais commencé par l'inverse — une chance par jarre, plafonnée à deux.
+   * Mesuré sur 1 000 courses, ça donnait DEUX pots dans 66 % des parties et
+   * aucun dans 12 % : exactement le contraire de « rare ». La raison est
+   * arithmétique : une course compte des dizaines de jarres éligibles, donc
+   * même une chance faible finit par atteindre le plafond presque à tous les
+   * coups. Un plafond n'est pas une rareté.
+   *
+   * En tirant le nombre d'abord, la rareté est ce qu'on écrit, pas ce qui reste
+   * après coup — et les proportions se lisent directement dans le code.
+   *
+   * Le tirage vient de la MÊME graine partagée que le reste : en duel, les deux
+   * joueurs voient le même pot au même endroit, et se le disputent. Un tirage
+   * local en donnerait un à l'un et pas à l'autre, ce qui serait injouable.
+   */
+  const candidats = eligibles.filter((i) => plan[i].kind === 'vide')
+  const de = rng()
+  const combien = de < CHANCE_DEUX_POTS ? 2 : de < CHANCE_UN_POT ? 1 : 0
+
+  for (let n = 0; n < Math.min(combien, POTS_VERTS_MAX) && candidats.length > 0; n++) {
+    // On RETIRE la jarre choisie du tirage : sans ça, les deux pots d'une même
+    // course pourraient tomber sur la même poterie, et il n'y en aurait qu'un.
+    const k = Math.floor(rng() * candidats.length)
+    const i = candidats.splice(k, 1)[0]
+    plan[i].kind = 'verte'
+    /*
+     * Le contenu est décidé ICI, dans le plan tiré de la graine partagée : en
+     * duel, les deux joueurs voient le MÊME trésor dans le MÊME pot. Le tirer
+     * à la casse, côté joueur, donnerait du jade à l'un et des pièces à l'autre
+     * pour la même poterie — on se disputerait un objet qui n'est pas le même.
+     */
+    const jade = rng() < CHANCE_JADE
+    plan[i].tresor = {
+      monnaie: jade ? 'hisui' : 'mon',
+      quantite: 1 + Math.floor(rng() * (jade ? JADE_MAX : MON_MAX)),
+    }
+  }
   return plan
 }
 
@@ -1479,7 +1587,7 @@ export function buildPlateformePlan(length: number, seed: number): PlannedPlatef
  * même raison. Le vermillon est devenu le langage des SURFACES QU'ON UTILISE
  * (on s'y accroche, on court dessus), par opposition aux obstacles qu'on subit.
  */
-function makePlateformeMesh(hauteur: number): THREE.Object3D {
+export function makePlateformeMesh(hauteur: number): THREE.Object3D {
   const g = new THREE.Group()
   const corps = new THREE.Mesh(
     new THREE.BoxGeometry(PLATEFORME_LARG, hauteur, 1),
@@ -1568,7 +1676,7 @@ export function buildMurPlan(length: number, seed: number): PlannedMur[] {
  * c'est le signal « ici tu peux t'accrocher ». Un repère d'action doit se lire
  * pareil d'un bout à l'autre de la course.
  */
-function makeMurMesh(): THREE.Mesh {
+export function makeMurMesh(): THREE.Mesh {
   const mur = new THREE.Mesh(
     new THREE.BoxGeometry(0.5, 3, 1), // 1 m de long : mis à l'échelle au spawn
     new THREE.MeshStandardMaterial({ color: BIOMES[0].murCorps, roughness: 0.95 })
@@ -1586,17 +1694,37 @@ function makeMurMesh(): THREE.Mesh {
  * Le visuel d'une jarre. La dorée doit se repérer de TRÈS loin (on décide de
  * changer de ligne pour elle) : d'où l'or émissif, qui perce la brume.
  */
-function makeJarreMesh(kind: JarreKind): THREE.Group {
+export function makeJarreMesh(kind: JarreKind): THREE.Group {
   const g = new THREE.Group()
-  const doree = kind === 'doree'
 
-  const mat = doree
-    ? new THREE.MeshStandardMaterial({
-        color: 0xd6ac5a,
-        roughness: 0.3,
-        emissive: 0x6a4f12, // elle brille dans la nuit
-      })
-    : new THREE.MeshStandardMaterial({ color: 0x8a6a52, roughness: 0.9 })
+  /*
+   * Les trois poteries, réglées côte à côte plutôt qu'en ternaires imbriqués :
+   * à trois sortes, « doree ? a : verte ? b : c » devient illisible, et c'est
+   * exactement le genre d'endroit où l'on finit par régler la mauvaise.
+   *
+   * Le pot vert est PLUS GROS (echelle 1.45). C'est sa rareté rendue visible :
+   * on n'en croise pas une fois sur deux courses, il faut donc qu'on le
+   * reconnaisse instantanément et qu'on ait le temps de décider d'aller le
+   * chercher.
+   *
+   * ⚠️ Sa boîte de collision grandit AVEC lui : frapperJarre() la déduit du
+   * maillage (setFromObject). C'est voulu — un objet qu'on voit gros et qu'on
+   * traverse serait déroutant — mais ça oblige à tenir le halo et l'aura SOUS
+   * la taille du corps (0,36 × 1,45 ≈ 0,52). Sans ça, c'est une lueur, et non
+   * la poterie, qui déciderait de ce qu'on touche.
+   */
+  const R = {
+    vide: { corps: 0x8a6a52, emissive: 0x000000, rug: 0.9, teinte: 0x9fc4ff, halo: 0.34, opHalo: 0.055, opRayon: 0.075, hautRayon: 0.2, basRayon: 0.1, echelle: 1, aura: 0 },
+    doree: { corps: 0xd6ac5a, emissive: 0x6a4f12, rug: 0.3, teinte: 0xffd98a, halo: 0.42, opHalo: 0.11, opRayon: 0.16, hautRayon: 0.26, basRayon: 0.12, echelle: 1, aura: 0 },
+    // Le vert jade des hisui, pas un vert criard : il doit dire « précieux »
+    verte: { corps: 0x2f9e63, emissive: 0x0f4a30, rug: 0.35, teinte: 0x7fe0b0, halo: 0.5, opHalo: 0.14, opRayon: 0.2, hautRayon: 0.32, basRayon: 0.15, echelle: 1.45, aura: 0.5 },
+  }[kind]
+
+  const mat = new THREE.MeshStandardMaterial({
+    color: R.corps,
+    roughness: R.rug,
+    emissive: R.emissive,
+  })
 
   // Le ventre : plus large en bas qu'en haut, comme une vraie poterie
   const ventre = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.36, 0.62, 12), mat)
@@ -1606,7 +1734,13 @@ function makeJarreMesh(kind: JarreKind): THREE.Group {
   const col = new THREE.Mesh(new THREE.CylinderGeometry(0.19, 0.19, 0.14, 10), mat)
   col.position.y = 0.69
 
-  g.add(ventre, col)
+  const corps = new THREE.Group()
+  corps.add(ventre, col)
+  // Seul le CORPS grossit. Le halo et le rayon ont leurs propres tailles plus
+  // bas : les mettre à l'échelle ici étirerait aussi la colonne de lumière en
+  // largeur, et le pot ressemblerait à un projecteur.
+  corps.scale.setScalar(R.echelle)
+  g.add(corps)
 
   /*
    * ————— La surbrillance —————
@@ -1622,13 +1756,13 @@ function makeJarreMesh(kind: JarreKind): THREE.Group {
    * Additif et sans écriture de profondeur : ça brille dans la nuit sans
    * jamais masquer ce qu'il y a derrière.
    */
-  const teinte = doree ? 0xffd98a : 0x9fc4ff
+  const teinte = R.teinte
   const halo = new THREE.Mesh(
-    new THREE.CircleGeometry(doree ? 0.42 : 0.34, 20),
+    new THREE.CircleGeometry(R.halo, 20),
     new THREE.MeshBasicMaterial({
       color: teinte,
       transparent: true,
-      opacity: doree ? 0.11 : 0.055,
+      opacity: R.opHalo,
       blending: THREE.AdditiveBlending,
       depthWrite: false,
     })
@@ -1646,9 +1780,9 @@ function makeJarreMesh(kind: JarreKind): THREE.Group {
    *    voit encore la forme qu'on doit viser.
    * Faible, volontairement : c'est un repère, pas un phare.
    */
-  const opRayon = doree ? 0.16 : 0.075
+  const opRayon = R.opRayon
   const rayon = new THREE.Mesh(
-    new THREE.CylinderGeometry(doree ? 0.26 : 0.2, doree ? 0.12 : 0.1, RAYON_H, 12, 1, true),
+    new THREE.CylinderGeometry(R.hautRayon, R.basRayon, RAYON_H, 12, 1, true),
     new THREE.MeshBasicMaterial({
       color: teinte,
       map: texRayon(),
@@ -1666,6 +1800,40 @@ function makeJarreMesh(kind: JarreKind): THREE.Group {
   rayon.userData.op = opRayon
 
   g.add(halo, rayon)
+  /*
+   * Le battement (cf. update) tenait ses cibles par leur RANG dans children :
+   * « les deux derniers sont le halo et le rayon ». Le pot vert ajoute une
+   * troisième couche, et ce compte devenait faux — silencieusement, en animant
+   * la mauvaise pièce. On les nomme donc, une fois pour toutes.
+   */
+  g.userData.halo = halo
+  g.userData.rayon = rayon
+
+  /*
+   * 🟢 La petite aura du pot vert, et de lui seul.
+   *
+   * C'est la bulle qu'on avait retirée des autres jarres parce qu'elle noyait
+   * leur silhouette. Ici elle se justifie : le pot est rare, gros, et on veut
+   * qu'il ait l'air CHARGÉ. Elle est volontairement serrée contre le corps
+   * (0,5 m) pour ne pas redevenir le halo qu'on avait supprimé.
+   */
+  if (R.aura > 0) {
+    const aura = new THREE.Mesh(
+      new THREE.SphereGeometry(R.aura, 16, 12),
+      new THREE.MeshBasicMaterial({
+        color: teinte,
+        transparent: true,
+        opacity: 0.13,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+      })
+    )
+    aura.position.y = 0.46
+    // Le battement la reprend en même temps que le rayon (cf. update)
+    aura.userData.op = 0.13
+    g.add(aura)
+    g.userData.aura = aura
+  }
   return g
 }
 

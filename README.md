@@ -34,10 +34,20 @@ avec Claude Code comme développeur.
 - **⚔️ Salons jusqu'à 10 joueurs** : crée un salon et partage son code, rejoins
   par code ou depuis la liste publique, ou lance une **partie rapide**. Départ
   façon Among Us : chacun se déclare **prêt**, l'hôte lance dès la moitié prête,
-  décompte de 10 s commun ([voir les salons](#-les-salons--jouer-jusquà-10))
+  décompte de **6 s** commun ([voir les salons](#-les-salons--jouer-jusquà-10))
 - 💬 **Chat de salon** en attendant le départ
 - 🏋️ Mode **entraînement solo** contre **1 à 4 rivaux** (voir
   [le roster](#-les-rivaux-dentraînement)), avec record personnel sauvegardé
+- 🏆 **Le classement**, en trois lectures : **Mondial** (le meilleur temps de
+  chaque joueur), **Local** (tes temps sur cet appareil) et **Récentes** (tes
+  dernières courses). Seules les courses **en ligne** entrent au mondial — ce
+  sont les seules dont le serveur chronomètre lui-même
+  ([voir pourquoi](#-le-classement--pourquoi-le-solo-ny-entre-pas))
+- 🟢 **Les pots verts** : très rares (**4 courses sur 5 n'en ont aucun**), deux
+  au maximum par course. Ils donnent **1 à 10 Mon**, ou — une fois sur cinq —
+  **1 à 6 Jade** ([voir la rareté](#-les-pots-verts))
+- 🔇 **Les prénoms en piste** se coupent dans les paramètres : à cinq sur la
+  ligne, cinq étiquettes se chevauchent devant les obstacles
 - 🌸 **Le cerisier du départ** : pendant le décompte, une **rafale** emporte ses
   pétales vers la droite, avec son **souffle de vent** — un son *synthétisé* à la
   volée ([`src/sfx.ts`](src/sfx.ts)), donc zéro fichier à télécharger
@@ -102,18 +112,23 @@ kurogane/
 │   ├── track.ts        La piste : obstacles + rouleaux PLANIFIÉS par graine
 │   ├── parchemin.ts    Le catalogue des sorts et tous leurs réglages
 │   ├── bot.ts          Les rivaux d'entraînement : esquive scriptée, parchemins
+│   ├── scores.ts       🏆 Les meilleurs temps gardés sur l'appareil
+│   ├── catalogue.ts    🏮 Le banc d'essai : tout ce que le jeu sait fabriquer
 │   ├── net.ts          La connexion au serveur : rejoindre, envoyer, recevoir
 │   ├── input.ts        Clavier + swipes + double-tap + martèlement du sprint
 │   ├── anims.ts        🎞️ Le lecteur des mouvements importés (Mixamo reciblé)
 │   ├── anims-cuites.json  Les mouvements, cuits — NE PAS ÉDITER À LA MAIN
 │   └── style.css       L'habillage de l'interface
+├── dev.html            Le panneau dev : l'entrée des quatre bancs d'essai
+├── catalogue.html      Le banc du catalogue (obstacles, jarres, guerriers, bots)
 ├── animation/          Les .fbx Mixamo déposés (la SOURCE des mouvements)
 ├── tools/
 │   ├── cuire-anims.mjs    La cuisson : .fbx → anims-cuites.json
 │   └── verifier-anims.ts  Le contrôle anatomique des mouvements reciblés
 └── server/
     └── src/
-        ├── index.ts    Démarrage du serveur (port 2567)
+        ├── index.ts    Démarrage du serveur (port 2567) + les routes /api
+        ├── classement.ts 🏆 Le classement mondial — écrit par RaceRoom SEUL
         └── RaceRoom.ts  Une salle = 2 joueurs, 1 piste, 1 vainqueur
 ```
 
@@ -490,6 +505,139 @@ ne pourra enfoncer un guerrier dans le décor.
 On ne sonde que les **membres solides**. Les queues, capes et écharpes traînent
 volontiers plus bas : les inclure relèverait le corps entier pour sauver un
 bout de tissu, et la glissade se jouerait debout.
+
+## 🏆 Le classement — pourquoi le solo n'y entre pas
+
+Trois onglets, et une règle qui explique tout : **seules les courses en ligne
+remplissent le classement mondial.**
+
+| Onglet | Ce qu'il montre | Où c'est gardé |
+|---|---|---|
+| 🌍 **Mondial** | Le meilleur temps de *chaque* joueur | Postgres, écrit par le serveur |
+| 📱 **Local** | Tes meilleurs temps, solo compris | `localStorage`, sur l'appareil |
+| 🕓 **Récentes** | Tes dernières courses en ligne | Postgres |
+
+### Le chrono d'une course solo est déclaré par le navigateur
+
+Il est donc réécrivable. Celui d'une course en ligne, non : à l'arrivée, le
+serveur compare le temps annoncé à celui qu'il a lui-même mesuré, et **remplace**
+l'annonce si l'écart dépasse 1,5 s (`RaceRoom`, message `finished`).
+
+Un tableau mondial nourri de temps solo afficherait un 10 s intouchable dans la
+semaine. Et un classement dont le premier est inatteignable ne motive plus
+personne — il décourage exactement les joueurs qu'il devrait retenir.
+
+D'où la conséquence architecturale, qui vaut d'être dite : **il n'existe aucune
+route qui écrive un score.** `server/src/classement.ts` n'est appelé que par
+`RaceRoom`, à la fin d'une course. Une route ouverte au navigateur, même bien
+gardée, accepterait par construction un chrono venu du client.
+
+Les temps solo ne sont pas perdus pour autant : ils vivent dans **Local**, où
+personne d'autre ne les voit — donc où personne n'a de raison de les truquer.
+
+### Une ligne par personne
+
+Le mondial fait `distinct on (joueur)`. Sans ça, un joueur très régulier
+occuperait les vingt lignes avec ses vingt meilleures courses, et le tableau ne
+dirait plus rien de la communauté.
+
+## 🟢 Les pots verts
+
+Une poterie **jade**, plus grosse que les autres, qui contient de la monnaie.
+
+Mesuré sur 3 000 courses :
+
+| | |
+|---|---|
+| Aucun pot | **80,5 %** des courses |
+| Un pot | 16,7 % |
+| Deux pots | 2,8 % |
+| Plus de deux | **jamais** |
+
+Le contenu : **1 à 10 Mon** (79,9 % des pots) ou **1 à 6 Jade** (20,1 %). Le jade
+cumule les deux raretés — il faut d'abord tomber sur un pot, puis qu'il en
+contienne : on en voit dans **une course sur 23**.
+
+### Un plafond n'est pas une rareté
+
+Le premier jet tirait au sort **jarre par jarre**, avec un plafond à deux. Le
+résultat mesuré était l'exact contraire de l'intention :
+
+| | 1ʳᵉ version | corrigée |
+|---|---|---|
+| aucun pot | 11,6 % | 80,5 % |
+| deux pots | **65,6 %** | 2,8 % |
+
+La raison est arithmétique : une course compte des dizaines de jarres éligibles,
+donc même une chance faible finit par atteindre le plafond presque à tous les
+coups. On tire donc **le nombre d'abord**, puis où les poser — la rareté est ce
+qu'on écrit, pas ce qui reste après coup.
+
+### Le contenu voyage avec la graine
+
+Comme le reste de la piste, le trésor est décidé dans le plan tiré de la graine
+partagée : en duel, les deux joueurs voient le **même** contenu dans le **même**
+pot. Le tirer à la casse donnerait du jade à l'un et des pièces à l'autre pour la
+même poterie — on se disputerait un objet qui n'est pas le même.
+
+### Le crédit est plafonné, pas vérifié
+
+Le jeu annonce sa récolte à `/api/pot` ; le serveur la borne à **20 Mon et
+12 Jade par minute** (le pire cas possible : deux pots, tous deux au maximum).
+
+⚠️ C'est un plafond, **pas une vérification**. Un client modifié peut réclamer ce
+maximum. Le choix est assumé : c'est délibérément *moins* rentable que de courir
+(100 Mon pour une victoire en ~75 s), donc tricher sur les pots fait **perdre**
+de l'argent.
+
+Pour vérifier vraiment, il faudrait que le serveur rejoue `buildJarrePlan` depuis
+la graine — donc extraire les planificateurs de `track.ts`, qui importe Three.js,
+dans un module commun sans dépendance graphique. Ce n'est pas fait.
+
+## 🌀 L'enseigne — le titre est peint, pas affiché
+
+L'écran-titre s'ouvre sur une chorégraphie de 3,4 s :
+
+| | |
+|---|---|
+| 0,45 s | un shuriken traverse en tournant |
+| 0,80 s | l'encre éclabousse dans son sillage |
+| 1,25 s | un second shuriken repasse **en sens inverse** |
+| 1,70 s | le pinceau descend, 黒鉄 se révèle **sous son trait** |
+| 2,15 s | l'encre fraîche coule sous son poids |
+| 2,55 s | KUROGANE sort du flou et se resserre |
+| 2,90 s | le sceau s'appose — la signature de l'estampe |
+| 3,40 s | tagline puis boutons, l'un après l'autre |
+
+Le kanji n'est pas affiché puis décoré : il est **masqué**, et le masque balaie
+de gauche à droite en suivant la pointe du pinceau. Le trait apparaît là où elle
+vient de passer, jamais avant.
+
+### Une seule classe pilote tout
+
+Toute l'intro pend à la classe `joue` sur `#enseigne`. Sans elle, aucune
+animation ne tourne et l'enseigne est simplement **là**, lisible.
+
+C'est ce qui la rend sautable pour rien : un tap ou une touche retire la classe,
+et l'écran est instantanément dans son état final — aucune transition à
+interrompre, aucun minuteur à annuler. C'est aussi ce qui rend
+`prefers-reduced-motion` presque gratuit.
+
+Elle ne joue **qu'une fois**, au premier chargement. On repasse par le titre après
+chaque course, et une intro subie dix fois par session cesse d'être une entrée en
+matière pour devenir un péage.
+
+### Le survol ne s'active que là où il a un sens
+
+Les micro-animations des boutons (l'engrenage des paramètres **tourne**, la coupe
+se soulève, la flèche part en avant) sont sous
+`@media (hover: hover) and (pointer: fine)`.
+
+Sur un écran tactile, `:hover` reste **collé** après le tap : l'engrenage du
+bouton qu'on vient de toucher tournerait sans fin jusqu'au tap suivant. Ce n'est
+pas un détail cosmétique — c'est ce qui sépare un effet de survol d'un effet qui
+ne s'éteint plus.
+
 
 ## 🎌 Les salons — jouer jusqu'à 10
 

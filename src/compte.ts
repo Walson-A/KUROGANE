@@ -395,6 +395,59 @@ export async function rafraichirProfil(): Promise<Profil | null> {
   return profil
 }
 
+/** Une ligne du classement, telle que le serveur la sert. */
+export interface LigneClassement {
+  pseudo: string
+  temps_ms: number
+  fighter: string
+  partants: number
+  rang: number
+  cree_le: string
+  moi?: boolean
+}
+
+/**
+ * 🏆 Lit un onglet du classement. `null` quand il n'y a pas de compte ou que le
+ * serveur ne répond pas — l'écran distingue alors « vide » de « indisponible ».
+ */
+export async function lireClassement(
+  onglet: 'mondial' | 'recentes',
+  longueur: number
+): Promise<LigneClassement[] | null> {
+  if (!jeton) return null
+  try {
+    const r = await appel(`/api/classement?onglet=${onglet}&longueur=${longueur}`)
+    return Array.isArray(r?.lignes) ? r.lignes : []
+  } catch {
+    return null
+  }
+}
+
+/**
+ * 🟢 Verse les Mon d'une course : ce qu'on a tiré des pots verts.
+ *
+ * On envoie le TOTAL de la course, une seule fois à l'arrivée, et non un appel
+ * par pot : deux requêtes coup sur coup se feraient refuser par le délai côté
+ * serveur, et la seconde poterie ne rapporterait rien.
+ *
+ * Sans compte (hors-ligne, base éteinte), on ne tente rien et on ne signale
+ * rien : les pots restent un plaisir de course, ils ne doivent pas devenir un
+ * message d'erreur.
+ */
+export async function verserPots(recolte: {
+  mon: number
+  hisui: number
+}): Promise<Profil | null> {
+  if (!jeton || (recolte.mon <= 0 && recolte.hisui <= 0)) return null
+  try {
+    const r = await appel('/api/pot', recolte)
+    profil = r.profil
+  } catch {
+    // Serveur muet ou plafond atteint : la course reste jouée, le gain est perdu
+  }
+  return profil
+}
+
 /** Ouvre la boutique : le catalogue ET le solde, d'un seul appel. */
 export async function chargerBoutique(): Promise<Article[]> {
   if (!jeton) return []

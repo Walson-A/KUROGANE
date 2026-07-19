@@ -2,7 +2,7 @@ import * as THREE from 'three'
 import './style.css'
 import { Player, LANES } from './player'
 import { Opponent } from './opponent'
-import { Track, SPRINT_ZONE, COURSE_LENGTH, PLATEFORME_H } from './track'
+import { Track, SPRINT_ZONE, COURSE_LENGTH, PLATEFORME_H, type Tresor } from './track'
 import { ajouterScore } from './scores'
 import { Input } from './input'
 import { Net, type RemotePlayer, type LobbyView } from './net'
@@ -1972,12 +1972,18 @@ function gagneParchemin(kind: ParcheminKind) {
  * chaque pot : le serveur n'accepte qu'un versement par course (cf. /api/pot),
  * et deux appels coup sur coup feraient perdre le second pot.
  */
-let monDeLaCourse = 0
+const recolte = { mon: 0, hisui: 0 }
 
-function ramasserMon(n: number) {
-  monDeLaCourse += n
+function ramasserTresor(t: Tresor) {
+  recolte[t.monnaie] += t.quantite
   jouerBruit('jarreDoree')
-  toast(`🟢 +${n} Mon`)
+  // Le jade s'annonce autrement que les pièces : c'est la trouvaille rare, elle
+  // ne doit pas se confondre avec un gain ordinaire dans le coin de l'œil.
+  toast(
+    t.monnaie === 'hisui'
+      ? `💎 JADE ! +${t.quantite} Hisui`
+      : `🟢 +${t.quantite} Mon`
+  )
 }
 
 /**
@@ -1986,9 +1992,11 @@ function ramasserMon(n: number) {
  * on croirait le pot cassé pour rien.
  */
 function encaisserPots() {
-  if (monDeLaCourse <= 0) return
-  const total = monDeLaCourse
-  monDeLaCourse = 0 // remis à zéro TOUT DE SUITE : un double appel ne doit pas payer deux fois
+  if (recolte.mon <= 0 && recolte.hisui <= 0) return
+  const total = { ...recolte }
+  // Remis à zéro TOUT DE SUITE : un double appel ne doit pas payer deux fois
+  recolte.mon = 0
+  recolte.hisui = 0
   void verserPots(total).then(() => majAffichageBourse())
 }
 
@@ -2127,15 +2135,15 @@ function resoudCoup() {
   box.min.y -= PORTEE_LAME
 
   // 🏺 Une jarre, d'abord : c'est la cible posée là exprès par le niveau.
-  const { touchee, parchemin, mon, sommet } = track.casseAuContact(box)
+  const { touchee, parchemin, tresor, sommet } = track.casseAuContact(box)
   if (touchee) {
-    jouerBruit(parchemin || mon ? 'jarreDoree' : 'jarre')
+    jouerBruit(parchemin || tresor ? 'jarreDoree' : 'jarre')
     encaisseGain()
     // On rebondit DEPUIS le sommet de la jarre : chaque bond repart du même
     // niveau, donc la chaîne ne dérive ni vers le haut ni vers le bas.
     if (enLAir) player.rebondSur(sommet)
     if (parchemin) gagneParchemin(parchemin)
-    else if (mon > 0) ramasserMon(mon)
+    else if (tresor) ramasserTresor(tresor)
     else if (chaine >= 2) toast(`⚔️ Chaîne ×${chaine}`)
     return
   }
@@ -2227,7 +2235,9 @@ function startRace(seed: number) {
   // reçue ; ici on repart d'une table propre en solo, et on garde les rivaux
   // déjà connus du lobby en ligne.
   if (!online) clearRivals()
-  monDeLaCourse = 0 // la récolte de pots repart de zéro à chaque départ
+  // La récolte de pots repart de zéro à chaque départ
+  recolte.mon = 0
+  recolte.hisui = 0
   track.reset(COURSE_LENGTH, seed)
   time = 0
   distance = 0
@@ -2286,7 +2296,7 @@ function startRace(seed: number) {
   for (const p of petales) p.mesh.visible = false
   petalesActifs = true
   ventPhase = 0
-  // 🌬️ La rafale qui emporte les pétales, le temps du décompte (10 s en salon,
+  // 🌬️ La rafale qui emporte les pétales, le temps du décompte (6 s en salon,
   // 3 s en solo). Le son est synthétisé : aucun fichier à charger.
   souffleDeVent(online ? 5 : 3.2)
   boomMesh.visible = false
@@ -2912,12 +2922,15 @@ function tick(now?: number) {
     } else {
       countdown -= dt // solo, ou horloge pas encore synchronisée
     }
-    // Le décompte peut durer 10 s (salon) ou 3 s (solo) : on affiche le vrai chiffre.
+    // Le décompte dure 6 s (salon) ou 3 s (solo) : on affiche le vrai chiffre.
+    // Sa durée n'est PAS écrite ici — elle se déduit de `startAt`, que le
+    // serveur pose. Le plafond à 10 n'est qu'un garde-fou d'affichage au cas où
+    // une horloge mal synchronisée renverrait un écart absurde.
     const chiffre = countdown > 0 ? Math.min(10, Math.ceil(countdown)) : 0
     countEl.textContent = countdown > 0 ? `${chiffre}` : 'GO !'
 
     // Un bip par seconde égrenée, mais seulement dans les 3 dernières : sur un
-    // décompte de salon (10 s), biper dès le début serait harassant.
+    // décompte de salon, biper dès le début serait harassant.
     if (chiffre !== dernierChiffre) {
       if (chiffre > 0 && chiffre <= 3) jouerBruit('bip')
       else if (chiffre === 0) jouerBruit('go')
@@ -2925,7 +2938,7 @@ function tick(now?: number) {
     }
 
     // ————— Le DÉPART CANON : marteler dans les 3 dernières secondes —————
-    // Pas plus tôt : sur un décompte de 10 s, marteler dès le début serait
+    // Pas plus tôt : sur le décompte d'un salon, marteler dès le début serait
     // épuisant et sans intérêt. La jauge n'apparaît que dans la ligne droite.
     const canon = countdown <= 3.2
     sprintEl.classList.toggle('hidden', !canon)
@@ -2985,7 +2998,7 @@ function tick(now?: number) {
      * La piste doit vivre PENDANT le décompte, à vitesse nulle.
      *
      * `track.reset()` vide tout le décor pour repartir propre, et jusqu'ici
-     * rien ne le repeuplait avant le GO : on passait les dix secondes du départ
+     * rien ne le repeuplait avant le GO : on passait tout le décompte du départ
      * devant une piste nue, la forêt n'apparaissant qu'une fois lancé. C'est
      * précisément le moment où l'on REGARDE le décor, faute d'avoir autre chose
      * à faire.
