@@ -87,8 +87,13 @@ export interface Biome {
    * la longueur voulue. Tout ce qui s'étire mal en Z est donc à proscrire : on
    * privilégie les formes qui courent le long de la plateforme (des perches),
    * puisque les allonger est justement ce qu'on veut.
+   *
+   * ⚠️ La LARGEUR est passée en paramètre, elle n'est pas importée. C'est
+   * `PLATEFORME_LARG`, qui vit dans track.ts — et biomes.ts ne peut pas importer
+   * de valeur depuis track.ts sans créer un cycle (track importe déjà BIOMES).
+   * C'est la même raison qui fait que `Kind` n'est importé qu'en `type`.
    */
-  fabriquePlateforme?: (hauteur: number) => THREE.Group
+  fabriquePlateforme?: (hauteur: number, largeur: number) => THREE.Group
 
   /**
    * 🎋 Sa plateforme est-elle AJOURÉE — montée sur pilotis, ouverte dessous ?
@@ -102,6 +107,197 @@ export interface Biome {
    * le radeau bloquait un passage que son propre dessin annonce ouvert.
    */
   plateformeAjouree?: boolean
+
+
+  /**
+   * La MATIÈRE du sol : une tuile qui se répète sous les pieds du joueur.
+   *
+   * ⚠️ Elle est MULTIPLIÉE par `sol` — c'est un relief, pas une couleur. D'où
+   * un dessin qui tourne autour du blanc : un gris moyen assombrirait tout le
+   * biome au lieu de le texturer. Voir `faitTexture`.
+   *
+   * Sans elle, le sol est un aplat parfait — et un aplat parfait bordé de deux
+   * pointillés réguliers, l'œil le lit comme du bitume, quoi qu'on plante
+   * autour. C'est cette texture qui dit « terre battue » plutôt que « route ».
+   */
+  /** ⚠️ Peut rendre `null` hors navigateur (pas de canvas) : cf. `faitTexture`. */
+  texSol?: () => THREE.Texture | null
+  /** Combien de mètres couvre une tuile de `texSol` (défaut : 4). */
+  tuileSol?: number
+
+  /**
+   * Le PAN DE MUR qu'on longe et qu'on escalade, habillé par le biome.
+   *
+   * ⚠️ Mêmes contraintes que `fabriquePlateforme`, et pour la même raison : le
+   * maillage est bâti sur 1 m puis ÉTIRÉ à la longueur du pan (26 à 42 m). Tout
+   * ce qui a de l'épaisseur en z est donc à proscrire — un pieu vertical de
+   * 12 cm deviendrait une planche de cinq mètres. Seules les formes qui COURENT
+   * le long du mur (perches, assises, poutres) survivent à l'étirement.
+   *
+   * Origine AU SOL, centré en z, hauteur 3 m.
+   *
+   * ⚠️ Le liseré vermillon du haut est OBLIGATOIRE, dans tous les biomes : ce
+   * n'est pas de l'ornement, c'est le signal « ici tu peux t'accrocher ».
+   */
+  fabriqueMur?: () => THREE.Group
+
+  /**
+   * La BARRIÈRE de bordure : un tronçon de clôture posé le long de la piste,
+   * là où il n'y a pas de mur.
+   *
+   * Elle répond à un manque : entre les lignes et le décor, le sol partait dans
+   * le vide sans que rien ne dise où finit le chemin. Un couloir de course a
+   * besoin d'un BORD — c'est lui qui donne la vitesse (il défile tout près) et
+   * qui explique la piste (on court dans quelque chose, pas sur une plaine).
+   *
+   * ⚠️ Contrairement au mur, elle n'est JAMAIS étirée : elle fait exactement
+   * `LONG_BARRIERE` mètres. Toutes les formes sont donc permises, pieux
+   * verticaux compris.
+   *
+   * ⚠️ Elle doit rester BASSE (~1,2 m). Une barrière haute referait un couloir
+   * fermé et, surtout, finirait par masquer un obstacle de la ligne extérieure
+   * dans les virages de caméra. La règle absolue tient toujours : rien ne cache
+   * jamais un obstacle.
+   *
+   * Origine AU SOL, centrée en z, bâtie autour de x = 0.
+   */
+  fabriqueBarriere?: () => THREE.Group
+}
+
+/**
+ * La longueur d'un tronçon de barrière.
+ *
+ * C'est un compromis, et le seul chiffre qui compte ici : la piste en montre
+ * ~95 m (portée d'apparition + ce qui traîne derrière), soit 8 tronçons par
+ * côté, donc **16 appels de dessin** rien que pour les bordures. Les rallonger
+ * en économiserait, mais la barrière doit s'interrompre proprement autour des
+ * pans de mur — et un tronçon de 24 m laisserait des trous bien plus larges que
+ * les murs eux-mêmes.
+ */
+export const LONG_BARRIERE = 12
+
+/* ————————————————————————————————————————————————————————————————
+ *  Les sols : des tuiles peintes au canvas
+ * ———————————————————————————————————————————————————————————————— */
+
+/** Côté de la tuile, en pixels. 256 suffit : on la voit toujours en biais. */
+const TUILE = 256
+
+/**
+ * Peint une tuile RÉPÉTABLE et en fait une texture.
+ *
+ * Le dessin reçoit `tache()`, qui recopie automatiquement chaque forme de
+ * l'autre côté des bords : sans ça, une feuille posée près du bord serait
+ * tranchée net et l'on verrait la grille de répétition sur toute la piste.
+ *
+ * ⚠️ Les textures sont créées à la DEMANDE et gardées : en fabriquer une par
+ * course ferait fuir la mémoire vidéo, et les fabriquer toutes au chargement
+ * ferait payer les quatre biomes à qui n'en verra qu'un.
+ */
+function faitTexture(dessin: (t: Peintre) => void): THREE.Texture | null {
+  /*
+   * ⚠️ SANS CANVAS, ON RENVOIE null — et le jeu tourne quand même.
+   *
+   * Les bancs d'essai font tourner la piste sous Node, où il n'existe ni
+   * `document` ni contexte 2D. Sans ce garde-fou, construire un `Track` dans
+   * un test plantait dès qu'un biome réclamait sa matière de sol : un simple
+   * contrôle des plateformes se cassait sur une histoire de peinture.
+   *
+   * Renvoyer null est honnête plutôt que commode : la couleur du sol porte
+   * déjà l'essentiel, la texture n'ajoute que le relief. Tous les appelants
+   * savent déjà faire sans (`texSol?.() ?? null`).
+   */
+  const cv = typeof document === 'undefined' ? null : document.createElement('canvas')
+  const ctx = cv?.getContext?.('2d')
+  /*
+   * On vérifie TOUTES les méthodes que la peinture emploie, pas une seule.
+   *
+   * Les bancs d'essai fournissent des canevas de façade partiels — celui des
+   * plateformes n'imitait que ce qu'il fallait au dégradé des jarres. Ne
+   * contrôler que `createLinearGradient` laissait donc passer, puis plantait
+   * sur `save`. Cette liste est le CONTRAT de `faitTexture` : si l'une manque,
+   * on se passe de matière au lieu de casser.
+   */
+  const requis = ['save', 'restore', 'translate', 'rotate', 'beginPath', 'ellipse', 'fill', 'fillRect'] as const
+  if (!cv || !ctx || requis.some((m) => typeof (ctx as never)[m] !== 'function')) return null
+  cv.width = cv.height = TUILE
+
+  const peintre: Peintre = {
+    ctx,
+    fond(couleur) {
+      ctx.fillStyle = couleur
+      ctx.fillRect(0, 0, TUILE, TUILE)
+    },
+    tache(x, y, forme) {
+      // Les 9 décalages : la forme déborde d'un bord et revient par l'autre.
+      for (let dx = -1; dx <= 1; dx++) {
+        for (let dy = -1; dy <= 1; dy++) {
+          ctx.save()
+          ctx.translate(x + dx * TUILE, y + dy * TUILE)
+          forme(ctx)
+          ctx.restore()
+        }
+      }
+    },
+  }
+  dessin(peintre)
+
+  const tex = new THREE.CanvasTexture(cv)
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping
+  tex.colorSpace = THREE.SRGBColorSpace
+  // Le sol est vu en enfilade, donc sous un angle très rasant : sans
+  // anisotropie il part en bouillie scintillante dès dix mètres.
+  tex.anisotropy = 4
+  return tex
+}
+
+interface Peintre {
+  ctx: CanvasRenderingContext2D
+  fond(couleur: string): void
+  /** Dessine `forme` en (x, y), et ses recopies de l'autre côté des bords. */
+  tache(x: number, y: number, forme: (ctx: CanvasRenderingContext2D) => void): void
+}
+
+/** Un tirage à graine fixe : la texture doit être la même pour les 2 joueurs. */
+function dé(graine: number): () => number {
+  let a = graine >>> 0
+  return () => {
+    a = (a + 0x6d2b79f5) | 0
+    let t = Math.imul(a ^ (a >>> 15), 1 | a)
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296
+  }
+}
+
+/** Une ellipse pleine, inclinée — la brique de base de tous les sols. */
+function galet(
+  ctx: CanvasRenderingContext2D,
+  rx: number,
+  ry: number,
+  angle: number,
+  couleur: string
+) {
+  ctx.rotate(angle)
+  ctx.fillStyle = couleur
+  ctx.beginPath()
+  ctx.ellipse(0, 0, rx, ry, 0, 0, Math.PI * 2)
+  ctx.fill()
+}
+
+/**
+ * Un cache par biome : voir `faitTexture`.
+ *
+ * ⚠️ La valeur peut être `null` — hors navigateur, il n'y a pas de canvas et
+ * donc pas de matière. On garde quand même l'entrée, pour ne pas retenter la
+ * peinture à chaque image.
+ */
+const _texCache = new Map<string, THREE.Texture | null>()
+function texturePour(clé: string, dessin: (t: Peintre) => void): THREE.Texture | null {
+  const dejaLa = _texCache.get(clé)
+  if (dejaLa !== undefined) return dejaLa
+  const t = faitTexture(dessin)
+  _texCache.set(clé, t)
+  return t
 }
 
 /**
@@ -272,6 +468,209 @@ function teinte(a: number, b: number, t: number): THREE.Color {
 }
 
 /* ————————————————————————————————————————————————————————————————
+ *  Bordures : le squelette commun des barrières et des murs
+ * ———————————————————————————————————————————————————————————————— */
+
+/**
+ * Le VERMILLON du liseré. Il ne change dans aucun biome, jamais : c'est le
+ * signal « ici tu peux t'accrocher », et un repère d'action qui change de
+ * couleur oblige le joueur à réapprendre à le lire à chaque décor.
+ */
+const VERMILLON = 0xc33a2c
+
+interface FaçonBarriere {
+  /** Le pieu : sa couleur, son rayon, sa hauteur, et l'écart entre deux. */
+  pieu: { couleur: [number, number]; r: number; h: number; ecart: number }
+  /** Les lisses qui courent d'un bout à l'autre : à quelle hauteur, et de quoi. */
+  lisses: { y: number; r: number; couleur: number }[]
+  /** Une ligature au sommet de chaque pieu (facultatif). */
+  ligature?: number
+  /** Un chapeau conique sur chaque pieu (facultatif). */
+  pointe?: number
+}
+
+/**
+ * Toutes les barrières du jeu sont la même chose : des pieux régulièrement
+ * espacés, deux ou trois lisses qui courent d'un bout à l'autre, et de quoi
+ * les attacher. Ce qui change d'un biome à l'autre, c'est la matière et les
+ * proportions — pas la structure.
+ *
+ * D'où ce squelette commun : quatre barrières crédibles pour le prix d'une, et
+ * une garantie qu'aucune ne dérivera en hauteur (voir `fabriqueBarriere` : une
+ * barrière haute masquerait des obstacles).
+ *
+ * ⚠️ Le premier pieu est posé à `-LONG/2` et le dernier EXCLU : deux tronçons
+ * bout à bout partageraient sinon un pieu au même endroit, et l'on verrait un
+ * poteau double tous les 12 m.
+ *
+ * ⚠️ Et `ecart` DOIT diviser `LONG_BARRIERE` exactement. Sinon le dernier pieu
+ * d'un tronçon tombe trop près du premier du suivant : avec un écart de 1,6 m,
+ * les pieux se suivaient à 1,6 m partout sauf au raccord, où ils se serraient à
+ * 0,8 m — un hoquet dans le rythme, tous les 12 m, sur toute la course. C'est
+ * le genre de motif que l'œil finit toujours par attraper.
+ */
+function barriereSimple(f: FaçonBarriere, rng: () => number): THREE.Group {
+  const p: Piece[] = []
+
+  for (let z = -LONG_BARRIERE / 2; z < LONG_BARRIERE / 2 - 0.01; z += f.pieu.ecart) {
+    const h = f.pieu.h * (0.9 + rng() * 0.2) // jamais deux pieux de la même taille
+    const penche = (rng() - 0.5) * 0.09
+    p.push({
+      geo: GEO.tige.clone().scale(f.pieu.r, h, f.pieu.r),
+      couleur: teinte(f.pieu.couleur[0], f.pieu.couleur[1], rng()),
+      x: 0, y: h / 2, z,
+      rz: penche,
+      rx: (rng() - 0.5) * 0.06,
+    })
+    if (f.ligature !== undefined) {
+      p.push({
+        geo: GEO.anneau.clone().scale(f.pieu.r * 1.5, 0.07, f.pieu.r * 1.5),
+        couleur: f.ligature,
+        x: Math.sin(penche) * h * 0.8, y: h * 0.8, z,
+      })
+    }
+    if (f.pointe !== undefined) {
+      p.push({
+        geo: GEO.sapin.clone().scale(f.pieu.r * 1.4, f.pieu.r * 2.6, f.pieu.r * 1.4),
+        couleur: f.pointe,
+        x: Math.sin(penche) * h, y: h + f.pieu.r * 1.3, z,
+      })
+    }
+  }
+
+  // Les lisses : d'un bout à l'autre du tronçon, sans quoi la clôture se
+  // lirait comme une rangée de piquets isolés.
+  for (const l of f.lisses) {
+    p.push({
+      geo: GEO.tige.clone().scale(l.r, LONG_BARRIERE, l.r),
+      couleur: l.couleur,
+      x: 0, y: l.y, z: 0,
+      rx: Math.PI / 2, // couchée le long de la piste
+    })
+  }
+
+  return groupe(assemble(p, MAT_SOLIDE))
+}
+
+/**
+ * La hauteur des pans de mur qu'on longe.
+ *
+ * Passée de 3 à **6 m** : à 3 m, la paroi arrivait à peine plus haut que le
+ * coureur et la piste restait une plaine avec des bouts de clôture. À 6 m on
+ * court dans quelque chose — le regard bute, et la vitesse se lit sur les
+ * parois qui défilent.
+ *
+ * ⚠️ C'est une hauteur PUREMENT visuelle, et c'est ce qui la rend sûre : on
+ * court sur la paroi à `MUR_HAUTEUR` (1,6 m) quoi qu'il arrive, et l'accroche
+ * ne dépend que de la position en x. Doubler le mur ne change pas une seule
+ * règle du jeu.
+ *
+ * ⚠️ En revanche elle entraîne les TORII, qui doivent enjamber la piste : un
+ * linteau posé à 4,6 m passerait maintenant sous le haut des murs.
+ */
+export const MUR_HAUT = 6
+
+/**
+ * Là où le mur dit « accroche-toi ici ».
+ *
+ * Un peu au-dessus de la hauteur de course sur paroi (1,6 m), pour que le
+ * repère reste visible au lieu de passer derrière le coureur.
+ */
+const Y_ACCROCHE = 1.85
+
+interface FaçonMur {
+  /** Le corps plein du mur. */
+  corps: number
+  /** Les bandes horizontales qui l'habillent : hauteur, épaisseur, couleur. */
+  bandes: { y: number; e: number; couleur: number; ronde?: boolean }[]
+  /** Un soubassement plus sombre, au pied (facultatif). */
+  socle?: number
+  /** Le couronnement : la matière qui coiffe le mur, propre au biome. */
+  couronne: number
+}
+
+/**
+ * Le squelette commun des pans de mur.
+ *
+ * ⚠️ Tout est bâti sur 1 m de long et sera ÉTIRÉ : il n'y a donc ici QUE des
+ * formes qui courent le long du mur. C'est cette contrainte qui décide de
+ * l'habillage de chaque biome — pas le goût. Un mur de bambou serait fait de
+ * tiges verticales dans la vraie vie ; ici il est fait de perches couchées,
+ * parce que c'est ce qui survit à l'étirement.
+ */
+function murSimple(f: FaçonMur): THREE.Group {
+  const corps: Piece[] = []
+
+  corps.push({
+    geo: GEO.bloc.clone().scale(0.5, MUR_HAUT, 1),
+    couleur: f.corps,
+    x: 0, y: MUR_HAUT / 2, z: 0,
+  })
+  if (f.socle !== undefined) {
+    corps.push({
+      geo: GEO.bloc.clone().scale(0.58, 0.45, 1),
+      couleur: f.socle,
+      x: 0, y: 0.22, z: 0,
+    })
+  }
+
+  // Les bandes, posées sur les DEUX faces : on longe un mur par la gauche comme
+  // par la droite, et une face nue se remarque immédiatement.
+  for (const b of f.bandes) {
+    for (const x of [-0.27, 0.27]) {
+      corps.push({
+        geo: b.ronde
+          ? GEO.tige.clone().scale(b.e, 1, b.e)
+          : GEO.bloc.clone().scale(b.e, b.e, 1),
+        couleur: b.couleur,
+        x, y: b.y, z: 0,
+        rx: b.ronde ? Math.PI / 2 : 0,
+      })
+    }
+  }
+
+  /*
+   * ————— Le sommet : du biome, pas du rouge —————
+   *
+   * Le mur était coiffé d'une barre vermillon de 18 cm sur toute sa longueur.
+   * Ça marchait comme signal, mais ça faisait courir un ruban rouge d'un bout
+   * à l'autre de chaque décor — et sur un mur de 6 m, la barre serait devenue
+   * franchement envahissante.
+   *
+   * Le sommet prend donc la MATIÈRE du biome (une tuile de bambou, une arête
+   * de glace…), et le vermillon se réduit à deux traits fins :
+   *  · une arête sous la lèvre du couronnement, qui souligne le haut ;
+   *  · un trait à hauteur d'accroche, qui dit OÙ l'on s'agrippe.
+   *
+   * Le second n'existait pas avant, et c'est le mur de 6 m qui l'impose : le
+   * repère était en haut parce que le haut était à portée de main. Il ne l'est
+   * plus. Un signal d'action doit se trouver là où se fait l'action.
+   */
+  corps.push({
+    geo: GEO.bloc.clone().scale(0.62, 0.26, 1),
+    couleur: f.couronne,
+    x: 0, y: MUR_HAUT - 0.13, z: 0,
+  })
+
+  const liser: Piece[] = [
+    // L'arête du couronnement.
+    {
+      geo: GEO.bloc.clone().scale(0.66, 0.05, 1),
+      couleur: VERMILLON,
+      x: 0, y: MUR_HAUT - 0.29, z: 0,
+    },
+    // Le repère d'accroche, sur les deux faces.
+    ...[-0.26, 0.26].map((x) => ({
+      geo: GEO.bloc.clone().scale(0.04, 0.07, 1),
+      couleur: VERMILLON,
+      x, y: Y_ACCROCHE, z: 0,
+    })),
+  ]
+
+  return groupe(assemble(corps, MAT_SOLIDE), assemble(liser, MAT_LUMIERE))
+}
+
+/* ————————————————————————————————————————————————————————————————
  *  1 · FORÊT DE BAMBOUS 竹 — l'aube verte
  * ———————————————————————————————————————————————————————————————— */
 
@@ -299,8 +698,21 @@ const BAMBOUS: Biome = {
   nom: 'Forêt de bambous',
   kanji: '竹',
   brume: 0x1c2e24,
-  brumeNear: 32,
-  brumeFar: 88,
+  brumeNear: 26,
+  /*
+   * ⚠️ 68 m, et pas 88.
+   *
+   * Voir à 88 m dans une bambouseraie n'a aucun sens : un vrai sous-bois se
+   * referme bien avant. Et c'est cette portée excessive qui EXPOSAIT les
+   * trouées — plus on voit loin, plus on accumule de chances qu'un rayon passe
+   * entre deux tiges. Resserrer la brume densifie la forêt gratuitement, sans
+   * un triangle de plus.
+   *
+   * 68 m reste large pour le jeu : les obstacles apparaissent à 85 m, donc on
+   * les découvre à 68 m, soit 2,6 s d'anticipation à la vitesse de croisière.
+   * C'est plus que ce que laisse un runner classique.
+   */
+  brumeFar: 68,
   sol: 0x24301f,
   ligne: 0x40573f,
   murCorps: 0x2c3a23, // une palissade de bambou serré, sombre
@@ -326,23 +738,180 @@ const BAMBOUS: Biome = {
    * dessin d'un tiers — 175, au-dessus du confortable — pour le même résultat
    * que charger chaque massif, qui lui ne coûte RIEN de plus (tout est soudé).
    *
-   * On garde donc 6 m, et l'on remplit.
+   * On garde donc un écartement large, et l'on remplit chaque massif.
+   *
+   * 7 m plutôt que 6 : le décor est devenu si fourni (feuillage, canopée) que
+   * les massifs visibles coûtaient 156 appels de dessin, au-dessus des ~150
+   * confortables. En les espaçant d'un mètre et en chargeant chacun d'autant
+   * (× 7/6), la densité au mètre est INCHANGÉE et l'on récupère 14 % d'appels.
+   * C'est exactement le levier que la mesure avait désigné.
    */
-  ecartDecor: 6,
+  ecartDecor: 7,
+
+  /*
+   * ————— Le sol de la bambouseraie —————
+   *
+   * Un sentier de terre battue sous une litière de bambou. Trois couches, dans
+   * l'ordre où on les pose, qui répondent chacune à un défaut précis :
+   *
+   *  · la TERRE — de larges taches lentes, plus claires au milieu. C'est ce qui
+   *    casse l'aplat : un sol parfaitement uni se lit comme du revêtement, quel
+   *    que soit le décor planté autour ;
+   *  · la LITIÈRE — des lames de feuilles sèches, toutes orientées à peu près
+   *    dans le sens de la course. L'orientation n'est pas un caprice : couchées
+   *    en travers, elles font des barres qui ressemblent à des marquages, et on
+   *    revient exactement au problème qu'on essaie de résoudre ;
+   *  · la MOUSSE — quelques plaques sombres et froides, qui donnent l'humidité
+   *    du sous-bois et empêchent la terre de virer au désert.
+   *
+   * Tout tourne autour du blanc cassé : le résultat est multiplié par `sol`
+   * (0x24301f, un vert très sombre), donc la tuile ne fait que le moduler.
+   */
+  texSol: () =>
+    texturePour('bambous', (t) => {
+      const r = dé(0x8a3b)
+      t.fond('#e9e3d4')
+
+      /*
+       * ⚠️ Le CONTRASTE avant tout le reste.
+       *
+       * Première version : de larges galets sombres sur fond clair. Une tuile
+       * de 5 m dessinée avec des taches de 40 px, ça fait des taches d'un mètre
+       * — et vu d'en haut, ça ne donnait pas un sous-bois mais un motif de
+       * CAMOUFLAGE, des trous noirs mous répartis sur le vert.
+       *
+       * La terre, ça n'est pas de grandes taches contrastées : c'est un grain
+       * FIN et beaucoup de variations LENTES et faibles. D'où la refonte :
+       * amplitude divisée par trois, et le détail reporté sur le grain.
+       */
+
+      // Les variations lentes du terrain : larges, mais à peine perceptibles.
+      for (let i = 0; i < 14; i++) {
+        const v = 222 + Math.floor(r() * 20)
+        t.tache(r() * TUILE, r() * TUILE, (ctx) =>
+          galet(ctx, 30 + r() * 46, 24 + r() * 40, r() * Math.PI, `rgb(${v},${v - 3},${v - 10})`)
+        )
+      }
+
+      // Le grain de la terre : c'est LUI le sujet. Des dizaines de petits
+      // cailloux et grumeaux, trop fins pour se lire un par un, mais qui
+      // enlèvent définitivement l'aspect « surface lisse ».
+      for (let i = 0; i < 300; i++) {
+        const v = 196 + Math.floor(r() * 54)
+        t.tache(r() * TUILE, r() * TUILE, (ctx) =>
+          galet(ctx, 1.5 + r() * 4, 1.5 + r() * 3.5, r() * Math.PI, `rgb(${v},${v - 4},${v - 12})`)
+        )
+      }
+
+      // La mousse : verte et à peine plus sombre que la terre. Elle donne
+      // l'humidité du sous-bois, pas des trous dans le sol.
+      for (let i = 0; i < 16; i++) {
+        t.tache(r() * TUILE, r() * TUILE, (ctx) =>
+          galet(ctx, 9 + r() * 18, 7 + r() * 15, r() * Math.PI, 'rgb(214,230,206)')
+        )
+      }
+
+      // La litière : des lames sèches, dans le sens de la course (± 25°).
+      // Couchées en travers, elles feraient des barres — et l'on retomberait
+      // sur le marquage routier qu'on cherche justement à effacer.
+      for (let i = 0; i < 130; i++) {
+        const chaud = r()
+        const c = `rgb(${250 - chaud * 26},${238 - chaud * 34},${206 - chaud * 40})`
+        t.tache(r() * TUILE, r() * TUILE, (ctx) =>
+          galet(ctx, 1.8 + r() * 1.6, 8 + r() * 11, (r() - 0.5) * 0.9, c)
+        )
+      }
+      // Et quelques brindilles sombres : sans elles, la litière n'a que des
+      // feuilles claires et le sol se met à briller uniformément.
+      for (let i = 0; i < 26; i++) {
+        const v = 176 + Math.floor(r() * 26)
+        t.tache(r() * TUILE, r() * TUILE, (ctx) =>
+          galet(ctx, 1 + r() * 1, 6 + r() * 12, (r() - 0.5) * 1, `rgb(${v},${v - 8},${v - 22})`)
+        )
+      }
+    }),
+  tuileSol: 5,
+
+  /*
+   * Le yotsume-gaki, la clôture de jardin japonaise : des bambous fins liés à
+   * deux traverses par de la corde. C'est LA barrière de la bambouseraie, et
+   * elle a l'avantage d'être ajourée — on continue de voir la forêt derrière.
+   */
+  fabriqueBarriere: () =>
+    barriereSimple(
+      {
+        pieu: { couleur: [0x6d8a42, 0x435c2a], r: 0.06, h: 1.15, ecart: 1.5 },
+        lisses: [
+          { y: 0.44, r: 0.05, couleur: 0x54683a },
+          { y: 0.94, r: 0.05, couleur: 0x54683a },
+        ],
+        ligature: 0x8a7440, // la corde de paille
+      },
+      dé(0x0b1)
+    ),
+
+  /*
+   * Le mur : une palissade de bambou serré.
+   *
+   * ⚠️ Faite de perches COUCHÉES, pas de tiges plantées — alors qu'une vraie
+   * palissade de bambou est verticale. C'est l'étirement qui commande : une
+   * tige de 12 cm de diamètre étirée sur un pan de 40 m deviendrait une planche
+   * de cinq mètres de large. Les perches en long, elles, ne font que s'allonger,
+   * ce qui est exactement l'effet voulu.
+   */
+  fabriqueMur: () =>
+    murSimple({
+      corps: 0x2c3a23,
+      socle: 0x1a2214,
+      couronne: 0x5a6b34, // une lisse de bambou clair en guise de chapeau
+      bandes: [
+        { y: 0.42, e: 0.13, couleur: 0x4d5c30, ronde: true },
+        { y: 1.02, e: 0.13, couleur: 0x3e4b27, ronde: true },
+        { y: 1.62, e: 0.13, couleur: 0x4d5c30, ronde: true },
+        { y: 2.22, e: 0.13, couleur: 0x3e4b27, ronde: true },
+        { y: 2.82, e: 0.13, couleur: 0x4d5c30, ronde: true },
+        { y: 3.42, e: 0.13, couleur: 0x3e4b27, ronde: true },
+        { y: 4.02, e: 0.13, couleur: 0x4d5c30, ronde: true },
+        { y: 4.62, e: 0.13, couleur: 0x3e4b27, ronde: true },
+        { y: 5.22, e: 0.13, couleur: 0x4d5c30, ronde: true },
+        { y: 5.7, e: 0.11, couleur: 0x5a6b34, ronde: true },
+      ],
+    }),
+
   fabriqueDecor: (rng) => {
     const corps: Piece[] = []
     const feuilles: Piece[] = []
 
-    // ————— Plan rapproché : les tiges qu'on voit vraiment —————
-    const proches = 40 + Math.floor(rng() * 20)
-    for (let i = 0; i < proches; i++) {
+    /*
+     * ————— TROIS ÉTAGES, et le classement se fait sur le COÛT, pas la distance
+     *
+     * Le piège dans lequel je suis tombé deux fois : croire que « plan proche »
+     * et « plan lointain » suffisaient. Ça liait le DÉTAIL d'une tige à sa
+     * POSITION, et donc son prix aussi. Résultat, la bande la plus proche de la
+     * piste — celle qu'on voit le mieux, où le moindre trou saute aux yeux —
+     * était la MOINS fournie : mesuré, 8,4 tiges par mètre de largeur contre
+     * 11,5 pour le fond. Impossible d'en ajouter sans exploser le budget, une
+     * tige ornée coûtant douze fois une tige nue.
+     *
+     * On sépare donc les deux questions :
+     *   · DÉTAILLÉES (0→5 m)  — nœuds et feuillage. Peu nombreuses : ce sont
+     *     celles qu'on frôle, elles portent la lecture « bambou ».
+     *   · SIMPLES (0→11 m)    — de simples fûts à 6 pans. C'est ELLES qui
+     *     remplissent la bande proche, et elles ne coûtent presque rien.
+     *   · LOINTAINES (5→24 m) — 4 pans, quasi noires : la masse qui ferme
+     *     l'horizon.
+     *
+     * Les trois se chevauchent largement, donc plus aucune couture verticale.
+     */
+    const detaillees = 26 + Math.floor(rng() * 12)
+    for (let i = 0; i < detaillees; i++) {
       const h = 7 + rng() * 7
       const r = 0.085 + rng() * 0.05
-      const x = rng() * 5.5
+      const x = rng() * 5
       const z = (rng() - 0.5) * 22
       // Plus la tige est loin, plus elle est sombre : la profondeur se lit à la
       // valeur avant de se lire à la taille.
-      const recul = Math.min(1, x / 5.5)
+      const recul = Math.min(1, x / 5)
       const vert = teinte(0x6d8a42, 0x2f4423, recul * 0.65 + rng() * 0.2)
       const penche = (rng() - 0.5) * 0.14
 
@@ -387,25 +956,170 @@ const BAMBOUS: Biome = {
       }
     }
 
-    // ————— Plan lointain : la masse de la forêt —————
-    // Deux fois plus hautes, quasi noires, sans le moindre détail. C'est elles
-    // qui ferment l'horizon et donnent l'impression qu'on traverse quelque chose.
-    // Elles sont NOMBREUSES : c'est le rideau du fond, et le moindre trou
-    // dedans se voit comme un manque. Une tige lointaine ne coûte que quelques
-    // triangles, alors on en met beaucoup.
-    const loin = 60 + Math.floor(rng() * 30)
+    /*
+     * ————— Étage intermédiaire : le remplissage —————
+     *
+     * De simples fûts, sans nœuds ni feuillage, sur toute la bande proche. Ce
+     * sont eux qui font la DENSITÉ là où elle manquait : à trois fois moins de
+     * géométrie qu'une tige ornée, on peut en poser cinq fois plus.
+     *
+     * Ils gardent la hauteur et la teinte du premier plan — vus de la piste,
+     * rien ne les distingue d'une tige détaillée, sinon qu'on ne compte pas
+     * leurs nœuds à 28 m/s.
+     */
+    const simples = 152 + Math.floor(rng() * 58)
+    for (let i = 0; i < simples; i++) {
+      const h = 7 + rng() * 8
+      const r = 0.085 + rng() * 0.055
+      const x = rng() * 11
+      const z = (rng() - 0.5) * 23
+      const recul = Math.min(1, x / 11)
+      corps.push({
+        geo: GEO.tigeCreuse.clone().scale(r, h, r),
+        couleur: teinte(0x6d8a42, 0x25361b, recul * 0.8 + rng() * 0.2),
+        x,
+        y: h / 2,
+        z,
+        rz: (rng() - 0.5) * 0.14,
+        rx: (rng() - 0.5) * 0.08,
+      })
+
+      /*
+       * ⚠️ ELLES AUSSI PORTENT DES FEUILLES. C'était LE manque.
+       *
+       * Mesuré : la densité de fûts atteignait déjà 3 tiges/m² — une tous les
+       * 58 cm — et seuls 19 % des rayons de la caméra traversaient. Ajouter
+       * encore des fûts ne pouvait donc rien donner. Ce qu'on voyait n'était
+       * pas une forêt trop clairsemée, c'était **un parc à poteaux** : seules
+       * les 25 tiges détaillées avaient du feuillage, les 155 d'ici et les 230
+       * du fond étaient nues.
+       *
+       * Or une bambouseraie se lit à sa MASSE DE FEUILLES, jamais à ses fûts.
+       * Deux ou trois lames par tige suffisent — à 2 triangles pièce, c'est
+       * l'ajout le moins cher et le plus décisif du décor.
+       */
+      const lames = 3 + Math.floor(rng() * 3)
+      for (let k = 0; k < lames; k++) {
+        const hy = h * (0.6 + rng() * 0.38)
+        feuilles.push({
+          geo: GEO.feuille.clone().scale(1.3 + rng() * 1.2, 0.2 + rng() * 0.16, 1),
+          couleur: teinte(0x6f9243, 0x2b4322, recul * 0.6 + rng() * 0.4),
+          x: x + (rng() - 0.5) * 1.3,
+          y: hy,
+          z: z + (rng() - 0.5) * 1.3,
+          /*
+           * ⚠️ ry BRIDÉ À ±0,5 rad, et surtout pas tiré sur un demi-tour.
+           *
+           * Une feuille est un PLAN : de face elle couvre, par la tranche elle
+           * DISPARAÎT. En tirant ry entre 0 et π, la moitié des feuilles se
+           * présentaient de profil et ne comptaient pour rien — d'où une forêt
+           * qui semblait fournie ici et vide trois mètres plus loin, sans que
+           * la quantité de géométrie ait bougé d'un pouce.
+           *
+           * Le désordre passe donc par rz, qui fait tourner la lame DANS son
+           * plan : elle reste visible quel que soit l'angle.
+           */
+          ry: (rng() - 0.5) * 1.0,
+          rz: rng() * Math.PI,
+        })
+      }
+    }
+
+    /*
+     * ————— Plan lointain : la masse de la forêt —————
+     *
+     * Deux fois plus hautes, quasi noires, sans le moindre détail. C'est elles
+     * qui ferment l'horizon et donnent l'impression qu'on traverse quelque chose.
+     *
+     * ⚠️ CE QUI COMPTE ICI EST UNE DENSITÉ PAR SURFACE, PAS UN NOMBRE.
+     *
+     * L'erreur précédente : 75 tiges étalées sur 20 m de large, quand le plan
+     * rapproché en met 50 sur 5,5 m. Mesuré sommet par sommet, la matière
+     * s'effondrait d'un facteur **25** dès x = 10,5 m — le « rideau » n'était
+     * qu'une poignée de piquets isolés. Selon l'angle de la caméra, on voyait
+     * tantôt la bande dense, tantôt le vide derrière : d'où l'impression de
+     * bambou par à-coups alors que le comptage le long de la piste, lui, était
+     * parfaitement régulier.
+     *
+     * On raisonne donc en tiges par m² :
+     *   · plan rapproché ≈ 50 / (5,5 × 22)  = 0,41 /m²
+     *   · plan lointain  ≈ 230 / (18,5 × 24) = 0,52 /m²
+     *
+     * Le fond est volontairement un peu PLUS dense que le premier plan : c'est
+     * lui qui doit se lire comme une masse pleine, alors que devant on veut
+     * distinguer les tiges une à une.
+     *
+     * Le prix reste dérisoire : une tige lointaine fait 4 pans creux, soit
+     * 8 triangles, et le massif entier tient toujours en UN appel de dessin.
+     */
+    const loin = 233 + Math.floor(rng() * 70)
     for (let i = 0; i < loin; i++) {
       const h = 13 + rng() * 11
       const r = 0.11 + rng() * 0.08
       corps.push({
         geo: GEO.tigeLoin.clone().scale(r, h, r),
         couleur: teinte(0x2b3d22, 0x141d12, rng()),
-        // Jusqu'à 26 m : le rideau doit dépasser la portée de la brume (88 m),
-        // sinon on devine son bord en tournant la caméra.
-        x: 5.5 + rng() * 20,
+        // 5 → 24 m : le départ à 5 fait DÉBORDER ce plan sur l'intermédiaire
+        // (0 → 11), pour que les deux se mélangent au lieu de se toucher.
+        x: 5 + rng() * 19,
         y: h / 2,
         z: (rng() - 0.5) * 24,
         rz: (rng() - 0.5) * 0.1,
+      })
+    }
+
+    /*
+     * ————— LA CANOPÉE : ce qui ferme le haut du cadre —————
+     *
+     * L'autre grand absent. Sur les captures, tout le haut de l'écran était
+     * vide : on courait au fond d'un couloir à ciel ouvert bordé de perches.
+     * Or ce qui fait dire « forêt » avant tout le reste, c'est d'avoir quelque
+     * chose AU-DESSUS de la tête — la lumière filtrée, le ciel bouché.
+     *
+     * Des lames larges entre 9 et 17 m, penchées vers la piste pour couvrir
+     * jusqu'au-dessus du joueur. Elles ne descendent jamais sous 9 m : à
+     * 2,4 m de saut maximum, elles ne peuvent gêner aucune lecture de jeu.
+     *
+     * 2 triangles pièce : c'est l'élément le plus rentable du décor.
+     */
+    /*
+     * ⚠️ DES LAMES PETITES ET COUCHÉES, pas grandes et tirées au hasard.
+     *
+     * La version précédente est ce qui faisait « respirer » la forêt : de
+     * grandes lames (jusqu'à 6 m) dont l'orientation était tirée sur un
+     * demi-tour complet. Une lame de face bouchait un pan entier de ciel ; la
+     * même de profil disparaissait. On tombait donc, au hasard des massifs, sur
+     * des amas très denses puis sur du vide — alors que la quantité de
+     * géométrie, elle, ne variait pas de 1 % (mesuré sur toute la course, et
+     * sur dix graines).
+     *
+     * Deux corrections, et elles vont ensemble :
+     *  · les lames sont COUCHÉES (rx ≈ −90°, donc face tournée vers le sol).
+     *    On regarde une canopée par en dessous : couchée, elle couvre toujours,
+     *    quel que soit l'angle. Le désordre passe par ry, qui la fait pivoter
+     *    à plat — sans jamais la faire disparaître ;
+     *  · elles sont trois fois plus PETITES et deux fois plus nombreuses. Cent
+     *    petites lames se moyennent ; trente grandes clignotent.
+     */
+    const canopee = 190 + Math.floor(rng() * 70)
+    for (let i = 0; i < canopee; i++) {
+      const hy = 8 + rng() * 12
+      feuilles.push({
+        geo: GEO.feuille.clone().scale(1.2 + rng() * 1.6, 0.7 + rng() * 1.0, 1),
+        couleur: teinte(0x4c6c33, 0x22331a, rng() * 0.9),
+        /*
+         * ⚠️ De -10 à +18. Le début NÉGATIF est le point clé : le feuillage
+         * traverse au-dessus de la piste et rejoint celui d'en face. Sans ce
+         * recouvrement, on n'a pas une voûte mais deux haies qui se regardent,
+         * et le ciel reste ouvert pile au milieu — là où le joueur regarde.
+         */
+        x: -10 + rng() * 28,
+        y: hy,
+        z: (rng() - 0.5) * 24,
+        // Couchée, face vers le sol : c'est de là qu'on la regarde.
+        rx: -Math.PI / 2 + (rng() - 0.5) * 0.7,
+        ry: rng() * Math.PI, // pivote à plat : reste visible d'en dessous
+        rz: (rng() - 0.5) * 0.4,
       })
     }
 
@@ -570,30 +1284,37 @@ const BAMBOUS: Biome = {
    */
   plateformeAjouree: true,
 
-  fabriquePlateforme: (hauteur) => {
+  fabriquePlateforme: (hauteur, largeur) => {
     const p: Piece[] = []
 
-    // Le corps : quatre perches côte à côte, couchées en long.
-    for (let i = 0; i < 4; i++) {
-      const x = -0.62 + 0.41 * i
+    // Le corps : cinq perches côte à côte, couchées en long. Cinq et non
+    // quatre depuis l'élargissement des lignes — à quatre, le radeau montrait
+    // des jours entre ses troncs.
+    const perches = 5
+    const pas = (largeur - 0.44) / (perches - 1)
+    for (let i = 0; i < perches; i++) {
       p.push({
         geo: GEO.tige.clone().scale(0.22, 1, 0.22),
         couleur: i % 2 ? 0x4d5c30 : 0x3e4b27,
-        x, y: hauteur - 0.55, z: 0,
+        x: -(largeur - 0.44) / 2 + pas * i,
+        y: hauteur - 0.55,
+        z: 0,
         rx: Math.PI / 2, // couchée le long de la plateforme
       })
     }
 
-    // Le tablier du dessus, sur lequel on court.
+    // Le tablier du dessus, sur lequel on court. C'est LUI qu'on voit d'en
+    // haut : il reste en bambou clair, et c'est ce qui remplace l'ancienne
+    // barre vermillon qui coiffait la plateforme.
     p.push({
-      geo: GEO.bloc.clone().scale(1.7, 0.22, 1),
+      geo: GEO.bloc.clone().scale(largeur, 0.22, 1),
       couleur: 0x6b7d3f,
       x: 0, y: hauteur - 0.11, z: 0,
     })
 
     // Les montants sous le tablier, jusqu'au sol : la plateforme doit avoir
     // l'air posée sur quelque chose, pas de léviter.
-    for (const x of [-0.7, 0.7]) {
+    for (const x of [-largeur / 2 + 0.15, largeur / 2 - 0.15]) {
       p.push({
         geo: GEO.bloc.clone().scale(0.16, hauteur - 0.66, 1),
         couleur: 0x2b3320,
@@ -601,11 +1322,13 @@ const BAMBOUS: Biome = {
       })
     }
 
-    // Le liseré vermillon : « on peut monter là-dessus ».
+    // Le vermillon ne subsiste qu'en ARÊTE, sur le nez du tablier : « on peut
+    // monter là-dessus ». Cinq centimètres au lieu de dix, et le dessus n'est
+    // plus rouge du tout.
     p.push({
-      geo: GEO.bloc.clone().scale(1.76, 0.1, 1),
-      couleur: 0xc33a2c,
-      x: 0, y: hauteur, z: 0,
+      geo: GEO.bloc.clone().scale(largeur + 0.06, 0.05, 1),
+      couleur: VERMILLON,
+      x: 0, y: hauteur - 0.02, z: 0,
     })
 
     return groupe(assemble(p, MAT_SOLIDE))
@@ -634,6 +1357,69 @@ const VILLAGE: Biome = {
   ligne: 0x6b3a20,
   murCorps: 0x241610, // un mur de torchis noirci par le feu
   ecartDecor: 15,
+
+  /*
+   * Terre battue de village, jonchée de cendres et de débris calcinés. Les
+   * taches claires sont des braises retombées : elles doivent rester rares,
+   * sinon le sol se met à concurrencer les vrais feux du décor.
+   */
+  texSol: () =>
+    texturePour('village', (t) => {
+      const r = dé(0x51c2)
+      t.fond('#e8ded6')
+      for (let i = 0; i < 24; i++) {
+        const v = 176 + Math.floor(r() * 60)
+        t.tache(r() * TUILE, r() * TUILE, (ctx) =>
+          galet(ctx, 22 + r() * 40, 16 + r() * 30, r() * Math.PI, `rgb(${v},${v - 10},${v - 16})`)
+        )
+      }
+      // La cendre : des plaques grises et froides.
+      for (let i = 0; i < 16; i++) {
+        t.tache(r() * TUILE, r() * TUILE, (ctx) =>
+          galet(ctx, 10 + r() * 20, 8 + r() * 16, r() * Math.PI, 'rgb(214,210,206)')
+        )
+      }
+      // Les débris calcinés : petits, très sombres, éparpillés.
+      for (let i = 0; i < 60; i++) {
+        const v = 96 + Math.floor(r() * 40)
+        t.tache(r() * TUILE, r() * TUILE, (ctx) =>
+          galet(ctx, 1.4 + r() * 3, 2 + r() * 6, r() * Math.PI, `rgb(${v},${v - 6},${v - 8})`)
+        )
+      }
+      // Quelques braises retombées.
+      for (let i = 0; i < 7; i++) {
+        t.tache(r() * TUILE, r() * TUILE, (ctx) =>
+          galet(ctx, 1.5 + r() * 2, 1.5 + r() * 2, 0, 'rgb(255,236,206)')
+        )
+      }
+    }),
+  tuileSol: 6,
+
+  // Une clôture de village à moitié brûlée : des pieux noircis, inégaux, et
+  // une seule traverse qui tient encore. Les pointes cassées font le reste.
+  fabriqueBarriere: () =>
+    barriereSimple(
+      {
+        pieu: { couleur: [0x2f1e15, 0x140c08], r: 0.075, h: 1.05, ecart: 1.2 },
+        lisses: [{ y: 0.7, r: 0.055, couleur: 0x241811 }],
+        pointe: 0x120b07,
+      },
+      dé(0x0b2)
+    ),
+
+  // Un mur de torchis noirci, ceinturé de deux poutres carbonisées.
+  fabriqueMur: () =>
+    murSimple({
+      corps: 0x241610,
+      socle: 0x120b07,
+      couronne: 0x1a100c, // les tuiles noircies qui coiffent le mur
+      bandes: [
+        { y: 1.05, e: 0.16, couleur: 0x1a100c },
+        { y: 2.4, e: 0.16, couleur: 0x1a100c },
+        { y: 3.75, e: 0.16, couleur: 0x1a100c },
+        { y: 5.05, e: 0.16, couleur: 0x1a100c },
+      ],
+    }),
   fabriqueDecor: (rng) => {
     const corps: Piece[] = []
     const feux: Piece[] = []
@@ -728,6 +1514,71 @@ const PONT: Biome = {
   ligne: 0x3d4560,
   murCorps: 0x2b3145, // la rambarde d'ardoise du pont — la teinte d'origine
   ecartDecor: 8,
+
+  /*
+   * Le tablier du pont : des PLANCHES, donc des bandes nettes en travers de la
+   * course. C'est le seul sol du jeu qui ait droit à un motif régulier, et ce
+   * n'est pas une entorse : une planche traverse toute la largeur, là où un
+   * marquage routier suit la course. La lecture est opposée.
+   *
+   * Et le défilement des joints donne à ce biome-là un repère de vitesse que
+   * le vide alentour lui refuse.
+   */
+  texSol: () =>
+    texturePour('pont', (t) => {
+      const r = dé(0x2f70)
+      t.fond('#e6e6ea')
+      const planches = 6
+      const pas = TUILE / planches
+      for (let i = 0; i < planches; i++) {
+        const v = 208 + Math.floor(r() * 40)
+        t.ctx.fillStyle = `rgb(${v},${v - 2},${v + 4})`
+        t.ctx.fillRect(0, i * pas, TUILE, pas - 2)
+        // Le joint entre deux planches.
+        t.ctx.fillStyle = 'rgb(150,150,162)'
+        t.ctx.fillRect(0, i * pas + pas - 2, TUILE, 2)
+        // Le fil du bois, dans le sens de la planche.
+        for (let k = 0; k < 7; k++) {
+          const w = 170 + Math.floor(r() * 50)
+          t.ctx.fillStyle = `rgb(${w},${w},${w + 6})`
+          t.ctx.fillRect(r() * TUILE, i * pas + 2 + r() * (pas - 6), 14 + r() * 50, 1)
+        }
+      }
+    }),
+  tuileSol: 4,
+
+  /*
+   * La rambarde du pont. Volontairement la plus BASSE et la plus ajourée des
+   * quatre : ici le sujet est le vide autour, et une bordure pleine le
+   * boucherait — on perdrait le seul biome qui fait peur.
+   */
+  fabriqueBarriere: () =>
+    barriereSimple(
+      {
+        pieu: { couleur: [0x4a3a4e, 0x372c3d], r: 0.08, h: 1.1, ecart: 2 },
+        lisses: [
+          { y: 0.5, r: 0.05, couleur: 0x53425a },
+          { y: 1.02, r: 0.065, couleur: 0x5e4b66 },
+        ],
+      },
+      dé(0x0b3)
+    ),
+
+  // Le parapet d'ardoise : deux assises de pierre appareillées.
+  fabriqueMur: () =>
+    murSimple({
+      corps: 0x2b3145,
+      socle: 0x1f2433,
+      couronne: 0x434b68, // la pierre de couronnement du parapet
+      bandes: [
+        { y: 0.85, e: 0.1, couleur: 0x39405a },
+        { y: 1.75, e: 0.1, couleur: 0x39405a },
+        { y: 2.65, e: 0.1, couleur: 0x39405a },
+        { y: 3.55, e: 0.1, couleur: 0x39405a },
+        { y: 4.45, e: 0.1, couleur: 0x39405a },
+        { y: 5.35, e: 0.12, couleur: 0x434b68 },
+      ],
+    }),
   fabriqueDecor: (rng) => {
     const corps: Piece[] = []
     const lueurs: Piece[] = []
@@ -793,6 +1644,69 @@ const FUJI: Biome = {
   ligne: 0x9aa9bd,
   murCorps: 0x5a6478, // une congère tassée, sombre pour trancher sur la neige
   ecartDecor: 13,
+
+  /*
+   * La neige tassée. Volontairement la texture la plus DISCRÈTE des quatre :
+   * c'est le biome clair, celui du sprint final, et de la neige contrastée
+   * ferait vibrer tout l'écran au moment précis où le joueur martèle. On se
+   * contente de creux bleutés — assez pour que ça ne soit pas du papier.
+   */
+  texSol: () =>
+    texturePour('fuji', (t) => {
+      const r = dé(0x9ee1)
+      t.fond('#fdfdff')
+      for (let i = 0; i < 22; i++) {
+        t.tache(r() * TUILE, r() * TUILE, (ctx) =>
+          galet(ctx, 20 + r() * 40, 14 + r() * 30, r() * Math.PI, 'rgb(232,238,250)')
+        )
+      }
+      // Les congères : de longues ondulations dans le sens de la pente.
+      for (let i = 0; i < 10; i++) {
+        t.tache(r() * TUILE, r() * TUILE, (ctx) =>
+          galet(ctx, 6 + r() * 12, 36 + r() * 40, (r() - 0.5) * 0.6, 'rgb(220,229,246)')
+        )
+      }
+      // Quelques cailloux qui percent : la limite des neiges, pas une plaine.
+      for (let i = 0; i < 10; i++) {
+        const v = 150 + Math.floor(r() * 50)
+        t.tache(r() * TUILE, r() * TUILE, (ctx) =>
+          galet(ctx, 2 + r() * 4, 2 + r() * 3, r() * Math.PI, `rgb(${v},${v + 4},${v + 12})`)
+        )
+      }
+    }),
+  tuileSol: 7,
+
+  /*
+   * Le balisage de sentier de montagne : des piquets sombres coiffés de neige,
+   * reliés par une corde claire.
+   *
+   * Les piquets SOMBRES sont indispensables, comme les rochers du décor : sur
+   * un sol blanc, une bordure claire disparaîtrait — et c'est le seul biome où
+   * le bord de piste risque de se confondre avec le sol.
+   */
+  fabriqueBarriere: () =>
+    barriereSimple(
+      {
+        pieu: { couleur: [0x3a2f22, 0x241d15], r: 0.07, h: 1.1, ecart: 1.5 },
+        lisses: [{ y: 0.86, r: 0.045, couleur: 0xd8dfe9 }],
+        pointe: 0xf2f6fb, // la neige accrochée au sommet
+      },
+      dé(0x0b4)
+    ),
+
+  // Une congère tassée, striée d'arêtes de neige durcie.
+  fabriqueMur: () =>
+    murSimple({
+      corps: 0x5a6478,
+      socle: 0x49536a,
+      couronne: 0xf2f6fb, // la crête de neige fraîche, tout en haut
+      bandes: [
+        { y: 1.2, e: 0.12, couleur: 0xdfe7f2 },
+        { y: 2.45, e: 0.14, couleur: 0xe8eef6 },
+        { y: 3.7, e: 0.12, couleur: 0xdfe7f2 },
+        { y: 4.95, e: 0.14, couleur: 0xe8eef6 },
+      ],
+    }),
   fabriqueDecor: (rng) => {
     const corps: Piece[] = []
 
@@ -864,6 +1778,20 @@ export interface Ambiance {
   ligne: THREE.Color
   /** Le biome dominant — celui dont on affiche le nom, et dont on tire le décor. */
   index: number
+
+  /**
+   * Le fondu à l'état BRUT : de quel biome on part, vers lequel on va, et où
+   * l'on en est (0 → 1).
+   *
+   * Les couleurs ci-dessus sont déjà mélangées, mais une TEXTURE ne se mélange
+   * pas : on ne peut pas interpoler de la litière de bambou vers des cendres.
+   * La piste s'en sert pour superposer deux sols et faire monter l'opacité du
+   * second — un vrai fondu enchaîné, là où un simple échange de texture
+   * claquerait sous les pieds du joueur.
+   */
+  iA: number
+  iB: number
+  melange: number
 }
 
 // Réutilisés d'une image à l'autre : allouer quatre THREE.Color par frame
@@ -917,5 +1845,8 @@ export function ambianceA(distance: number, length: number): Ambiance {
     // après, du B. Comme le décor apparaît 85 m devant, la bascule se voit
     // arriver au loin pendant que les couleurs, elles, glissent déjà.
     index: melange > 0.5 ? suivant : i,
+    iA: i,
+    iB: suivant,
+    melange,
   }
 }

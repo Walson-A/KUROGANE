@@ -11,7 +11,8 @@
     "anims:test": "node --import ./tools/resolveur-ts.mjs tools/verifier-anims.ts",
     "nav:test": "node --import ./tools/resolveur-ts.mjs tools/verifier-navigation.ts",
     "torii:test": "node --import ./tools/resolveur-ts.mjs tools/verifier-torii.ts",
-    "plateformes:test": "node --import ./tools/resolveur-ts.mjs tools/verifier-plateformes.ts"
+    "plateformes:test": "node --import ./tools/resolveur-ts.mjs tools/verifier-plateformes.ts",
+    "mur:test": "node --import ./tools/resolveur-ts.mjs tools/verifier-retour-mur.ts"
   },
   "devDependencies": {
     "@types/three": "^0.185.1",

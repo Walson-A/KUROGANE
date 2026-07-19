@@ -21,6 +21,7 @@ import * as THREE from 'three'
 import {
   TAILLE_OBSTACLE,
   PLATEFORME_H,
+  PLATEFORME_LARG,
   makeObstacleMesh,
   makeJarreMesh,
   makeRouleauMesh,
@@ -191,11 +192,12 @@ const RAYONS: Rayon[] = [
           titre: 'pan de mur',
           detail: 'on s\'y accroche — liseré vermillon',
           faire: () => {
-            const m = makeMurMesh()
+            // `makeMurMesh` prend le biome : sa matière en dépend. On le lui
+            // passe plutôt que de repeindre après coup.
+            const m = makeMurMesh(b)
             // Le mur est bâti sur 1 m et étiré au spawn : sans ça, on jugerait
             // une tranche de 1 m alors qu'ils font 18 à 30 m en piste.
             m.scale.z = 14
-            ;(m.material as THREE.MeshStandardMaterial).color.setHex(biome.murCorps)
             return m
           },
         },
@@ -203,8 +205,12 @@ const RAYONS: Rayon[] = [
           titre: 'plateforme',
           detail: `${PLATEFORME_H} m — trop haut pour un saut`,
           faire: () => {
+            // La largeur n'est passée qu'à la fabrique du BIOME : biomes.ts ne
+            // peut pas importer de valeur depuis track.ts sans créer un cycle.
+            // Le repli, lui, vit dans track.ts et lit PLATEFORME_LARG tout seul.
             const p =
-              biome.fabriquePlateforme?.(PLATEFORME_H) ?? makePlateformeMesh(PLATEFORME_H)
+              biome.fabriquePlateforme?.(PLATEFORME_H, PLATEFORME_LARG) ??
+              makePlateformeMesh(PLATEFORME_H)
             p.scale.z = 12
             return p
           },

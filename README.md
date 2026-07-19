@@ -928,6 +928,29 @@ survole de peu. Sans elle, il faudrait heurter la jarre du corps et la fenêtre
 de frappe tomberait à deux mètres : injouable au doigt. Elle ne rouvre pas la
 porte à la montée, puisque le rebond repart toujours du sommet de la jarre.
 
+### ⚠️ Le rebond appartient à la JARRE, pas aux jambes
+
+`rebondSur()` utilise `JUMP_SPEED` **brut**, jamais multiplié par le passif de
+saut du guerrier. C'est contre-intuitif, et c'est vital.
+
+L'espacement des jarres est calculé par la **graine** : il est donc identique
+pour tout le monde — c'est la règle du multi, les deux joueurs voient la même
+piste. Tant que le rebond suivait `fighter.jump` (0,88 à 1,18 selon le
+guerrier), la chaîne n'était calibrée que pour Yasuke :
+
+| Guerrier | Saut | Jarres enchaînées |
+|---|---|---|
+| Yasuke | ×1,00 | **10/10** |
+| Hana | ×1,18 | **0/10** — elle passait 1,66 m au-dessus |
+| Oni-Maru | ×0,88 | **0/10** |
+| Tamae | ×0,90 | **0/10** |
+
+**Trois joueurs sur quatre ne pouvaient enchaîner aucune jarre** — toute la
+mécanique de combat leur était fermée, sans le moindre signe à l'écran. Une
+jarre est un **tremplin**, et un tremplin renvoie tout le monde à la même
+hauteur. Le passif de saut garde tout son sens là où il est né : les sauts
+ordinaires et les murs.
+
 ## 🧱 Les murs qu'on longe
 
 Des pans de mur bordent la piste par tronçons (un tous les 160 à 280 m, longs
@@ -1469,21 +1492,88 @@ Trois réglages portent tout le sens :
 - **Les frontières sont des fractions, pas des mètres.** Si la longueur de course
   change, le découpage suit tout seul.
 
-Les couleurs se fondent sur les ~5 % précédant chaque frontière (≈ 4 s) : jamais
-de « claquement » de décor. Le **décor**, lui, bascule à mi-fondu et se plante
-d'après le point où il APPARAÎT (85 m devant), pas d'après nos pieds — sans quoi
-un bambou semé pendant qu'on entre dans le village nous arriverait dessus en
-pleine fournaise.
+Les **couleurs** se fondent sur les ~5 % précédant chaque frontière (≈ 4 s) :
+jamais de « claquement ». Le **décor**, lui, suit la frontière STRICTE
+(`indexBiome`) et se plante d'après le point où il APPARAÎT — 85 m devant, pas
+sous nos pieds. Sans cette avance, un bambou semé pendant qu'on entre dans le
+village nous arriverait dessus en pleine fournaise.
 
-⚠️ **La piste possède la brume, pas `main.ts`.** La couleur de la brume EST le
-ciel (on ne voit jamais l'horizon), et seule la piste sait où l'on se trouve sur
-la course. Le fond de scène la suit à l'identique : sinon une ligne d'horizon
-nette barrerait l'écran là où la brume s'achève.
+> ⚠️ Le décor a longtemps utilisé `ambianceA().index`, qui bascule au MILIEU du
+> fondu de couleur. Il quittait donc la forêt **133 m avant la vraie frontière**,
+> alors que le sol était encore vert à 100 % : ~85 m sans un seul bambou avant
+> que quoi que ce soit ne l'annonce.
 
-Hors course, `distance` vaut `-1` : le menu est explicitement la forêt de
-bambous — la ligne de départ. Sans ça, la brume gardait la couleur du dernier
-endroit traversé, et finir sur le Fuji laissait un menu tout blanc.
+### Ce qui fait qu'une forêt ressemble à une forêt 🌲
 
-🚧 **À venir, biome par biome** : les toits du village (chemin aérien =
-raccourci risqué) et les culs-de-sac à escalader (**1,0 s** perdue, le double
-d'un trébuchement).
+Quatre passes à *ajouter du bambou* n'ont rien donné. À chaque fois, la mesure a
+montré que le problème était ailleurs — et c'est la leçon la plus utile de tout
+ce chantier : **mesurer avant d'ajouter**.
+
+| Symptôme | Cause réelle | Correctif |
+|---|---|---|
+| « Ça fait des trous » | Les tiges du fond étaient **25× plus clairsemées** (75 tiges sur 20 m de large contre 50 sur 5,5) | Raisonner en **tiges par m²**, pas en nombre |
+| « La bande près de la piste est vide » | Le détail était lié à la position : une tige ornée coûte **12×** une tige nue, donc impossible d'en mettre près | Un **étage intermédiaire** de fûts nus |
+| « Un parc à poteaux » | Densité de fûts déjà à 3/m² : ce qui manquait, c'étaient les **feuilles** et une **canopée** | Feuillage partout + voûte qui déborde au-dessus de la piste |
+| « Ni sol ni ciel » | Le sol faisait **14 m de large** : tout le décor au-delà flottait au-dessus du vide | Un **sol de forêt** de 260 m |
+| « Dense ici, vide là » | `ry: rng() * π` : une feuille vue **par la tranche disparaît** | Brider `ry`, faire tourner la lame dans son plan (`rz`) |
+
+Deux règles en sont sorties, valables pour tout décor :
+
+- **Rien ne doit être plus sombre que le fond.** La couleur de brume EST
+  l'arrière-plan : une surface plus sombre qu'elle se lit comme un TROU, pas
+  comme du sol. Hiérarchie actuelle, du clair au sombre :
+  `ciel 0,0338 > sol de forêt 0,0279 > piste 0,0259 > brume 0,0233`.
+- **La densité au mètre ne dépend que du rapport tiges / écartement.** Charger
+  un massif ne coûte RIEN (tout est soudé) ; en rapprocher coûte un appel de
+  dessin. On espace donc, et on remplit.
+
+⚠️ **Le fond de scène vaut la brume ÉCLAIRCIE (×1,45)**, pas la brume. À
+l'identique, tout ce qui dépassait sa portée s'y confondait : plus de ligne
+d'horizon, plus de différence entre le ciel et la forêt lointaine.
+
+⚠️ **La piste possède la brume, le fond et les sols**, pas `main.ts` — seule
+elle sait où l'on se trouve sur la course. Hors course, `distance` vaut `-1` :
+le menu est explicitement la forêt de bambous. Sans ça, la brume gardait la
+couleur du dernier endroit traversé, et finir sur le Fuji laissait un menu tout
+blanc.
+
+## 🚃 Les plateformes : sauter pour ALLER quelque part
+
+Jusqu'ici sauter ne servait qu'à **éviter**. Les plateformes — les « wagons » —
+en font un moyen de se déplacer : en hauteur on est à l'abri de tout ce qui
+traîne au sol.
+
+**La hauteur fait la règle.** À `PLATEFORME_H = 2,70 m` (et 2,40 m pour un mur),
+l'apex du saut n'est que de **2,07 m** : on ne peut PAS sauter dessus. Jamais.
+Il ne reste que deux entrées, sans aucune zone grise :
+
+| Entrée | Coût | Fréquence |
+|---|---|---|
+| **La rampe** | gratuit, on y monte en courant | une fois sur deux |
+| **L'escalade** | **1,0 s** — la plus lourde erreur du jeu | sinon |
+
+On passe **toujours** : l'escalade n'est jamais un cul-de-sac, et l'on se
+retrouve en haut, sur la route rapide. Rester bloqué contre un mur en pleine
+course serait insupportable. Le coût est calibré par simulation en rejouant la
+boucle de vitesse de `main.ts` (méthode validée au passage : le trébuchement
+existant y mesure 0,554 s contre 0,53 s documenté).
+
+Un **convoi** est fait de 1 à 3 wagons à la même hauteur, séparés de trous de
+6 à 11 m qu'on franchit d'un saut — le chemin en l'air. Vu de côté, un wagon est
+une **paroi** : on peut s'y accrocher et la longer, ce qui donne une troisième
+réponse, la seule qui demande du geste. On n'escalade que **de face**.
+
+⚠️ **Les plateformes sont générées AVANT les obstacles.** L'ordre inverse
+plafonnait la densité à 7 par course quoi qu'on demande : les obstacles tombent
+tous les 10 à 17 m et ne laissaient jamais 50 m de ligne libre. On en a
+maintenant **26 par course**, un convoi toutes les ~4 s.
+
+> **L'invariant, testé à chaque mètre de 200 courses** : il reste TOUJOURS au
+> moins une ligne libre de tout — ni plateforme, ni obstacle. Sans lui, une
+> rangée pourrait n'offrir qu'un plateau sans rampe pour seul passage, et donc
+> imposer une seconde de pénalité sans aucune alternative.
+
+⚠️ **Le visuel et la collision sont séparés** (`TAILLE_OBSTACLE`). Chaque biome
+habille ses obstacles à sa façon ; la boîte, elle, ne dépend jamais du maillage.
+Vérifié en sondant la boîte réelle en pleine course : forêt et pont bloquent aux
+mêmes hauteurs au centimètre près, dans les quatre biomes.

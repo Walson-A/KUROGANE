@@ -1,7 +1,8 @@
 import * as THREE from 'three'
-import { LANES, MUR_X, JUMP_SPEED } from './player'
+import { LANES, MUR_X, ECART_LIGNE, JUMP_SPEED } from './player'
 import { tirerParchemin, TIRAGE, type ParcheminKind } from './parchemin'
-import { BIOMES, ambianceA, indexBiome } from './biomes'
+import { BIOMES, ambianceA, indexBiome, LONG_BARRIERE, MUR_HAUT } from './biomes'
+import type { Ambiance } from './biomes'
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
 
 /**
@@ -29,10 +30,31 @@ export type Kind = 'saut' | 'glissade' | 'mur'
  * `y` est la hauteur du CENTRE de la boîte au-dessus du sol.
  */
 export const TAILLE_OBSTACLE: Record<Kind, { larg: number; haut: number; prof: number; y: number }> = {
-  saut: { larg: 1.7, haut: 0.6, prof: 0.5, y: 0.3 }, // barrière basse → sauter
-  glissade: { larg: 1.7, haut: 0.5, prof: 0.5, y: 1.55 }, // barre haute → glisser dessous
-  mur: { larg: 1.7, haut: 2.4, prof: 0.5, y: 1.2 }, // bloc complet → changer de ligne
+  saut: { larg: 2.15, haut: 0.6, prof: 0.5, y: 0.3 }, // barrière basse → sauter
+  glissade: { larg: 2.15, haut: 0.5, prof: 0.5, y: 1.55 }, // barre haute → glisser dessous
+  mur: { larg: 2.15, haut: 2.4, prof: 0.5, y: 1.2 }, // bloc complet → changer de ligne
 }
+/*
+ * ⚠️ `larg` a suivi l'élargissement des lignes (1,70 → 2,15 m quand l'écart est
+ * passé de 2,20 à 2,80 m). Ce qui compte n'est pas la largeur absolue mais la
+ * PART DU PAS qu'un obstacle couvre : 77 % avant, 77 % après. Laisser 1,70 m
+ * aurait ramené cette part à 61 % et rendu toutes les esquives sensiblement
+ * plus faciles — un changement d'équilibrage déguisé en changement de décor.
+ *
+ * ⚠️ `haut` du `mur`, lui, ne bouge SURTOUT pas : 2,40 m est la valeur sur
+ * laquelle `JUMP_SPEED` est calibrée (Yasuke plafonne à 2,07 m et reste bloqué,
+ * Hana monte à 2,89 m et passe). Y toucher redistribuerait le roster.
+ */
+
+/**
+ * La largeur du ruban de sol.
+ *
+ * Élargie de 14 à 16 m en même temps que les lignes : le décor de bordure est
+ * planté à 5,6 m du centre avec jusqu'à 1,4 m de dispersion, donc il touche
+ * 7,0 m. À 14 m de large (soit ±7), les touffes les plus écartées se seraient
+ * retrouvées pile au bord, une racine dans le vide.
+ */
+const LARGEUR_SOL = 16
 
 const LOOKAHEAD = 85 // les obstacles apparaissent 85 m devant (cachés par la brume)
 /** L'écart entre deux pointillés — et donc la période de leur défilement. */
@@ -179,7 +201,9 @@ export interface PlannedMur {
 }
 
 interface Mur {
-  mesh: THREE.Mesh
+  mesh: THREE.Object3D
+  /** Recyclé par biome : un mur de bambou ne se réincarne pas en congère. */
+  biome: number
   active: boolean
 }
 
@@ -221,23 +245,33 @@ interface Plateforme {
 }
 
 /** Largeur d'une plateforme : une ligne, exactement comme un obstacle. */
-export const PLATEFORME_LARG = 1.7
+export const PLATEFORME_LARG = 2.15
 /**
- * La hauteur d'une plateforme : celle d'un MUR, 2,40 m.
+ * La hauteur d'une plateforme : **2,70 m**.
  *
  * Ce n'est pas un chiffre décoratif, c'est la règle du jeu tout entière. À
  * JUMP_SPEED = 13,2 et g = 42, l'apex du saut vaut 13,2² / 84 = **2,07 m**.
- * Donc on ne peut PAS sauter sur une plateforme. Jamais.
+ * Yasuke ne peut donc PAS sauter sur une plateforme.
  *
- * Il n'existe que deux façons de monter :
+ * Il ne lui reste que deux façons de monter :
  *  · la RAMPE, quand il y en a une — on court dessus, c'est gratuit ;
  *  · l'ESCALADE, sinon — on lui rentre dedans et on passe par-dessus, en
  *    payant une seconde pleine.
  *
- * Aucun cas limite, aucune zone grise : la hauteur seule interdit le saut, donc
- * le joueur n'a jamais à deviner s'il « aurait pu passer ».
+ * ⚠️ **2,70 m est un PLAFOND, pas un chiffre libre.** Hana (saut ×1,18) culmine
+ * à 2,89 m, pieds à 2,94 m : elle est la seule du roster à pouvoir se poser
+ * directement sur une plateforme, et c'est précisément ce qui donne une raison
+ * de la choisir. Il ne reste que 24 cm de marge. Monter à 3 m ne rendrait pas
+ * les plateformes « plus hautes » — ça effacerait le passif de Hana.
+ *
+ * ⚠️ Et ce n'est plus `TAILLE_OBSTACLE.mur.haut`, dont elle était recopiée.
+ * Les deux valeurs répondaient à deux questions différentes qui se trouvaient
+ * avoir la même réponse : l'obstacle `mur` est calé sur le saut de Yasuke (il
+ * doit être infranchissable), la plateforme sur celui de Hana (elle doit être
+ * atteignable par elle seule). Les garder liées aurait fait bouger la
+ * calibration du saut en voulant simplement surélever les wagons.
  */
-export const PLATEFORME_H = TAILLE_OBSTACLE.mur.haut
+export const PLATEFORME_H = 2.7
 
 /**
  * Un élément de bordure (touffe de bambous, masure en flammes, rocher…).
@@ -248,6 +282,19 @@ export const PLATEFORME_H = TAILLE_OBSTACLE.mur.haut
  * touffe de bambous ne peut pas se réincarner en rocher enneigé.
  */
 interface Decor {
+  mesh: THREE.Group
+  biome: number
+  active: boolean
+}
+
+/**
+ * Un tronçon de barrière. Recyclé par biome, comme le décor.
+ *
+ * Pas besoin de retenir son côté : contrairement au décor, la barrière est
+ * bâtie autour de x = 0 et donc symétrique — la même pièce va à gauche comme
+ * à droite sans retournement.
+ */
+interface Barriere {
   mesh: THREE.Group
   biome: number
   active: boolean
@@ -305,6 +352,9 @@ export class Track {
 
   // ————— Les biomes —————
   private decors: Decor[] = []
+  private barrieres: Barriere[] = []
+  /** Où poser le prochain tronçon de barrière. 0 = pas encore commencé. */
+  private prochaineBarriere = 0
   /** La prochaine distance où planter du décor (indépendante par côté). */
   private prochainDecor = 0
   /**
@@ -317,6 +367,17 @@ export class Track {
   private graineDecor: () => number = () => 0.5
   /** Les matériaux qu'on repeint au fil des biomes. */
   private matSol: THREE.MeshStandardMaterial
+  /** Le sol du biome vers lequel on va, qu'on fait apparaître par-dessus. */
+  private matSolHaut: THREE.MeshStandardMaterial
+  /**
+   * Le sol de FORÊT : le monde au-delà de la piste, 260 m de large.
+   * Sans lui, tout le décor planté au-delà de 7 m flottait au-dessus du vide.
+   */
+  private matSolForet: THREE.MeshStandardMaterial
+  /** Les copies de texture du sol de forêt, une par biome (cf. texForet). */
+  private texturesForet = new Map<number, THREE.Texture | null>()
+  /** Le défilement de la matière du sol, en tuiles. Gardé dans [0, 1[. */
+  private defileSol = 0
   private matLigne: THREE.MeshBasicMaterial
   private brume: THREE.Fog
   private fond: THREE.Color
@@ -346,15 +407,83 @@ export class Track {
     this.fond = new THREE.Color(BIOMES[0].brume)
     scene.background = this.fond
 
-    // Le sol
+    /*
+     * ————— Le sol : DEUX plans superposés —————
+     *
+     * Un seul aurait suffi pour la couleur, qui se mélange toute seule. Mais
+     * chaque biome a désormais une MATIÈRE (`texSol`), et une matière ne se
+     * mélange pas : on ne passe pas de la litière de bambou aux cendres par
+     * interpolation. Échanger la texture d'un coup, sur la surface qui occupe
+     * la moitié de l'écran et défile sous les pieds, se verrait claquer.
+     *
+     * D'où la superposition : le plan du DESSOUS porte le biome qu'on quitte,
+     * celui du DESSUS le biome où l'on va, et son opacité monte de 0 à 1 le
+     * long du fondu. Deux appels de dessin pour un vrai fondu enchaîné — et
+     * hors transition, le plan du dessus est simplement éteint.
+     */
     this.matSol = new THREE.MeshStandardMaterial({ color: BIOMES[0].sol, roughness: 1 })
-    const ground = new THREE.Mesh(new THREE.PlaneGeometry(14, 240), this.matSol)
-    ground.rotation.x = -Math.PI / 2
-    ground.position.z = -90
-    scene.add(ground)
+    this.matSolHaut = new THREE.MeshStandardMaterial({
+      color: BIOMES[0].sol,
+      roughness: 1,
+      transparent: true,
+      opacity: 0,
+      // Il est collé au plan du dessous : sans ça, les deux se disputent le
+      // tampon de profondeur et le sol se met à grésiller sur toute sa surface.
+      depthWrite: false,
+      polygonOffset: true,
+      polygonOffsetFactor: -1,
+      polygonOffsetUnits: -1,
+    })
+    const geoSol = new THREE.PlaneGeometry(LARGEUR_SOL, 240)
+    for (const m of [this.matSol, this.matSolHaut]) {
+      const g = new THREE.Mesh(geoSol, m)
+      g.rotation.x = -Math.PI / 2
+      g.position.z = -90
+      g.renderOrder = m === this.matSol ? 0 : 1
+      scene.add(g)
+    }
+    this.matSolHaut.visible = false
 
     /*
-     * Les pointillés entre les lignes → la sensation de vitesse.
+     * ————— LE SOL DE FORÊT : le monde au-delà de la piste —————
+     *
+     * ⚠️ Le sol de la piste ne fait que 14 m de large — sept mètres de part et
+     * d'autre du centre. Or le décor est planté jusqu'à 28 m. Tout ce qui
+     * dépassait flottait donc AU-DESSUS DU VIDE, et entre deux tiges on ne
+     * voyait pas de la forêt mais le néant : ni sol, ni horizon.
+     *
+     * C'était ça, le fond de l'affaire. Trois passes à ajouter des bambous n'y
+     * pouvaient rien — le problème n'était pas ce qu'on plantait, c'était qu'il
+     * n'y avait pas de terre sous les pieds. Un massif dense au-dessus du vide
+     * reste un massif au-dessus du vide.
+     *
+     * D'où ce second plan, 260 m de large : il porte toute la forêt et va se
+     * perdre dans la brume, ce qui crée enfin une ligne d'horizon. Il est posé
+     * 3 cm plus bas pour ne jamais se disputer la profondeur avec la piste, et
+     * garde son propre matériau — la piste, elle, appartient au chantier des
+     * textures et reste intacte.
+     *
+     * Coût : UN appel de dessin pour tout le monde au-delà de la piste.
+     */
+    this.matSolForet = new THREE.MeshStandardMaterial({ color: BIOMES[0].sol, roughness: 1 })
+    const foret = new THREE.Mesh(new THREE.PlaneGeometry(260, 300), this.matSolForet)
+    foret.rotation.x = -Math.PI / 2
+    foret.position.set(0, -0.03, -110)
+    foret.renderOrder = -1 // toujours dessiné avant la piste
+    scene.add(foret)
+
+    /*
+     * Les quatre matières sont peintes MAINTENANT, au chargement.
+     *
+     * Les créer à la demande semblait plus économe, mais ça revenait à peindre
+     * un canvas et à téléverser une texture au moment exact où le joueur entre
+     * dans un nouveau biome — un à-coup, en pleine course, à chaque frontière.
+     * Quatre tuiles de 256², c'est ~1 Mo : on paie d'avance, une fois.
+     */
+    for (const b of BIOMES) b.texSol?.()
+
+    /*
+     * Les repères entre les lignes → la sensation de vitesse.
      *
      * Ils étaient 60 maillages indépendants qui défilaient chacun leur tour :
      * à eux seuls, plus du tiers du budget d'appels de dessin d'un téléphone.
@@ -362,15 +491,51 @@ export class Track {
      *
      * Le motif se répète tous les 6 m : ramener la position dans [0, 6[ suffit
      * donc à donner un ruban infini, sans que rien ne saute à l'œil.
+     *
+     * ⚠️ Ce sont des DALLES, plus des traits — et le changement n'est pas
+     * cosmétique. Deux bandes fines, longues, parfaitement alignées et
+     * régulièrement espacées, c'est le dessin exact d'un marquage routier :
+     * quel que soit le décor planté autour, l'œil lisait « route ». Des pierres
+     * de gué larges, courtes, décalées et de travers disent « chemin » tout en
+     * gardant EXACTEMENT la même fonction — borner les lignes et donner le
+     * défilement.
+     *
+     * Leur irrégularité vient de la couleur par sommet : la variété ne coûte
+     * donc rien, tout reste soudé en un seul maillage.
      */
-    this.matLigne = new THREE.MeshBasicMaterial({ color: BIOMES[0].ligne })
+    this.matLigne = new THREE.MeshBasicMaterial({ color: BIOMES[0].ligne, vertexColors: true })
     const traits: THREE.BufferGeometry[] = []
+    // Un tirage FIXE : les dalles doivent être posées pareil pour les 2 joueurs
+    // (et d'une partie à l'autre — un chemin ne se redessine pas).
+    let graine = 0x1f2e3d
+    const r = () => {
+      graine = (graine * 1664525 + 1013904223) >>> 0
+      return graine / 4294967296
+    }
     for (let i = 0; i < 30; i++) {
-      for (const x of [-1.1, 1.1]) {
-        const t = new THREE.PlaneGeometry(0.12, 1.6)
-        t.rotateX(-Math.PI / 2)
-        t.translate(x, 0.01, -i * PAS_POINTILLE)
-        traits.push(t)
+      // Deux dalles par période plutôt qu'une : le pas est plus court, donc le
+      // défilement plus lisible, sans que la ligne redevienne continue.
+      for (const dz of [0, PAS_POINTILLE / 2]) {
+        // À MI-CHEMIN entre deux lignes : les dalles bornent les couloirs, donc
+        // elles suivent l'écartement. Restées à ±1,1 m, elles auraient marqué
+        // des couloirs plus étroits que ceux où l'on court vraiment.
+        for (const x of [-ECART_LIGNE / 2, ECART_LIGNE / 2]) {
+          const t = new THREE.PlaneGeometry(0.34 + r() * 0.2, 0.42 + r() * 0.26)
+          t.rotateX(-Math.PI / 2)
+          t.rotateY((r() - 0.5) * 0.7) // de travers : posée à la main
+          t.translate(
+            x + (r() - 0.5) * 0.14, // et jamais tout à fait alignée
+            0.012,
+            -i * PAS_POINTILLE - dz + (r() - 0.5) * 0.5
+          )
+          // La teinte de chaque dalle : de la pierre usée, pas de la peinture.
+          const v = 0.66 + r() * 0.42
+          const n = t.getAttribute('position').count
+          const couleurs = new Float32Array(n * 3)
+          for (let k = 0; k < n * 3; k++) couleurs[k] = v
+          t.setAttribute('color', new THREE.BufferAttribute(couleurs, 3))
+          traits.push(t)
+        }
       }
     }
     this.pointilles = new THREE.Mesh(mergeGeometries(traits, false)!, this.matLigne)
@@ -456,6 +621,15 @@ export class Track {
     }
     this.graineDecor = mulberry32(seed ^ 0x1c4e9f23)
     this.prochainDecor = 0
+
+    // Les barrières se resèment aussi : leur découpe dépend de `murPlan`, qui
+    // vient d'être retiré au sort. Les garder en l'état laisserait des tronçons
+    // en travers des murs de la NOUVELLE course.
+    for (const b of this.barrieres) {
+      b.active = false
+      b.mesh.visible = false
+    }
+    this.prochaineBarriere = 0
   }
 
   /**
@@ -506,12 +680,20 @@ export class Track {
    * et « payer l'escalade » — et la seule qui demande du geste.
    *
    * Renvoie l'abscisse exacte du flanc, pour que le corps s'y colle vraiment.
+   *
+   * `pieds` est la hauteur du joueur. Au-dessus du plateau il n'y a plus de
+   * flanc du tout : c'est un SOL, on marche dessus. Le paramètre sert donc à
+   * deux choses d'un coup — ne pas s'accrocher à une paroi qu'on survole, et
+   * savoir que le flanc BLOQUE quand on est dessous (cf. les swipes dans
+   * main.ts : on ne se glisse pas de côté dans une masse pleine).
    */
-  flancA(lane: number, cote: number): number | null {
+  flancA(lane: number, cote: number, pieds = 0): number | null {
     const cible = lane + cote
     if (cible < 0 || cible > 2) return null
     for (const p of this.plateformes) {
       if (!p.active || p.plan.lane !== cible) continue
+      // Même tolérance que `supportSous` : au-dessus, le plateau porte.
+      if (pieds >= p.plan.hauteur - 0.3) continue
       const zAvant = p.mesh.userData.zAvant as number
       // Il faut être le long du plateau, pas devant son nez : arriver sur le
       // bord avant, c'est une rencontre de face, donc une escalade.
@@ -567,6 +749,11 @@ export class Track {
       } else if (!this.ajouree(p.plan.d)) {
         // Les pieds sous le plateau : on lui rentre dedans. À 2,40 m, c'est
         // forcément le cas quand il n'y a pas de rampe — d'où l'escalade.
+        //
+        // ⚠️ Volontairement vrai sur TOUTE la longueur, et pas seulement devant
+        // le nez : on peut très bien changer de ligne au sol à mi-plateau, et il
+        // faut alors escalader comme partout ailleurs. Restreindre au nez ferait
+        // TRAVERSER le plateau dans ce cas.
         heurte = true
       }
       /*
@@ -645,6 +832,113 @@ export class Track {
    * Fait défiler le décor. `distance` = mètres parcourus par le joueur
    * (omise au menu : décor seul, pas d'obstacles ni d'arrivée).
    */
+  /**
+   * Repeint et fait défiler le sol.
+   *
+   * Deux choses s'y jouent :
+   *
+   *  · le FONDU — plan du dessous = biome qu'on quitte, plan du dessus = biome
+   *    où l'on va, opacité = avancement. Hors transition, le dessus est éteint
+   *    et l'on ne paie qu'un seul plan ;
+   *  · le DÉFILEMENT — la matière glisse vers le joueur au rythme exact de sa
+   *    course. C'est ce qui empêche le sol d'avoir l'air d'un tapis peint sur
+   *    lequel les dalles glisseraient toutes seules : sans lui, les seuls
+   *    éléments qui bougeaient étaient les dalles, et l'œil le voyait.
+   */
+  private appliqueSol(amb: Ambiance, dz: number) {
+    const A = BIOMES[amb.iA]
+    const B = BIOMES[amb.iB]
+
+    // En mètres, et borné : au bout de 1 920 m un flottant simple commence à
+    // perdre des décimales, et le défilement se met à saccader.
+    this.defileSol = (this.defileSol + dz) % 4096
+
+    const pose = (mat: THREE.MeshStandardMaterial, b: typeof A) => {
+      mat.color.setHex(b.sol)
+      const tex = b.texSol?.() ?? null
+      if (mat.map !== tex) {
+        mat.map = tex
+        // Passer de « pas de texture » à « texture » change le shader : sans
+        // ça, le changement ne se voit qu'au prochain recalcul du matériau.
+        mat.needsUpdate = true
+      }
+      if (tex) {
+        const tuile = b.tuileSol ?? 4
+        tex.repeat.set(LARGEUR_SOL / tuile, 240 / tuile)
+        // `repeat` étant déjà appliqué, un mètre de course vaut 1/tuile
+        // d'unité de décalage — indépendamment de la longueur du plan.
+        tex.offset.y = (this.defileSol / tuile) % 1
+      }
+    }
+
+    pose(this.matSol, A)
+
+    // Le plan du dessus ne sert QUE pendant le fondu.
+    const enFondu = amb.melange > 0.002 && amb.iA !== amb.iB
+    this.matSolHaut.visible = enFondu
+    if (enFondu) {
+      pose(this.matSolHaut, B)
+      this.matSolHaut.opacity = amb.melange
+    }
+
+    /*
+     * ————— Le sol de forêt : plus CLAIR que la brume, et texturé —————
+     *
+     * ⚠️ Deux erreurs corrigées ici, et la première était grossière.
+     *
+     * 1. IL ÉTAIT PLUS SOMBRE QUE LE FOND. Je l'avais assombri (×0,62) en me
+     *    disant qu'un sous-bois est à l'ombre — en oubliant que la couleur de
+     *    la brume EST l'arrière-plan. Mesuré : luminance 0,0160 contre 0,0233
+     *    pour la brume. Tout ce qui est plus sombre que le fond ne se lit pas
+     *    comme une surface mais comme un TROU. On avait donc bien ajouté un
+     *    sol, et il ressemblait toujours à du vide.
+     *
+     *    Il est maintenant légèrement plus clair (×1,08) : une surface qui
+     *    accroche le clair de lune et s'enfonce dans la brume.
+     *
+     * 2. UN APLAT NE PEUT PAS SE LIRE COMME UN SOL. Sans le moindre détail,
+     *    l'œil n'a aucun repère de distance ni d'échelle. Il reprend donc la
+     *    matière du biome — la même que la piste, mais sur sa propre copie de
+     *    texture : `repeat` et `offset` sont portés par l'objet Texture, et
+     *    partager celui de la piste ferait que chacun écraserait le réglage de
+     *    l'autre à chaque image.
+     *
+     * La piste, elle, reste lisible par sa texture propre et ses pointillés —
+     * pas par un contraste d'obscurité.
+     */
+    const F = amb.melange > 0.5 ? B : A
+    this.matSolForet.color.copy(amb.sol).multiplyScalar(1.08)
+    const texF = this.texForet(amb.melange > 0.5 ? amb.iB : amb.iA, F)
+    if (this.matSolForet.map !== texF) {
+      this.matSolForet.map = texF
+      this.matSolForet.needsUpdate = true
+    }
+    if (texF) {
+      const tuile = (F.tuileSol ?? 4) * 3 // plus grosses mailles : on la voit de loin
+      texF.repeat.set(260 / tuile, 300 / tuile)
+      texF.offset.y = (this.defileSol / tuile) % 1
+    }
+  }
+
+  /**
+   * La copie de texture réservée au sol de forêt, une par biome.
+   *
+   * ⚠️ On CLONE plutôt que de réutiliser celle de la piste : `repeat` et
+   * `offset` vivent sur l'objet Texture, pas sur le matériau. Deux surfaces de
+   * tailles différentes qui partagent une texture se battraient pour ces deux
+   * valeurs à chaque image. Le clone partage l'image (donc rien de plus en
+   * mémoire vidéo) mais garde ses propres réglages.
+   */
+  private texForet(i: number, b: (typeof BIOMES)[number]): THREE.Texture | null {
+    const dejaLa = this.texturesForet.get(i)
+    if (dejaLa !== undefined) return dejaLa
+    const source = b.texSol?.() ?? null
+    const copie = source ? source.clone() : null
+    if (copie) copie.needsUpdate = true
+    this.texturesForet.set(i, copie)
+    return copie
+  }
+
   update(dt: number, speed: number, distance = -1) {
     const dz = speed * dt // tout le décor avance de dz vers le joueur
 
@@ -745,6 +1039,17 @@ export class Track {
       }
     }
 
+    // Les barrières, elles, sont basses : passées derrière la caméra, plus
+    // personne ne les voit. On les récupère aussitôt.
+    for (const b of this.barrieres) {
+      if (!b.active) continue
+      b.mesh.position.z += dz
+      if (b.mesh.position.z > DESPAWN_Z + LONG_BARRIERE) {
+        b.active = false
+        b.mesh.visible = false
+      }
+    }
+
     /*
      * ————— Le biome —————
      *
@@ -774,6 +1079,11 @@ export class Track {
         dec.active = false
         dec.mesh.visible = false
       }
+      this.prochaineBarriere = 0
+      for (const b of this.barrieres) {
+        b.active = false
+        b.mesh.visible = false
+      }
     }
 
     // On repeint d'après la distance PARCOURUE, jamais par accumulation : si une
@@ -783,21 +1093,57 @@ export class Track {
     this.brume.color.copy(amb.brume)
     this.brume.near = amb.brumeNear
     this.brume.far = amb.brumeFar
-    this.fond.copy(amb.brume)
-    this.matSol.color.copy(amb.sol)
+    /*
+     * ————— Le fond de scène : ce qu'on prend pour le CIEL —————
+     *
+     * ⚠️ Il vaut la couleur de brume ÉCLAIRCIE, pas la couleur de brume.
+     *
+     * À l'identique, tout ce qui dépasse la portée de la brume se confondait
+     * exactement avec le fond : plus aucune ligne d'horizon, plus aucune
+     * différence entre « le ciel » et « la forêt au loin ». L'écran se
+     * terminait en un aplat unique, et l'on avait beau planter des bambous et
+     * poser un sol, il n'y avait toujours ni haut ni bas.
+     *
+     * × 1,45 suffit : la brume garde son rôle (fondre les lointains) mais le
+     * ciel reste plus lumineux qu'elle. La cime des bambous s'y détache, et
+     * la voûte de feuillage se lit enfin comme une voûte — quelque chose de
+     * sombre DEVANT quelque chose de clair.
+     */
+    this.fond.copy(amb.brume).multiplyScalar(1.45)
     this.matLigne.color.copy(amb.ligne)
+    this.appliqueSol(amb, dz)
 
     /*
      * ⚠️ Le décor est peint d'après le point où il APPARAÎT (parcouru +
      * LOOKAHEAD), pas d'après nos pieds : un bambou planté à 85 m devant alors
      * qu'on entre déjà dans le village nous arriverait dessus en pleine
      * fournaise. Le décor doit anticiper la frontière, les couleurs non.
+     *
+     * ⚠️ INDEXBIOME, PAS AMBIANCEA. `ambianceA(...).index` bascule au MILIEU
+     * du fondu de couleur — à 90 % du biome — pour que le décor ait le temps de
+     * changer avant que le sol finisse de changer de teinte. Utilisé ici, ça
+     * faisait basculer le décor de la forêt vers le village **133 m avant la
+     * vraie frontière** (mesuré par simulation) : la bambouseraie arrêtait de
+     * pousser alors que le sol était encore vert à 100 %, laissant ~85 m sans
+     * un seul bambou avant même que la couleur ait commencé à changer.
+     *
+     * indexBiome() est la frontière STRICTE, sans fondu : le décor ne bascule
+     * qu'au moment où le point 85 m devant franchit VRAIMENT la ligne. Le
+     * décalage résiduel (ces mêmes 85 m) est incompressible — c'est le prix de
+     * planter le décor en avance pour qu'il ait le temps d'apparaître dans la
+     * brume.
      */
-    const devant = enCourse
-      ? ambianceA(distance + LOOKAHEAD, this.courseLength).index
-      : 0
+    const devant = enCourse ? indexBiome(distance + LOOKAHEAD, this.courseLength) : 0
     const biome = BIOMES[devant]
-    if (this.prochainDecor === 0) this.prochainDecor = parcouru + 20
+    /*
+     * ⚠️ Aucun offset au premier semis.
+     *
+     * `parcouru + 20` laissait 20 m totalement nus autour de la ligne de
+     * départ — pile ce qu'on regarde en tournant la tête pendant le décompte.
+     * Semer dès `parcouru - 10` (un peu derrière, pour couvrir ce qu'on voit
+     * aussi en se retournant) fait exister la forêt dès le premier instant.
+     */
+    if (this.prochainDecor === 0) this.prochainDecor = parcouru - 10
     while (this.prochainDecor <= parcouru + LOOKAHEAD) {
       // Un élément de chaque côté, mais jamais à la même distance : deux rangées
       // symétriques feraient une allée de cimetière, pas une forêt.
@@ -806,6 +1152,33 @@ export class Track {
         this.spawnDecor(devant, cote, -(d - parcouru))
       }
       this.prochainDecor += biome.ecartDecor
+    }
+
+    /*
+     * ————— Les barrières —————
+     *
+     * Même logique que le décor (semis par distance, recyclage par biome), à un
+     * détail près : on saute les tronçons qu'un pan de mur avale entièrement
+     * (cf. `murAvale`). La bordure devient ainsi une seule ligne CONTINUE, dont
+     * les murs sont les portions hautes et escaladables.
+     *
+     * ⚠️ Le test ne vaut qu'en course : au menu, `murPlan` est celui de la
+     * partie précédente et les murs, eux, ne sont pas semés (ils dépendent de
+     * `distance`). Le consulter y creuserait des trous de bordure sans le
+     * moindre mur dedans pour les justifier.
+     */
+    if (this.prochaineBarriere === 0) this.prochaineBarriere = parcouru - 10
+    while (this.prochaineBarriere <= parcouru + LOOKAHEAD) {
+      for (const cote of [-1, 1]) {
+        if (enCourse && this.murAvale(this.prochaineBarriere, cote)) continue
+        this.spawnBarriere(
+          devant,
+          cote,
+          // Le maillage est centré : on vise le MILIEU du tronçon.
+          -(this.prochaineBarriere + LONG_BARRIERE / 2 - parcouru)
+        )
+      }
+      this.prochaineBarriere += LONG_BARRIERE
     }
 
     if (distance >= 0) {
@@ -890,18 +1263,21 @@ export class Track {
       this.scene.add(dec.mesh)
     }
     /*
-     * ⚠️ 4,8 m du centre, pas 7.
+     * ⚠️ 5,6 m du centre, pas 7.
      *
-     * Le décor commençait au BORD du sol (7 m). Or les lignes vont jusqu'à
-     * 2,2 m et les murs qu'on longe sont à 3,5 m : il restait une bande de sol
-     * nu de trois mètres et demi tout du long, juste là où l'œil se pose. La
-     * forêt avait beau être dense, elle démarrait trop loin pour se lire comme
-     * une forêt.
+     * Le décor commençait au BORD du sol (7 m). Or les lignes n'allaient alors
+     * qu'à 2,2 m et les murs à 3,5 m : il restait une bande de sol nu de trois
+     * mètres et demi tout du long, juste là où l'œil se pose. La forêt avait
+     * beau être dense, elle démarrait trop loin pour se lire comme une forêt.
      *
-     * 4,8 m laisse un mètre franc après les murs — assez pour qu'aucune tige ne
+     * 5,6 m laisse un mètre franc après les murs — assez pour qu'aucune tige ne
      * masque jamais un obstacle, ce qui reste la règle absolue.
+     *
+     * ⚠️ C'était 4,8 m quand les parois étaient à 3,5. Elles sont passées à
+     * 4,2 avec l'élargissement des lignes : garder 4,8 aurait planté la forêt
+     * DANS les murs.
      */
-    dec.mesh.position.set(cote * (4.8 + this.graineDecor() * 1.4), 0, z)
+    dec.mesh.position.set(cote * (5.6 + this.graineDecor() * 1.4), 0, z)
     /*
      * Les décors sont dessinés d'un seul côté (x local croissant = vers
      * l'extérieur). Pour le bord gauche, on fait DEMI-TOUR.
@@ -923,7 +1299,9 @@ export class Track {
     if (!pf) {
       const habille = BIOMES[biome].fabriquePlateforme
       pf = {
-        mesh: habille ? habille(p.hauteur) : makePlateformeMesh(p.hauteur),
+        mesh: habille
+          ? habille(p.hauteur, PLATEFORME_LARG)
+          : makePlateformeMesh(p.hauteur),
         rampe: new THREE.Mesh(
           GEO_RAMPE,
           new THREE.MeshStandardMaterial({
@@ -957,23 +1335,75 @@ export class Track {
   }
 
   private spawnMur(p: PlannedMur, z: number) {
-    let m = this.murs.find((m) => !m.active)
+    // Il prend la matière du biome qu'il TRAVERSE, pas celle où l'on court :
+    // un mur long de 40 m apparaît 125 m devant, parfois de l'autre côté d'une
+    // frontière.
+    const biome = indexBiome(p.d, this.courseLength)
+    let m = this.murs.find((m) => !m.active && m.biome === biome)
     if (!m) {
-      m = { mesh: makeMurMesh(), active: false }
+      const habille = BIOMES[biome].fabriqueMur
+      m = { mesh: habille ? habille() : makeMurMesh(biome), biome, active: false }
       this.murs.push(m)
       this.scene.add(m.mesh)
     }
-    // Un seul maillage recyclé : on l'étire à la longueur voulue. Le pivot est
-    // au centre, d'où le décalage d'une demi-longueur.
+    // Le maillage est bâti sur 1 m : on l'étire à la longueur voulue. Il est
+    // centré en z, d'où le décalage d'une demi-longueur.
     m.mesh.scale.z = p.longueur
-    m.mesh.position.set(p.cote * MUR_X, 1.5, z - p.longueur / 2)
-    // Il prend la matière du biome qu'il traverse — pas celle où l'on court :
-    // un mur long de 40 m peut chevaucher une frontière.
-    ;(m.mesh.material as THREE.MeshStandardMaterial).color.setHex(
-      BIOMES[indexBiome(p.d, this.courseLength)].murCorps
-    )
+    m.mesh.position.set(p.cote * MUR_X, 0, z - p.longueur / 2)
     m.mesh.visible = true
     m.active = true
+  }
+
+  /**
+   * Pose un tronçon de barrière. `cote` vaut -1 (gauche) ou +1 (droite).
+   *
+   * Il se pose à `MUR_X`, exactement là où passent les pans de mur — et c'est
+   * tout l'intérêt : la bordure de la piste devient une ligne CONTINUE dont les
+   * pans de mur ne sont que les portions hautes et escaladables. Sans cet
+   * alignement, on aurait deux bordures parallèles à des écarts différents, et
+   * les murs auraient l'air posés au hasard au lieu de faire partie du bord.
+   */
+  private spawnBarriere(biome: number, cote: number, z: number) {
+    const habille = BIOMES[biome].fabriqueBarriere
+    if (!habille) return
+    let b = this.barrieres.find((q) => !q.active && q.biome === biome)
+    if (!b) {
+      b = { mesh: habille(), biome, active: false }
+      this.barrieres.push(b)
+      this.scene.add(b.mesh)
+    }
+    b.mesh.position.set(cote * MUR_X, 0, z)
+    b.mesh.visible = true
+    b.active = true
+  }
+
+  /**
+   * Un pan de mur avale-t-il ENTIÈREMENT ce tronçon de barrière ?
+   *
+   * ⚠️ Entièrement, et pas « le touche » — la nuance décide de tout.
+   *
+   * Première version : on sautait tout tronçon qui CHEVAUCHAIT un mur. Comme
+   * les tronçons tombent sur une grille de 12 m sans rapport avec les murs, un
+   * mur de 32 m en faisait sauter quatre : la barrière s'arrêtait jusqu'à 8 m
+   * avant le mur et ne reprenait que 8 m après. Résultat, un trou de bordure
+   * nue à chaque bout de chaque mur — exactement le vide qu'on cherchait à
+   * combler.
+   *
+   * Un tronçon qui déborde n'est pourtant pas un problème : la barrière est
+   * posée à `MUR_X`, c'est-à-dire DANS l'épaisseur du mur, et haute d'un mètre
+   * là où le mur en fait trois. La partie qui déborde est donc purement et
+   * simplement avalée par le mur, tandis que le reste prolonge la clôture au
+   * ras de lui. Zéro trou, zéro artefact.
+   *
+   * On ne saute donc que ce qui serait invisible de bout en bout — ce qui
+   * économise tout de même 1 à 3 appels de dessin par mur.
+   */
+  private murAvale(d: number, cote: number): boolean {
+    for (const m of this.murPlan) {
+      if (m.cote !== cote) continue
+      if (d >= m.d && d + LONG_BARRIERE <= m.d + m.longueur) return true
+    }
+    return false
   }
 
   private spawnJarre(p: PlannedJarre, z: number) {
@@ -1594,12 +2024,20 @@ export function makePlateformeMesh(hauteur: number): THREE.Object3D {
     new THREE.MeshStandardMaterial({ color: 0x3a4258, roughness: 0.9 })
   )
   corps.position.y = hauteur / 2
+  // Le tablier : c'est lui le dessus, et il est de la matière de la plateforme.
+  const tablier = new THREE.Mesh(
+    new THREE.BoxGeometry(PLATEFORME_LARG + 0.06, 0.16, 1),
+    new THREE.MeshStandardMaterial({ color: 0x4d566f, roughness: 0.9 })
+  )
+  tablier.position.y = hauteur - 0.08
+  // Le vermillon réduit à une arête de 5 cm sur le nez : le repère survit, le
+  // « ruban rouge » disparaît.
   const liser = new THREE.Mesh(
-    new THREE.BoxGeometry(PLATEFORME_LARG + 0.06, 0.14, 1),
+    new THREE.BoxGeometry(PLATEFORME_LARG + 0.1, 0.05, 1),
     new THREE.MeshStandardMaterial({ color: 0xc33a2c, emissive: 0x3a0f0a })
   )
-  liser.position.y = hauteur
-  g.add(corps, liser)
+  liser.position.y = hauteur - 0.02
+  g.add(corps, tablier, liser)
   return g
 }
 
@@ -1676,16 +2114,22 @@ export function buildMurPlan(length: number, seed: number): PlannedMur[] {
  * c'est le signal « ici tu peux t'accrocher ». Un repère d'action doit se lire
  * pareil d'un bout à l'autre de la course.
  */
-export function makeMurMesh(): THREE.Mesh {
+// `export` : le catalogue s'en sert pour montrer la paroi hors course.
+// `biome` : sa matière en dépend (cf. murCorps).
+export function makeMurMesh(biome: number): THREE.Mesh {
+  const geo = new THREE.BoxGeometry(0.5, MUR_HAUT, 1) // 1 m de long : étiré au spawn
+  // Origine AU SOL, comme tous les habillages de biome : c'est la piste qui
+  // pose l'objet à y = 0, elle n'a pas à connaître la hauteur de chacun.
+  geo.translate(0, MUR_HAUT / 2, 0)
   const mur = new THREE.Mesh(
-    new THREE.BoxGeometry(0.5, 3, 1), // 1 m de long : mis à l'échelle au spawn
-    new THREE.MeshStandardMaterial({ color: BIOMES[0].murCorps, roughness: 0.95 })
+    geo,
+    new THREE.MeshStandardMaterial({ color: BIOMES[biome].murCorps, roughness: 0.95 })
   )
   const liser = new THREE.Mesh(
     new THREE.BoxGeometry(0.56, 0.18, 1),
     new THREE.MeshStandardMaterial({ color: 0xc33a2c, emissive: 0x3a0f0a })
   )
-  liser.position.y = 1.45
+  liser.position.y = MUR_HAUT - 0.09 // le corps va de 0 à MUR_HAUT : il le coiffe
   mur.add(liser)
   return mur
 }
@@ -1976,20 +2420,23 @@ export function makeFinishGate(): THREE.Group {
     emissive: 0x5a4310, // il brille légèrement dans la nuit
   })
 
-  for (const x of [-4, 4]) {
-    const pillar = new THREE.Mesh(new THREE.BoxGeometry(0.6, 5.6, 0.6), gold)
-    pillar.position.set(x, 2.8, 0)
+  // Le torii sacré reste le plus imposant : il domine les torii de décor d'un
+  // bon mètre, sans quoi l'arrivée cesserait d'être un événement.
+  for (const x of [-5.1, 5.1]) {
+    const pillar = new THREE.Mesh(new THREE.BoxGeometry(0.6, 8.6, 0.6), gold)
+    pillar.position.set(x, 4.3, 0)
     g.add(pillar)
   }
-  const top = new THREE.Mesh(new THREE.BoxGeometry(10.4, 0.65, 0.9), gold)
-  top.position.y = 5.8
-  const mid = new THREE.Mesh(new THREE.BoxGeometry(8.6, 0.45, 0.7), gold)
-  mid.position.y = 4.7
+  const top = new THREE.Mesh(new THREE.BoxGeometry(12.2, 0.65, 0.9), gold)
+  top.position.y = 8.8
+  const mid = new THREE.Mesh(new THREE.BoxGeometry(10.4, 0.45, 0.7), gold)
+  mid.position.y = 7.6
   g.add(top, mid)
 
-  // La ligne d'arrivée peinte au sol
+  // La ligne d'arrivée peinte au sol — élargie avec la piste, sinon elle ne
+  // barre plus les lignes extérieures.
   const line = new THREE.Mesh(
-    new THREE.PlaneGeometry(7.4, 1.2),
+    new THREE.PlaneGeometry(9.2, 1.2),
     new THREE.MeshBasicMaterial({ color: 0xd6ac5a })
   )
   line.rotation.x = -Math.PI / 2
@@ -2023,16 +2470,28 @@ export function makeFinishGate(): THREE.Group {
 const TORII_MONTEE = 3
 
 export const TORII_PIECES: { larg: number; haut: number; prof: number; x: number; y: number }[] = [
-  { larg: 0.5, haut: 4.4 + TORII_MONTEE, prof: 0.5, x: -3.6, y: (4.4 + TORII_MONTEE) / 2 },
-  { larg: 0.5, haut: 4.4 + TORII_MONTEE, prof: 0.5, x: 3.6, y: (4.4 + TORII_MONTEE) / 2 },
-  { larg: 7.6, haut: 0.4, prof: 0.6, x: 0, y: 3.7 + TORII_MONTEE }, // la traverse
-  { larg: 9, haut: 0.55, prof: 0.8, x: 0, y: 4.6 + TORII_MONTEE }, // le linteau
+  /*
+   * ⚠️ Les piliers sont à ±4,6 m, DERRIÈRE les parois qu'on longe (4,2 m).
+   *
+   * Ils étaient à ±3,6 m, ce qui allait tant que les parois se tenaient à
+   * 3,5 m. L'élargissement des lignes (±2,2 → ±2,8) les a poussées à 4,2 :
+   * plantés à 3,6, les piliers se seraient retrouvés DANS le mur. Un torii doit
+   * enjamber toute la piste, sinon il n'enjambe plus rien.
+   *
+   * Les traverses suivent : 9,4 et 11 m de portée au lieu de 7,6 et 9.
+   */
+  { larg: 0.5, haut: 4.4 + TORII_MONTEE, prof: 0.5, x: -4.6, y: (4.4 + TORII_MONTEE) / 2 },
+  { larg: 0.5, haut: 4.4 + TORII_MONTEE, prof: 0.5, x: 4.6, y: (4.4 + TORII_MONTEE) / 2 },
+  { larg: 9.4, haut: 0.4, prof: 0.6, x: 0, y: 3.7 + TORII_MONTEE }, // la traverse
+  { larg: 11, haut: 0.55, prof: 0.8, x: 0, y: 4.6 + TORII_MONTEE }, // le linteau
 ]
 
 export function makeTorii(): THREE.Group {
   const g = new THREE.Group()
   const mat = new THREE.MeshStandardMaterial({ color: 0xc33a2c, roughness: 0.6 })
 
+  // Le visuel est bâti d'après la MÊME table que la collision : un portique
+  // qu'on voit et un portique qui arrête ne peuvent pas diverger.
   for (const p of TORII_PIECES) {
     const m = new THREE.Mesh(new THREE.BoxGeometry(p.larg, p.haut, p.prof), mat)
     m.position.set(p.x, p.y, 0)
