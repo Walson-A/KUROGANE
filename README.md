@@ -737,6 +737,34 @@ générateur d'obstacles pour que les deux ne puissent pas se désynchroniser.
 
 ## 📜 Les parchemins
 
+### 🧪 Le banc d'essai des sorts
+
+`test-sorts.html` fait tourner le VRAI jeu — il charge `index.html` et
+`main.ts` plutôt que d'en recopier le balisage, qui finirait par mentir — et y
+ajoute deux panneaux.
+
+Deux modes, et c'est toute sa raison d'être :
+
+| Mode | Ce qu'il fait | Pourquoi |
+|---|---|---|
+| **Subir** | le sort tombe **sur toi** | un sort offensif ne se juge que sur sa victime |
+| **Lancer** | le sort part, comme en jeu | pour voir le geste et le projectile |
+
+Lancer un kunai ne montrait rien : l'effet partait chez un bot qu'on regarde de
+dos, à trente mètres. « Subir » emprunte le chemin d'arrivée — celui-là même
+qu'un rival déclenche chez nous — et on voit enfin la fumée, la boue, les
+chaînes et le poison sur son propre écran.
+
+Le panneau de droite liste **ce qu'on subit** en direct, avec le temps restant
+et une jauge : sans lui, on voit un effet sans savoir combien il dure ni ce qui
+se cumule avec quoi. <kbd>o</kbd>/<kbd>i</kbd> choisir, <kbd>e</kbd>
+déclencher, <kbd>t</kbd> changer de mode, <kbd>r</kbd> tout nettoyer (c'est le
+🍵 thé qui sert de remise à zéro).
+
+> Le guichet qui rend tout ça possible (`window.__sorts`) vit derrière
+> `import.meta.env.DEV` : **il disparaît du bundle de production**. Impossible
+> de s'en servir pour tricher dans une vraie partie — vérifié sur le build.
+
 ### 📖 L'aide, qui ne peut pas mentir
 
 Les dix fiches s'affichent dans l'écran **Comment jouer** — depuis le ❓ du menu

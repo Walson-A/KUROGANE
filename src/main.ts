@@ -3649,6 +3649,43 @@ if (import.meta.env.DEV) {
     lancer() {
       lancerParchemin()
     },
+    /**
+     * Le SUBIR, au lieu de le lancer.
+     *
+     * C'est ce qui manquait : un sort offensif se juge sur SA VICTIME. En le
+     * lançant on ne voit rien — l'effet part chez un bot qu'on regarde de dos,
+     * à trente mètres. Ici on passe directement par le chemin que le jeu
+     * emprunte quand on encaisse, celui-là même qu'un rival déclenche.
+     *
+     * `subirSort` refuse pendant la trêve du départ et renvoie tout sur une
+     * parade levée : le banc d'essai hérite donc de ces règles au lieu de les
+     * contourner, ce qui permet justement de les vérifier.
+     */
+    subir(kind: ParcheminKind) {
+      // 🔮 Le portail n'est pas une affliction : c'est un échange. On simule
+      // un rival vingt mètres devant, sinon il n'y a personne avec qui troquer.
+      if (kind === 'onmyoji') echangerAvec(distance + 20, `le banc d'essai`)
+      else subirSort(kind)
+    },
+    /** Ce que le jeu retient de nous, pour l'afficher en direct. */
+    etat() {
+      return {
+        time,
+        distance,
+        vent: Math.max(0, ventFin - time),
+        grue: Math.max(0, grueFin - time),
+        the: Math.max(0, theFin - time),
+        kusarigama: Math.max(0, kusarigamaFin - time),
+        fumigene: Math.max(0, fumigeneFin - time),
+        senbon: Math.max(0, senbonFin - time),
+        armure,
+        miroir: miroirFin === Infinity ? Infinity : Math.max(0, miroirFin - time),
+        stumble: Math.max(0, stumble),
+        terre: terreEl.classList.contains('on'),
+        treve: Math.max(0, FANTOME_DUREE - time),
+        enCourse: state === 'course',
+      }
+    },
   }
 }
 

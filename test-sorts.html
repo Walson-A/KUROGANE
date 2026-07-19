@@ -6,31 +6,32 @@
     <meta name="theme-color" content="#151a2c" />
     <title>KUROGANE — banc d'essai des sorts</title>
     <style>
-      /* Le sélecteur, en bas à gauche : le classement occupe le haut-gauche et
-         la jauge de sprint le bas-centre. */
-      #essai {
+      /* Les deux panneaux encadrent la piste : la liste à gauche, l'état à
+         droite. Le bas-centre reste libre — c'est là que vit la jauge de
+         sprint, et la masquer ferait rater le départ canon. */
+      .essai {
         position: fixed;
-        left: 12px;
-        bottom: 12px;
         z-index: 30;
-        width: 190px;
         padding: 8px;
         border-radius: 10px;
-        background: rgba(13, 16, 28, 0.82);
+        background: rgba(13, 16, 28, 0.86);
         border: 1px solid #3d4560;
         font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
         font-size: 0.78rem;
         color: #9aa4c0;
         user-select: none;
       }
-      #essai .titre {
+      #essai { left: 12px; bottom: 12px; width: 208px; }
+      #etat { right: 12px; bottom: 12px; width: 178px; }
+
+      .titre {
         font-size: 0.62rem;
         letter-spacing: 0.16em;
         text-transform: uppercase;
         color: #6b7594;
         margin-bottom: 6px;
       }
-      #essai .sort {
+      .sort {
         display: flex;
         align-items: center;
         gap: 7px;
@@ -39,12 +40,38 @@
         line-height: 1.5;
       }
       /* Le sort tenu : on doit le repérer d'un coup d'œil pendant la course */
-      #essai .sort.on {
+      .sort.on {
         background: rgba(226, 75, 58, 0.26);
         color: #f0e8d8;
         font-weight: 700;
       }
-      #essai .aide {
+      .marque { margin-left: auto; opacity: 0.5; font-size: 0.7rem; }
+
+      /* Le mode : lancer le sort, ou le SUBIR. C'est toute la raison d'être de
+         cette page — donc c'est gros, et ça se voit. */
+      .mode { display: flex; gap: 6px; margin: 8px 0 6px; }
+      .mode button {
+        flex: 1;
+        padding: 5px 0;
+        border-radius: 6px;
+        border: 1px solid #3d4560;
+        background: transparent;
+        color: #9aa4c0;
+        font-family: inherit;
+        font-size: 0.72rem;
+        cursor: pointer;
+      }
+      .mode button.on { background: #e24b3a; border-color: #e24b3a; color: #fff; }
+
+      .ligne { display: flex; gap: 6px; padding: 2px 6px; line-height: 1.6; }
+      .ligne b { color: #f0e8d8; font-weight: 500; }
+      .ligne .v { margin-left: auto; color: #f0e8d8; }
+      .ligne.eteint { opacity: 0.32; }
+      /* Une jauge maigre sous chaque effet actif : on lit le temps qui reste
+         d'un coup d'œil, sans déchiffrer un nombre qui défile. */
+      .jauge { height: 2px; background: #e24b3a; border-radius: 2px; margin: 0 6px 3px; }
+
+      .aide {
         margin-top: 7px;
         padding-top: 6px;
         border-top: 1px dashed #3d4560;
@@ -52,7 +79,7 @@
         line-height: 1.6;
         color: #6b7594;
       }
-      #essai kbd {
+      kbd {
         background: #3d4560;
         color: #f0e8d8;
         border-radius: 4px;
@@ -72,7 +99,7 @@
 
       // Les <script> insérés par innerHTML ne s'exécutent pas : c'est nous qui
       // démarrons le jeu, une seule fois, juste ici.
-      const { PARCHEMINS, TIRAGE } = await import('/src/parchemin.ts')
+      const { PARCHEMINS, TIRAGE, EFFETS } = await import('/src/parchemin.ts')
       await import('/src/main.ts')
 
       const guichet = window.__sorts
@@ -80,42 +107,146 @@
 
       const panneau = document.createElement('div')
       panneau.id = 'essai'
-      document.body.appendChild(panneau)
+      panneau.className = 'essai'
+      const etatEl = document.createElement('div')
+      etatEl.id = 'etat'
+      etatEl.className = 'essai'
+      document.body.append(panneau, etatEl)
 
       let idx = 0
+      /*
+       * Deux modes, et c'est TOUTE la raison d'être de cette page.
+       *
+       * « Lancer » joue le sort comme un joueur : les sorts offensifs partent
+       * alors chez un rival, et on ne voit rien de leur effet — juste un
+       * projectile qui s'éloigne de dos. « Subir » emprunte le chemin
+       * d'arrivée, celui qu'un rival déclenche chez nous : on voit enfin la
+       * fumée, la boue, les chaînes et le poison SUR SOI.
+       *
+       * On démarre sur « subir » : c'est ce qu'on vient chercher ici.
+       */
+      let mode = 'subir'
+
+      // Chaque effet avec sa durée pleine, pour dessiner une jauge honnête.
+      const ETATS = [
+        ['vent', '🌀 Vent', 1.5],
+        ['grue', '🕊️ Grue', 7],
+        ['armure', '🛡️ Armure', 2],
+        ['miroir', '🪞 Miroir', 8],
+        ['the', '🍵 Thé', 3],
+        ['kusarigama', '⛓️ Chaînes', 2],
+        ['fumigene', '💨 Fumée', 2.5],
+        ['senbon', '☠️ Poison', 3],
+        ['stumble', '💥 Chute', 1.2],
+      ]
 
       function dessiner() {
         const lignes = TIRAGE.map((k, i) => {
           const p = PARCHEMINS[k]
-          const cible = p.cible === 'adversaire' ? '⚔' : '•'
-          return `<div class="sort${i === idx ? ' on' : ''}">${p.icone} ${p.nom} <span style="margin-left:auto;opacity:.5">${cible}</span></div>`
+          // ⚔ = il lui faut une cible pour être LANCÉ. En mode « subir » la
+          // distinction disparaît : tout retombe sur nous.
+          const marque = p.cible === 'soi' ? '·' : '⚔'
+          return `<div class="sort${i === idx ? ' on' : ''}">${p.icone} ${p.nom}<span class="marque">${marque}</span></div>`
         }).join('')
         panneau.innerHTML =
-          `<div class="titre">Banc d'essai des sorts</div>${lignes}` +
-          `<div class="aide"><kbd>o</kbd> / <kbd>i</kbd> changer · <kbd>e</kbd> lancer<br />` +
-          `⚔ = il lui faut une cible devant</div>`
+          `<div class="titre">Les dix parchemins</div>${lignes}` +
+          `<div class="mode">` +
+          `<button data-m="subir" class="${mode === 'subir' ? 'on' : ''}">Subir</button>` +
+          `<button data-m="lancer" class="${mode === 'lancer' ? 'on' : ''}">Lancer</button>` +
+          `</div>` +
+          `<div class="aide">${EFFETS[TIRAGE[idx]]}</div>` +
+          `<div class="aide"><kbd>o</kbd> / <kbd>i</kbd> choisir · <kbd>e</kbd> déclencher<br />` +
+          `<kbd>t</kbd> changer de mode · <kbd>r</kbd> tout nettoyer</div>`
+        for (const b of panneau.querySelectorAll('.mode button')) {
+          b.addEventListener('click', () => {
+            mode = b.dataset.m
+            appliquer()
+          })
+        }
       }
 
-      /** Choisit un sort ET le met en main, pour pouvoir le lancer aussitôt. */
-      function choisir(n) {
-        idx = (n + TIRAGE.length) % TIRAGE.length
+      /** Remet le sort choisi en main et redessine. */
+      function appliquer() {
         guichet.donner(TIRAGE[idx])
         dessiner()
       }
 
-      addEventListener('keydown', (e) => {
-        if (e.repeat) return
-        if (e.key === 'o' || e.key === 'O') choisir(idx + 1)
-        else if (e.key === 'i' || e.key === 'I') choisir(idx - 1)
-      })
+      function choisir(n) {
+        idx = (n + TIRAGE.length) % TIRAGE.length
+        appliquer()
+      }
+
+      function declencher() {
+        if (mode === 'subir') guichet.subir(TIRAGE[idx])
+        else guichet.lancer()
+        // On se remet le rouleau en main : lancé, il est consommé, et on veut
+        // pouvoir recommencer sans re-sélectionner.
+        setTimeout(appliquer, 0)
+      }
+
+      /** 🍵 Le thé lave tout : c'est le bouton « remise à zéro » du banc. */
+      const nettoyer = () => guichet.subir('the')
+
+      addEventListener(
+        'keydown',
+        (e) => {
+          if (e.repeat) return
+          const k = e.key.toLowerCase()
+          if (k === 'o') choisir(idx + 1)
+          else if (k === 'i') choisir(idx - 1)
+          else if (k === 't') {
+            mode = mode === 'subir' ? 'lancer' : 'subir'
+            appliquer()
+          } else if (k === 'r') nettoyer()
+          else if (k === 'e' && mode === 'subir') {
+            /*
+             * En mode « subir », E ne doit PAS lancer le sort. On intercepte la
+             * touche AVANT le jeu (écouteur en phase de capture + arrêt de la
+             * propagation) : sans ça le parchemin partirait chez un rival et on
+             * ne verrait toujours rien.
+             */
+            e.stopImmediatePropagation()
+            e.preventDefault()
+            declencher()
+          }
+        },
+        true
+      )
+
+      // ————— Le tableau de bord, rafraîchi à chaque image —————
+      // Sans lui, on voit un effet à l'écran sans savoir combien de temps il
+      // dure encore, ni ce qui se cumule avec quoi.
+      function suivre() {
+        requestAnimationFrame(suivre)
+        const s = guichet.etat()
+        if (!s) return
+        const lignes = ETATS.map(([cle, nom, plein]) => {
+          const v = s[cle]
+          const actif = v > 0.01
+          const part = v === Infinity ? 1 : Math.min(1, v / plein)
+          const texte =
+            v === Infinity ? 'levée' : cle === 'armure' ? `${v}` : actif ? `${v.toFixed(1)}s` : '—'
+          return (
+            `<div class="ligne${actif ? '' : ' eteint'}"><b>${nom}</b><span class="v">${texte}</span></div>` +
+            (actif ? `<div class="jauge" style="width:${(part * 88).toFixed(0)}%"></div>` : '')
+          )
+        }).join('')
+        const treve = s.treve > 0.01 && s.enCourse
+        etatEl.innerHTML =
+          `<div class="titre">Ce que je subis</div>${lignes}` +
+          `<div class="ligne${s.terre ? '' : ' eteint'}"><b>🎯 Terre</b>` +
+          `<span class="v">${s.terre ? 'collée' : '—'}</span></div>` +
+          `<div class="ligne${treve ? '' : ' eteint'}"><b>👻 Trêve</b>` +
+          `<span class="v">${treve ? s.treve.toFixed(1) + 's' : '—'}</span></div>`
+      }
 
       // On redonne le sort tenu à chaque nouvelle course : `startRace` vide les
       // slots, et sans ça on repartirait les mains vides sans comprendre.
       const btnGo = document.getElementById('btnGo')
-      if (btnGo) btnGo.addEventListener('click', () => setTimeout(() => choisir(idx), 0))
+      if (btnGo) btnGo.addEventListener('click', () => setTimeout(appliquer, 0))
 
-      dessiner()
-      guichet.donner(TIRAGE[idx])
+      appliquer()
+      suivre()
     </script>
   </body>
 </html>
