@@ -111,6 +111,12 @@ interface Preview {
  * Le menu ne connaît RIEN de la course : il prévient main.ts par des callbacks
  * et se contente de garder les réglages à jour.
  */
+/**
+ * Les écrans où l'on ARRIVE, par opposition à ceux dans lesquels on descend.
+ * Y entrer efface le chemin parcouru : on n'a plus rien derrière soi.
+ */
+const RACINES = new Set<ScreenName>(['title', 'salon', 'lobby', 'results', 'status'])
+
 export class Menu {
   readonly settings: Settings
 
@@ -122,7 +128,19 @@ export class Menu {
   /** La dernière vue du salon reçue — pour savoir qui je suis, si je suis prêt… */
   private view: LobbyView | null = null
   /** D'où l'on a ouvert l'aide, pour y revenir. null = depuis le titre. */
-  private retourAide: ScreenName | null = null
+/*
+   * ————— D'où l'on vient —————
+   *
+   * Une PILE, et non un repère unique. Le repère unique ne pouvait retenir
+   * qu'un seul cran : depuis le salon, descendre au vestiaire PUIS à la
+   * boutique le laissait pointer sur le salon. Le retour depuis la boutique
+   * sautait alors par-dessus le vestiaire pour atterrir au salon — et le
+   * retour suivant, croyant être au bout, QUITTAIT le salon. C'est le bug
+   * « je change de skin et ça me sort de la partie ».
+   *
+   * Une pile retient le chemin entier, quelle que soit sa profondeur.
+   */
+  private pile: ScreenName[] = []
   private apercu?: THREE.Object3D
   /** Le guerrier montré dans la vignette — il a sa propre foulée. */
   private fighterAffiche: Fighter = ROSTER[0]
@@ -153,6 +171,7 @@ export class Menu {
     optVolumeVal: document.getElementById('optVolumeVal')!,
     optSfx: document.getElementById('optSfx') as HTMLInputElement,
     optSfxVal: document.getElementById('optSfxVal')!,
+    optNoms: document.getElementById('optNoms') as HTMLInputElement,
     // ————— Salon —————
     joinCode: document.getElementById('joinCode') as HTMLInputElement,
     salonList: document.getElementById('salonList')!,
@@ -212,14 +231,14 @@ export class Menu {
     // — Écran-titre —
     document.getElementById('btnSolo')!.addEventListener('click', () => cb.onSolo())
     document.getElementById('btnOnline')!.addEventListener('click', () => cb.onOnline())
-    document.getElementById('btnRoster')!.addEventListener('click', () => this.show('roster'))
-    document.getElementById('btnOptions')!.addEventListener('click', () => this.show('options'))
-    document.getElementById('btnHelp')!.addEventListener('click', () => this.show('help'))
+    document.getElementById('btnRoster')!.addEventListener('click', () => this.ouvrir('roster'))
+    document.getElementById('btnOptions')!.addEventListener('click', () => this.ouvrir('options'))
+    document.getElementById('btnHelp')!.addEventListener('click', () => this.ouvrir('help'))
     // 🏆 Le tableau se REBÂTIT à chaque ouverture : on vient souvent d'y ajouter
     // une ligne en finissant une course.
     document.getElementById('btnScores')!.addEventListener('click', () => {
       this.buildScores()
-      this.show('scores')
+      this.ouvrir('scores')
     })
     document.getElementById('btnScoresClear')!.addEventListener('click', () => {
       // Effacer des records est irréversible : on demande.
@@ -229,7 +248,7 @@ export class Menu {
     })
 
     document.getElementById('btnBoutique')!.addEventListener('click', () => cb.onBoutique())
-    document.getElementById('btnCompte')!.addEventListener('click', () => this.show('compte'))
+    document.getElementById('btnCompte')!.addEventListener('click', () => this.ouvrir('compte'))
     this.el.btnGoogle.addEventListener('click', () => cb.onGoogle())
     this.el.btnDeconnexion.addEventListener('click', () => cb.onDeconnexion())
     this.el.btnInscription.addEventListener('click', () => this.envoyerEmail('inscription'))
@@ -248,16 +267,14 @@ export class Menu {
      */
     for (const b of document.querySelectorAll('[data-back]')) {
       b.addEventListener('click', () => {
-        const vers = this.retourAide
-        this.retourAide = null
-        this.show(vers ?? 'title')
+        // Un cran en arrière, et un seul. La pile vide ramène au titre.
+        this.show(this.pile.pop() ?? 'title')
       })
     }
 
     // 📜 L'aide depuis le salon, sans quitter le salon
     document.getElementById('btnLobbyHelp')?.addEventListener('click', () => {
-      this.retourAide = 'lobby'
-      this.show('help')
+      this.ouvrir('help')
     })
 
     // 🥷 Le vestiaire depuis le salon. On attend souvent plusieurs minutes qu'un
@@ -265,8 +282,7 @@ export class Menu {
     // retoucher son skin. Le faire imposait de quitter le salon — donc de perdre
     // sa place et son code. Même mécanique de retour que l'aide.
     document.getElementById('btnLobbyRoster')?.addEventListener('click', () => {
-      this.retourAide = 'lobby'
-      this.show('roster')
+      this.ouvrir('roster')
     })
 
     this.buildAideSorts()
@@ -425,19 +441,23 @@ export class Menu {
 
   // ————— Les écrans —————
 
+  /**
+   * Descend dans une fiche en retenant d'où l'on vient.
+   * À utiliser partout où un « retour » doit ramener ici.
+   */
+  private ouvrir(name: ScreenName) {
+    this.pile.push(this.current)
+    this.show(name)
+  }
+
   private show(name: ScreenName) {
     /*
-     * Le repère de retour ne s'efface qu'en SORTANT vraiment du salon.
-     *
-     * On ne peut pas l'effacer à chaque écran : l'aide et le vestiaire le
-     * posent juste avant d'appeler show(), et il serait balayé dans la foulée.
-     * On ne peut pas non plus ne jamais l'effacer : quitter le salon autrement
-     * que par « retour » le laisserait traîner, et un retour plus tard —
-     * depuis les options — renverrait vers un salon déjà quitté.
-     *
-     * Le titre et la liste des salons sont les deux seules portes de sortie.
+     * Un écran RACINE n'est jamais « au milieu » d'un chemin : on y arrive,
+     * on n'y revient pas. Il remet donc la pile à zéro — sans quoi un chemin
+     * abandonné (salon quitté autrement que par « retour ») traînerait, et un
+     * retour bien plus tard renverrait vers un salon qui n'existe plus.
      */
-    if (name === 'title' || name === 'salon') this.retourAide = null
+    if (RACINES.has(name)) this.pile.length = 0
     this.current = name
     for (const [key, el] of Object.entries(this.screens)) {
       el.classList.toggle('hidden', key !== name)
@@ -475,7 +495,7 @@ export class Menu {
   }
 
   showBotPick() {
-    this.show('botpick')
+    this.ouvrir('botpick')
   }
 
   hide() {
@@ -637,7 +657,7 @@ export class Menu {
   }
 
   showBoutique() {
-    this.show('boutique')
+    this.ouvrir('boutique')
   }
 
   // ————— Le compte —————
@@ -1032,6 +1052,15 @@ export class Menu {
     this.el.optSfx.addEventListener('change', () => saveSettings(this.settings))
     this.el.optSfx.value = String(Math.round(this.settings.volumeSfx * 100))
     this.markSfx()
+
+    // Les pseudos en piste. Rien à prévenir au jeu : main.ts relit le réglage à
+    // chaque image pour placer les étiquettes — un rappel de plus pourrait se
+    // désynchroniser, la lecture directe ne le peut pas.
+    this.el.optNoms.checked = this.settings.afficherNoms
+    this.el.optNoms.addEventListener('change', () => {
+      this.settings.afficherNoms = this.el.optNoms.checked
+      saveSettings(this.settings)
+    })
   }
 
   private markQuality() {

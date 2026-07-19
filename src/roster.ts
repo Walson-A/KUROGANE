@@ -195,6 +195,30 @@ export interface CustomSkin {
 export const HEADS: Head[] = ['rien', 'cornes', 'oreilles']
 
 /**
+ * ————— Le skin sur le fil —————
+ *
+ * Le perso « + » n'est pas un guerrier de la fiche : c'est un guerrier PLUS un
+ * skin. Envoyer son seul identifiant ne suffit donc pas — les autres joueurs
+ * verraient un corps sans ses couleurs, et deux joueurs qui l'ont choisi
+ * seraient indiscernables.
+ *
+ * On le range en une chaine courte : `3a7a5c:e6c66a:oreilles`. C'est un format
+ * fixe, entierement verifiable, et le serveur peut le refuser sans rien
+ * connaitre de nos couleurs.
+ */
+export function skinEnTexte(s: CustomSkin): string {
+  const hex = (c: number) => (c & 0xffffff).toString(16).padStart(6, '0')
+  return `${hex(s.body)}:${hex(s.band)}:${s.head}`
+}
+
+/** Relit un skin venu du reseau. null si la chaine ne tient pas la forme. */
+export function skinDepuisTexte(t: string): CustomSkin | null {
+  const m = /^([0-9a-f]{6}):([0-9a-f]{6}):(rien|cornes|oreilles)$/.exec(t ?? '')
+  if (!m) return null
+  return { body: parseInt(m[1], 16), band: parseInt(m[2], 16), head: m[3] as Head }
+}
+
+/**
  * La palette du vestiaire. Un jeu de couleurs FERMÉ, comme les teintes d'Among
  * Us : plus lisible qu'une roue chromatique sur mobile, et toutes s'accordent à
  * la nuit indigo du jeu. On y retrouve les couleurs du roster, plus quelques

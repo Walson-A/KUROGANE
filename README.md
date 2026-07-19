@@ -121,6 +121,37 @@ kurogane/
 l'aperçu 3D lisent tous la même fiche. Pour ajouter un guerrier, il suffit
 d'ajouter une entrée dans `ROSTER` — le reste du jeu suit tout seul.
 
+## 🧭 Le chemin de retour dans les menus
+
+Les écrans retiennent **d'où l'on vient** dans une **pile**, pas dans un repère
+unique. Ça peut sembler du détail — c'était la cause d'un vrai bug : dans un
+salon, descendre au vestiaire *puis* à la boutique laissait le repère pointer
+sur le salon. Le retour depuis la boutique sautait par-dessus le vestiaire, et
+le retour suivant, se croyant au bout, **quittait le salon**. On perdait sa
+place pour avoir voulu changer de couleur.
+
+Une pile retient le chemin entier, quelle que soit sa profondeur. Les écrans
+**racines** (titre, liste des salons, salon, résultats) l'effacent en y entrant :
+on y arrive, on n'y revient pas — sans quoi un chemin abandonné renverrait plus
+tard vers un salon déjà quitté.
+
+```bash
+npm run nav:test     # rejoue les parcours, dont celui qui sortait du salon
+```
+
+## 🎨 Le perso « + » traverse le réseau
+
+Le « + » n'est pas un guerrier de la fiche : c'est un guerrier **plus un skin**.
+Envoyer son seul identifiant ne suffisait donc pas — et le serveur ne
+l'acceptait même pas dans sa liste, si bien qu'il devenait **Yasuke** au seuil.
+Celui qui l'avait choisi se voyait bien ; personne d'autre.
+
+Son skin voyage maintenant en une chaîne courte — `3a7a5c:e6c66a:oreilles` —
+de forme fixe, que le serveur peut refuser sans rien connaître de nos couleurs.
+Le rival compare **aussi le skin** avant de se reconstruire : deux joueurs sous
+le « + » portent le même identifiant, et s'arrêter à lui les afficherait tous
+les deux avec les couleurs du premier arrivé.
+
 ## 🎞️ Les animations : du Mixamo sur des boîtes
 
 Les mouvements viennent de `.fbx` Mixamo déposés dans `animation/`. Ils sont

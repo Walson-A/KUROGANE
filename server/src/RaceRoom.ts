@@ -28,6 +28,11 @@ export class PlayerState extends Schema {
   @type('string') name = ''
   /** Le guerrier choisi (cf. src/roster.ts côté jeu) */
   @type('string') fighter = 'yasuke'
+  /**
+   * Le skin du perso « + », en `corps:bandeau:ornement`. Vide pour les autres.
+   * Sans lui, deux joueurs qui ont choisi « + » seraient indiscernables.
+   */
+  @type('string') skin = ''
   /** false pendant une coupure : sa place est gardée, il peut revenir (cf. onDrop) */
   @type('boolean') connected = true
   /** S'est-il déclaré PRÊT dans le lobby ? */
@@ -102,7 +107,12 @@ const PVP_RECUL_MAX_MS = 400
 /** Les guerriers que le serveur accepte. Tout le reste → Yasuke.
  * ('perso' n'y est pas : son look custom ne transite pas — l'adversaire le
  * verrait en Yasuke de toute façon.) */
-const FIGHTERS = ['yasuke', 'hana', 'onimaru', 'tamae']
+/*
+ * 'perso' EN FAIT PARTIE : c'est le guerrier libre du vestiaire. L'oublier ici
+ * le remplacait silencieusement par Yasuke au seuil du serveur — celui qui
+ * l'avait choisi se voyait bien, mais personne d'autre.
+ */
+const FIGHTERS = ['yasuke', 'hana', 'onimaru', 'tamae', 'perso']
 const MAX_NAME = 12
 const MAX_CHAT = 120
 
@@ -125,6 +135,16 @@ function cleanName(v: unknown): string {
 
 function cleanFighter(v: unknown): string {
   return typeof v === 'string' && FIGHTERS.includes(v) ? v : 'yasuke'
+}
+
+/**
+ * Le skin du perso « + » : deux couleurs et un ornement, forme fixe.
+ * On ne fait pas confiance a la chaine recue — elle finit dans un rendu chez
+ * TOUS les autres joueurs. Ce qui ne tient pas la forme est jete.
+ */
+function cleanSkin(v: unknown): string {
+  if (typeof v !== 'string') return ''
+  return /^[0-9a-f]{6}:[0-9a-f]{6}:(rien|cornes|oreilles)$/.test(v) ? v : ''
 }
 
 /** Un code de salon : lettres majuscules. 'PUBLIC' est réservé à la partie rapide. */
@@ -220,6 +240,7 @@ export class RaceRoom extends Room<{ state: RaceState }> {
       const p = this.state.players.get(client.sessionId)
       if (!p) return
       p.fighter = cleanFighter(data?.fighter)
+      p.skin = cleanSkin(data?.skin)
       p.name = cleanName(data?.name)
     })
 
@@ -365,6 +386,7 @@ export class RaceRoom extends Room<{ state: RaceState }> {
     const p = new PlayerState()
     p.name = cleanName(options?.name)
     p.fighter = cleanFighter(options?.fighter)
+    p.skin = cleanSkin(options?.skin)
 
     /*
      * ————— À quel COMPTE appartient ce joueur ? —————

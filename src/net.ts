@@ -14,6 +14,8 @@ export interface RemotePlayer {
   name: string
   /** Le guerrier qu'il a choisi (cf. roster.ts) */
   fighter: string
+  /** Son skin, si c'est le perso « + » : `corps:bandeau:ornement`. Sinon vide. */
+  skin: string
   /** false = il a coupé (écran verrouillé…) mais peut revenir sous 30 s */
   connected: boolean
   /** S'est-il déclaré prêt dans le lobby ? */
@@ -101,6 +103,12 @@ const PROD_SERVER_URL = 'wss://kurogane-production.up.railway.app'
 export interface Identity {
   name: string
   fighter: string
+  /**
+   * Le skin du perso « + », en `corps:bandeau:ornement`. Vide pour les autres.
+   * Le « + » n'est pas un guerrier de la fiche mais un guerrier PLUS un skin :
+   * sans cette chaine, les autres ne verraient qu'un corps sans ses couleurs.
+   */
+  skin?: string
   /** Le jeton de session : dit au serveur quel compte crediter. */
   token?: string | null
 }
@@ -325,6 +333,7 @@ export class Net {
         time: p.time,
         name: p.name ?? '',
         fighter: p.fighter ?? '',
+        skin: p.skin ?? '',
         connected: p.connected ?? true,
         ready: p.ready ?? false,
         rank: p.rank ?? 0,
@@ -385,7 +394,11 @@ export class Net {
     // Le jeton est délibérément RETIRÉ ici : il n'est utile qu'à l'entrée dans
     // le salon, où le serveur l'échange une fois contre l'identifiant du compte.
     // Le renvoyer à chaque changement de guerrier le ferait circuler pour rien.
-    this.room?.send('identity', { name: identity.name, fighter: identity.fighter })
+    this.room?.send('identity', {
+      name: identity.name,
+      fighter: identity.fighter,
+      skin: identity.skin ?? '',
+    })
   }
 
   /** L'hôte lance la partie */

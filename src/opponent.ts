@@ -1,7 +1,7 @@
 import * as THREE from 'three'
 import { LANES, MUR_DUREE, MUR_PENCHE, VIRAGE_TEMPS } from './player'
 import { NameTag } from './nametag'
-import { buildFighter, clearFighter, cssColor, fighterById, type Fighter } from './roster'
+import { PERSO_ID, buildFighter, clearFighter, cssColor, customFighter, fighterById, skinDepuisTexte, type Fighter } from './roster'
 import { Anim, MUR_COTE_NATIF, animerGuerrier, type Action } from './anims'
 import type { OppAction } from './net'
 
@@ -53,6 +53,8 @@ export class Opponent {
   private stumbleT = 0 // il se relève d'un trébuchement (clignote)
 
   private fighter: Fighter = fighterById('kurokumo')
+  /** Le skin porte, s'il s'agit du perso « + » : sert a detecter un changement. */
+  private skin = ''
   private racine?: THREE.Object3D // son corps articulé
   private tAnim = 0 // l'horloge de SA foulée calculée (repli et flottants)
   /** Son lecteur, décalé au hasard pour ne pas courir au pas avec les autres */
@@ -100,9 +102,19 @@ export class Opponent {
    * Appelé quand le réseau nous l'apprend — donc on ne refait le corps que si
    * ça change vraiment, pas 30 fois par seconde.
    */
-  setFighter(id: string) {
-    const f = fighterById(id)
-    if (f.id === this.fighter.id) return
+  /**
+   * Le guerrier d'un rival, tel qu'il l'a choisi.
+   *
+   * `skin` n'est renseigne que pour le perso « + » : lui n'est pas une entree
+   * de la fiche mais un guerrier PLUS des couleurs. On compare donc AUSSI le
+   * skin — deux joueurs sous le « + » portent le meme identifiant, et s'arreter
+   * a lui les afficherait tous les deux avec les couleurs du premier arrive.
+   */
+  setFighter(id: string, skin = '') {
+    const custom = id === PERSO_ID ? skinDepuisTexte(skin) : null
+    const f = custom ? customFighter(custom) : fighterById(id)
+    if (f.id === this.fighter.id && skin === this.skin) return
+    this.skin = skin
     this.fighter = f
     this.build()
   }

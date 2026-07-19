@@ -7,7 +7,7 @@ import { ajouterScore } from './scores'
 import { Input } from './input'
 import { Net, type RemotePlayer, type LobbyView } from './net'
 import { Bot, PROFILS, BOTS_MAX, construireRangees } from './bot'
-import { cssColor } from './roster'
+import { PERSO_ID, cssColor, skinEnTexte } from './roster'
 import {
   PARCHEMINS,
   TIRAGE,
@@ -43,6 +43,7 @@ import {
   googleActif,
   inscriptionEmail,
   connexionEmail,
+  verserPots,
 } from './compte'
 import { souffleDeVent, jouerBruit, setVolumeSfx, sonDeSoin } from './sfx'
 import type { Quality } from './settings'
@@ -254,7 +255,7 @@ function syncRivals(others: RemotePlayer[]) {
       r = { opp: libre, id: p.id, name: '', rank: 0, finished: false, enLAir: false }
       rivals.set(p.id, r)
     }
-    r.opp.setFighter(p.fighter)
+    r.opp.setFighter(p.fighter, p.skin)
     r.name = p.name || 'Rival'
     r.opp.setName(r.name)
     r.rank = p.rank
@@ -1965,6 +1966,33 @@ function gagneParchemin(kind: ParcheminKind) {
 }
 
 /**
+ * ————— 🟢 Les pots verts —————
+ *
+ * Ce qu'on a tiré des pots depuis le départ. On CUMULE au lieu de verser à
+ * chaque pot : le serveur n'accepte qu'un versement par course (cf. /api/pot),
+ * et deux appels coup sur coup feraient perdre le second pot.
+ */
+let monDeLaCourse = 0
+
+function ramasserMon(n: number) {
+  monDeLaCourse += n
+  jouerBruit('jarreDoree')
+  toast(`🟢 +${n} Mon`)
+}
+
+/**
+ * Verse la récolte au serveur, à l'arrivée. Le solde affiché est rafraîchi dans
+ * la foulée — sans quoi on verrait sa bourse inchangée après avoir ramassé, et
+ * on croirait le pot cassé pour rien.
+ */
+function encaisserPots() {
+  if (monDeLaCourse <= 0) return
+  const total = monDeLaCourse
+  monDeLaCourse = 0 // remis à zéro TOUT DE SUITE : un double appel ne doit pas payer deux fois
+  void verserPots(total).then(() => majAffichageBourse())
+}
+
+/**
  * Tente de frapper sur la ligne `lane`. Renvoie true si le swipe a été
  * consommé par une attaque — l'appelant n'exécute alors PAS le déplacement.
  */
@@ -2099,14 +2127,15 @@ function resoudCoup() {
   box.min.y -= PORTEE_LAME
 
   // 🏺 Une jarre, d'abord : c'est la cible posée là exprès par le niveau.
-  const { touchee, parchemin, sommet } = track.casseAuContact(box)
+  const { touchee, parchemin, mon, sommet } = track.casseAuContact(box)
   if (touchee) {
-    jouerBruit(parchemin ? 'jarreDoree' : 'jarre')
+    jouerBruit(parchemin || mon ? 'jarreDoree' : 'jarre')
     encaisseGain()
     // On rebondit DEPUIS le sommet de la jarre : chaque bond repart du même
     // niveau, donc la chaîne ne dérive ni vers le haut ni vers le bas.
     if (enLAir) player.rebondSur(sommet)
     if (parchemin) gagneParchemin(parchemin)
+    else if (mon > 0) ramasserMon(mon)
     else if (chaine >= 2) toast(`⚔️ Chaîne ×${chaine}`)
     return
   }
@@ -2198,6 +2227,7 @@ function startRace(seed: number) {
   // reçue ; ici on repart d'une table propre en solo, et on garde les rivaux
   // déjà connus du lobby en ligne.
   if (!online) clearRivals()
+  monDeLaCourse = 0 // la récolte de pots repart de zéro à chaque départ
   track.reset(COURSE_LENGTH, seed)
   time = 0
   distance = 0
@@ -2342,6 +2372,10 @@ function crossFinishLine() {
   sprintEl.classList.add('hidden')
   gapEl.classList.add('hidden')
   const t = time.toFixed(2)
+  // 🟢 On encaisse À L'ARRIVÉE, comme le serveur ne paie que ceux qui finissent :
+  // abandonner en cours de route ne doit pas rapporter les pots déjà cassés,
+  // sinon la meilleure façon de gagner sa vie serait de partir, casser, quitter.
+  encaisserPots()
 
   if (online) {
     // On prévient le serveur et on attend le classement (les autres courent encore)
@@ -2530,6 +2564,9 @@ const net = new Net({
 const identity = () => ({
   name: menu.settings.name,
   fighter: menu.settings.fighter,
+  // Le perso « + » n'est pas un guerrier de la fiche mais un guerrier PLUS un
+  // skin : sans ses couleurs, les autres ne verraient qu'un corps generique.
+  skin: menu.settings.fighter === PERSO_ID ? skinEnTexte(menu.settings.custom) : '',
   token: monJeton(),
 })
 
@@ -3617,11 +3654,15 @@ function tick(now?: number) {
   // Après le déplacement des persos ET de la caméra, sinon elles auraient une
   // image de retard. Au menu, on les cache : le décor tourne à vide derrière.
   const racing = state === 'depart' || state === 'course' || state === 'fini'
+  // Le réglage est relu ICI, à chaque image, plutôt que recopié à l'allumage :
+  // on peut ainsi l'éteindre depuis le salon et le voir s'appliquer à la course
+  // suivante sans avoir à recharger quoi que ce soit.
+  const noms = racing && menu.settings.afficherNoms
   // player.mesh.visible clignote quand on se relève d'un trébuchement :
   // l'étiquette clignote avec lui, c'est le même personnage.
-  player.tag.follow(player.mesh, camera, racing && player.mesh.visible)
+  player.tag.follow(player.mesh, camera, noms && player.mesh.visible)
   for (const r of rivals.values()) {
-    r.opp.tag.follow(r.opp.mesh, camera, racing && r.opp.active && r.opp.mesh.visible)
+    r.opp.tag.follow(r.opp.mesh, camera, noms && r.opp.active && r.opp.mesh.visible)
   }
 
   // La caméra s'ouvre avec la vitesse. C'est le seul retour qui rende TOUS les
