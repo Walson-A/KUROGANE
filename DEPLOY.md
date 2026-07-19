@@ -89,13 +89,39 @@ deux premières sont obligatoires ; les autres décident de ce qui fonctionne.
 |---|---|
 | `AUTH_SECRET` | **Refus de démarrer.** C'est voulu : sans secret, les jetons de session seraient signés avec une valeur écrite dans le dépôt, et n'importe qui pourrait se faire passer pour un autre joueur |
 | `DATABASE_URL` | Ni comptes, ni monnaie, ni boutique, ni classement (le jeu reste jouable) |
-| `ORIGINES_AUTORISEES` | Le CORS bloque **tout** : connexion, boutique, classement. À remplir avec l'adresse Vercel exacte |
+| `ORIGINES_AUTORISEES` | Le CORS bloque **tout** : connexion, boutique, classement. `https://kurogane-alpha.vercel.app` — **sans `/` final** (voir ci-dessous) |
 | `PUBLIC_URL` | L'OAuth Google casse. À remplir avec l'adresse Railway ci-dessus |
 | `GOOGLE_CLIENT_ID` + `GOOGLE_CLIENT_SECRET` | Le bouton Google est simplement masqué, le reste marche |
 
 Pour générer le secret :
 ```bash
 node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+```
+
+> ⚠️ **`ORIGINES_AUTORISEES` ne pardonne pas la barre oblique.** Le serveur
+> compare cette chaîne caractère par caractère à l'en-tête `Origin` du
+> navigateur, et un navigateur n'en envoie **jamais** avec un `/` final. Écrire
+> `https://kurogane-alpha.vercel.app/` fait échouer la comparaison : connexion,
+> boutique et classement sont bloqués, sans message qui dise pourquoi.
+
+#### 🗃️ Brancher la base
+
+Ne recopie **pas** la valeur de `DATABASE_URL` à la main. Dans le projet
+Railway : `+ New` → `Database` → `Add PostgreSQL`, puis dans le service du
+serveur, ajouter la variable :
+
+```
+DATABASE_URL = ${{Postgres.DATABASE_URL}}
+```
+
+C'est une **référence** : si Railway renouvelle le mot de passe de la base, le
+serveur suit tout seul. Une valeur recopiée, elle, se périme en silence.
+
+Au premier démarrage, les logs Railway doivent montrer :
+```
+🗃️  migration appliquée : 001_comptes_et_monnaies.sql
+🗃️  migration appliquée : 002_boutique.sql
+🗃️  migration appliquée : 003_classement.sql
 ```
 
 > 🗃️ **Les migrations SQL s'appliquent toutes seules** au démarrage, dans
@@ -162,7 +188,7 @@ git push                    # j'envoie sur GitHub
 |---|---|---|
 | Dev local | http://localhost:5173 | ws://localhost:2567 |
 | Téléphone (wifi) | http://IP-DU-PC:5173 | ws://IP-DU-PC:2567 (auto) |
-| Production | https://kurogane.vercel.app | wss://kurogane-production.up.railway.app |
+| Production | https://kurogane-alpha.vercel.app | wss://kurogane-production.up.railway.app |
 
 Le client choisit dans cet ordre : `VITE_SERVER_URL` si elle existe, sinon
 l'adresse Railway quand la page est en https, sinon `localhost`. C'est ce qui
