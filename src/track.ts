@@ -1,7 +1,7 @@
 import * as THREE from 'three'
-import { LANES, MUR_X, JUMP_SPEED } from './player'
+import { LANES, MUR_X, ECART_LIGNE, JUMP_SPEED } from './player'
 import { tirerParchemin, TIRAGE, type ParcheminKind } from './parchemin'
-import { BIOMES, ambianceA, indexBiome, LONG_BARRIERE } from './biomes'
+import { BIOMES, ambianceA, indexBiome, LONG_BARRIERE, MUR_HAUT } from './biomes'
 import type { Ambiance } from './biomes'
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
 
@@ -45,6 +45,16 @@ export const TAILLE_OBSTACLE: Record<Kind, { larg: number; haut: number; prof: n
  * laquelle `JUMP_SPEED` est calibrée (Yasuke plafonne à 2,07 m et reste bloqué,
  * Hana monte à 2,89 m et passe). Y toucher redistribuerait le roster.
  */
+
+/**
+ * La largeur du ruban de sol.
+ *
+ * Élargie de 14 à 16 m en même temps que les lignes : le décor de bordure est
+ * planté à 5,6 m du centre avec jusqu'à 1,4 m de dispersion, donc il touche
+ * 7,0 m. À 14 m de large (soit ±7), les touffes les plus écartées se seraient
+ * retrouvées pile au bord, une racine dans le vide.
+ */
+const LARGEUR_SOL = 16
 
 const LOOKAHEAD = 85 // les obstacles apparaissent 85 m devant (cachés par la brume)
 /** L'écart entre deux pointillés — et donc la période de leur défilement. */
@@ -185,23 +195,33 @@ interface Plateforme {
 }
 
 /** Largeur d'une plateforme : une ligne, exactement comme un obstacle. */
-export const PLATEFORME_LARG = 1.7
+export const PLATEFORME_LARG = 2.15
 /**
- * La hauteur d'une plateforme : celle d'un MUR, 2,40 m.
+ * La hauteur d'une plateforme : **2,70 m**.
  *
  * Ce n'est pas un chiffre décoratif, c'est la règle du jeu tout entière. À
  * JUMP_SPEED = 13,2 et g = 42, l'apex du saut vaut 13,2² / 84 = **2,07 m**.
- * Donc on ne peut PAS sauter sur une plateforme. Jamais.
+ * Yasuke ne peut donc PAS sauter sur une plateforme.
  *
- * Il n'existe que deux façons de monter :
+ * Il ne lui reste que deux façons de monter :
  *  · la RAMPE, quand il y en a une — on court dessus, c'est gratuit ;
  *  · l'ESCALADE, sinon — on lui rentre dedans et on passe par-dessus, en
  *    payant une seconde pleine.
  *
- * Aucun cas limite, aucune zone grise : la hauteur seule interdit le saut, donc
- * le joueur n'a jamais à deviner s'il « aurait pu passer ».
+ * ⚠️ **2,70 m est un PLAFOND, pas un chiffre libre.** Hana (saut ×1,18) culmine
+ * à 2,89 m, pieds à 2,94 m : elle est la seule du roster à pouvoir se poser
+ * directement sur une plateforme, et c'est précisément ce qui donne une raison
+ * de la choisir. Il ne reste que 24 cm de marge. Monter à 3 m ne rendrait pas
+ * les plateformes « plus hautes » — ça effacerait le passif de Hana.
+ *
+ * ⚠️ Et ce n'est plus `TAILLE_OBSTACLE.mur.haut`, dont elle était recopiée.
+ * Les deux valeurs répondaient à deux questions différentes qui se trouvaient
+ * avoir la même réponse : l'obstacle `mur` est calé sur le saut de Yasuke (il
+ * doit être infranchissable), la plateforme sur celui de Hana (elle doit être
+ * atteignable par elle seule). Les garder liées aurait fait bouger la
+ * calibration du saut en voulant simplement surélever les wagons.
  */
-export const PLATEFORME_H = TAILLE_OBSTACLE.mur.haut
+export const PLATEFORME_H = 2.7
 
 /**
  * Un élément de bordure (touffe de bambous, masure en flammes, rocher…).
@@ -364,7 +384,7 @@ export class Track {
       polygonOffsetFactor: -1,
       polygonOffsetUnits: -1,
     })
-    const geoSol = new THREE.PlaneGeometry(14, 240)
+    const geoSol = new THREE.PlaneGeometry(LARGEUR_SOL, 240)
     for (const m of [this.matSol, this.matSolHaut]) {
       const g = new THREE.Mesh(geoSol, m)
       g.rotation.x = -Math.PI / 2
@@ -446,7 +466,10 @@ export class Track {
       // Deux dalles par période plutôt qu'une : le pas est plus court, donc le
       // défilement plus lisible, sans que la ligne redevienne continue.
       for (const dz of [0, PAS_POINTILLE / 2]) {
-        for (const x of [-1.1, 1.1]) {
+        // À MI-CHEMIN entre deux lignes : les dalles bornent les couloirs, donc
+        // elles suivent l'écartement. Restées à ±1,1 m, elles auraient marqué
+        // des couloirs plus étroits que ceux où l'on court vraiment.
+        for (const x of [-ECART_LIGNE / 2, ECART_LIGNE / 2]) {
           const t = new THREE.PlaneGeometry(0.34 + r() * 0.2, 0.42 + r() * 0.26)
           t.rotateX(-Math.PI / 2)
           t.rotateY((r() - 0.5) * 0.7) // de travers : posée à la main
@@ -607,12 +630,20 @@ export class Track {
    * et « payer l'escalade » — et la seule qui demande du geste.
    *
    * Renvoie l'abscisse exacte du flanc, pour que le corps s'y colle vraiment.
+   *
+   * `pieds` est la hauteur du joueur. Au-dessus du plateau il n'y a plus de
+   * flanc du tout : c'est un SOL, on marche dessus. Le paramètre sert donc à
+   * deux choses d'un coup — ne pas s'accrocher à une paroi qu'on survole, et
+   * savoir que le flanc BLOQUE quand on est dessous (cf. les swipes dans
+   * main.ts : on ne se glisse pas de côté dans une masse pleine).
    */
-  flancA(lane: number, cote: number): number | null {
+  flancA(lane: number, cote: number, pieds = 0): number | null {
     const cible = lane + cote
     if (cible < 0 || cible > 2) return null
     for (const p of this.plateformes) {
       if (!p.active || p.plan.lane !== cible) continue
+      // Même tolérance que `supportSous` : au-dessus, le plateau porte.
+      if (pieds >= p.plan.hauteur - 0.3) continue
       const zAvant = p.mesh.userData.zAvant as number
       // Il faut être le long du plateau, pas devant son nez : arriver sur le
       // bord avant, c'est une rencontre de face, donc une escalade.
@@ -732,7 +763,7 @@ export class Track {
       }
       if (tex) {
         const tuile = b.tuileSol ?? 4
-        tex.repeat.set(14 / tuile, 240 / tuile)
+        tex.repeat.set(LARGEUR_SOL / tuile, 240 / tuile)
         // `repeat` étant déjà appliqué, un mètre de course vaut 1/tuile
         // d'unité de décalage — indépendamment de la longueur du plan.
         tex.offset.y = (this.defileSol / tuile) % 1
@@ -1127,18 +1158,21 @@ export class Track {
       this.scene.add(dec.mesh)
     }
     /*
-     * ⚠️ 4,8 m du centre, pas 7.
+     * ⚠️ 5,6 m du centre, pas 7.
      *
-     * Le décor commençait au BORD du sol (7 m). Or les lignes vont jusqu'à
-     * 2,2 m et les murs qu'on longe sont à 3,5 m : il restait une bande de sol
-     * nu de trois mètres et demi tout du long, juste là où l'œil se pose. La
-     * forêt avait beau être dense, elle démarrait trop loin pour se lire comme
-     * une forêt.
+     * Le décor commençait au BORD du sol (7 m). Or les lignes n'allaient alors
+     * qu'à 2,2 m et les murs à 3,5 m : il restait une bande de sol nu de trois
+     * mètres et demi tout du long, juste là où l'œil se pose. La forêt avait
+     * beau être dense, elle démarrait trop loin pour se lire comme une forêt.
      *
-     * 4,8 m laisse un mètre franc après les murs — assez pour qu'aucune tige ne
+     * 5,6 m laisse un mètre franc après les murs — assez pour qu'aucune tige ne
      * masque jamais un obstacle, ce qui reste la règle absolue.
+     *
+     * ⚠️ C'était 4,8 m quand les parois étaient à 3,5. Elles sont passées à
+     * 4,2 avec l'élargissement des lignes : garder 4,8 aurait planté la forêt
+     * DANS les murs.
      */
-    dec.mesh.position.set(cote * (4.8 + this.graineDecor() * 1.4), 0, z)
+    dec.mesh.position.set(cote * (5.6 + this.graineDecor() * 1.4), 0, z)
     /*
      * Les décors sont dessinés d'un seul côté (x local croissant = vers
      * l'extérieur). Pour le bord gauche, on fait DEMI-TOUR.
@@ -1160,7 +1194,9 @@ export class Track {
     if (!pf) {
       const habille = BIOMES[biome].fabriquePlateforme
       pf = {
-        mesh: habille ? habille(p.hauteur) : makePlateformeMesh(p.hauteur),
+        mesh: habille
+          ? habille(p.hauteur, PLATEFORME_LARG)
+          : makePlateformeMesh(p.hauteur),
         rampe: new THREE.Mesh(
           GEO_RAMPE,
           new THREE.MeshStandardMaterial({
@@ -1806,12 +1842,20 @@ function makePlateformeMesh(hauteur: number): THREE.Object3D {
     new THREE.MeshStandardMaterial({ color: 0x3a4258, roughness: 0.9 })
   )
   corps.position.y = hauteur / 2
+  // Le tablier : c'est lui le dessus, et il est de la matière de la plateforme.
+  const tablier = new THREE.Mesh(
+    new THREE.BoxGeometry(PLATEFORME_LARG + 0.06, 0.16, 1),
+    new THREE.MeshStandardMaterial({ color: 0x4d566f, roughness: 0.9 })
+  )
+  tablier.position.y = hauteur - 0.08
+  // Le vermillon réduit à une arête de 5 cm sur le nez : le repère survit, le
+  // « ruban rouge » disparaît.
   const liser = new THREE.Mesh(
-    new THREE.BoxGeometry(PLATEFORME_LARG + 0.06, 0.14, 1),
+    new THREE.BoxGeometry(PLATEFORME_LARG + 0.1, 0.05, 1),
     new THREE.MeshStandardMaterial({ color: 0xc33a2c, emissive: 0x3a0f0a })
   )
-  liser.position.y = hauteur
-  g.add(corps, liser)
+  liser.position.y = hauteur - 0.02
+  g.add(corps, tablier, liser)
   return g
 }
 
@@ -1889,10 +1933,10 @@ export function buildMurPlan(length: number, seed: number): PlannedMur[] {
  * pareil d'un bout à l'autre de la course.
  */
 function makeMurMesh(biome: number): THREE.Mesh {
-  const geo = new THREE.BoxGeometry(0.5, 3, 1) // 1 m de long : étiré au spawn
+  const geo = new THREE.BoxGeometry(0.5, MUR_HAUT, 1) // 1 m de long : étiré au spawn
   // Origine AU SOL, comme tous les habillages de biome : c'est la piste qui
   // pose l'objet à y = 0, elle n'a pas à connaître la hauteur de chacun.
-  geo.translate(0, 1.5, 0)
+  geo.translate(0, MUR_HAUT / 2, 0)
   const mur = new THREE.Mesh(
     geo,
     new THREE.MeshStandardMaterial({ color: BIOMES[biome].murCorps, roughness: 0.95 })
@@ -1901,7 +1945,7 @@ function makeMurMesh(biome: number): THREE.Mesh {
     new THREE.BoxGeometry(0.56, 0.18, 1),
     new THREE.MeshStandardMaterial({ color: 0xc33a2c, emissive: 0x3a0f0a })
   )
-  liser.position.y = 2.95 // le corps va de 0 à 3 m : le liseré le coiffe
+  liser.position.y = MUR_HAUT - 0.09 // le corps va de 0 à MUR_HAUT : il le coiffe
   mur.add(liser)
   return mur
 }
@@ -2089,20 +2133,23 @@ function makeFinishGate(): THREE.Group {
     emissive: 0x5a4310, // il brille légèrement dans la nuit
   })
 
-  for (const x of [-4, 4]) {
-    const pillar = new THREE.Mesh(new THREE.BoxGeometry(0.6, 5.6, 0.6), gold)
-    pillar.position.set(x, 2.8, 0)
+  // Le torii sacré reste le plus imposant : il domine les torii de décor d'un
+  // bon mètre, sans quoi l'arrivée cesserait d'être un événement.
+  for (const x of [-5.1, 5.1]) {
+    const pillar = new THREE.Mesh(new THREE.BoxGeometry(0.6, 8.6, 0.6), gold)
+    pillar.position.set(x, 4.3, 0)
     g.add(pillar)
   }
-  const top = new THREE.Mesh(new THREE.BoxGeometry(10.4, 0.65, 0.9), gold)
-  top.position.y = 5.8
-  const mid = new THREE.Mesh(new THREE.BoxGeometry(8.6, 0.45, 0.7), gold)
-  mid.position.y = 4.7
+  const top = new THREE.Mesh(new THREE.BoxGeometry(12.2, 0.65, 0.9), gold)
+  top.position.y = 8.8
+  const mid = new THREE.Mesh(new THREE.BoxGeometry(10.4, 0.45, 0.7), gold)
+  mid.position.y = 7.6
   g.add(top, mid)
 
-  // La ligne d'arrivée peinte au sol
+  // La ligne d'arrivée peinte au sol — élargie avec la piste, sinon elle ne
+  // barre plus les lignes extérieures.
   const line = new THREE.Mesh(
-    new THREE.PlaneGeometry(7.4, 1.2),
+    new THREE.PlaneGeometry(9.2, 1.2),
     new THREE.MeshBasicMaterial({ color: 0xd6ac5a })
   )
   line.rotation.x = -Math.PI / 2
@@ -2117,15 +2164,19 @@ function makeTorii(): THREE.Group {
   const g = new THREE.Group()
   const mat = new THREE.MeshStandardMaterial({ color: 0xc33a2c, roughness: 0.6 })
 
-  for (const x of [-3.6, 3.6]) {
-    const pillar = new THREE.Mesh(new THREE.BoxGeometry(0.5, 4.4, 0.5), mat)
-    pillar.position.set(x, 2.2, 0)
+  // Les piliers se plantent DERRIÈRE les parois (4,2 m) : un torii doit
+  // enjamber toute la piste, sinon il n'enjambe plus rien.
+  for (const x of [-4.6, 4.6]) {
+    const pillar = new THREE.Mesh(new THREE.BoxGeometry(0.5, 7.2, 0.5), mat)
+    pillar.position.set(x, 3.6, 0)
     g.add(pillar)
   }
-  const top = new THREE.Mesh(new THREE.BoxGeometry(9, 0.55, 0.8), mat)
-  top.position.y = 4.6
-  const mid = new THREE.Mesh(new THREE.BoxGeometry(7.6, 0.4, 0.6), mat)
-  mid.position.y = 3.7
+  // Le linteau est monté avec les murs (3 → 6 m) : posé à 4,6 m, il serait
+  // passé SOUS le haut des parois qu'il est censé franchir.
+  const top = new THREE.Mesh(new THREE.BoxGeometry(11, 0.55, 0.8), mat)
+  top.position.y = 7.4
+  const mid = new THREE.Mesh(new THREE.BoxGeometry(9.4, 0.4, 0.6), mat)
+  mid.position.y = 6.4
   g.add(top, mid)
 
   return g

@@ -3,15 +3,45 @@ import { NameTag } from './nametag'
 import { ROSTER, buildFighter, clearFighter, cssColor, type Fighter } from './roster'
 import { Anim, animerGuerrier, type Action, type Geste } from './anims'
 
+/**
+ * L'écartement entre deux lignes de course.
+ *
+ * ⚠️ C'est LA mesure dont tout le reste de la largeur découle. Elle est passée
+ * de 2,20 m à 2,80 m (+27 %) pour donner de l'air à la piste, et ce n'est pas
+ * un réglage isolé : il a fallu suivre partout ailleurs, sous peine de casser
+ * l'équilibrage.
+ *
+ *  · les OBSTACLES ont été élargis dans le même rapport (1,70 → 2,15 m). Sans
+ *    ça, un bloc couvrirait 61 % du pas au lieu de 77 % : la même esquive
+ *    deviendrait franchement plus facile, et toute la difficulté réglée à la
+ *    main partirait avec ;
+ *  · les parois (`MUR_X`), les barrières, les pointillés et le décor de bordure
+ *    se sont écartés d'autant, sinon la piste s'élargit mais son cadre reste
+ *    collé aux lignes ;
+ *  · le sol lui-même a été élargi, faute de quoi le décor se serait retrouvé à
+ *    flotter au-dessus du vide.
+ *
+ * Le TEMPS de changement de ligne, lui, ne bouge pas : `LANE_LERP` est une
+ * interpolation exponentielle, elle couvre 95 % de l'écart en ~0,25 s quelle
+ * que soit la distance. On glisse plus vite, pas plus longtemps — l'esquive
+ * garde exactement le même timing.
+ */
+export const ECART_LIGNE = 2.8
+
 /** Les 3 lignes de course (positions X dans le monde 3D) */
-export const LANES = [-2.2, 0, 2.2]
+export const LANES = [-ECART_LIGNE, 0, ECART_LIGNE]
 
 /**
  * À quelle distance du centre courent les parois latérales.
+ *
  * Défini ICI et pas dans track.ts : track importe déjà de player, l'inverse
  * créerait une dépendance circulaire entre les deux modules.
+ *
+ * Calé pour laisser le même jeu qu'avant entre la ligne extérieure et la paroi
+ * (~1,4 m) : de trop près, on se cognerait la caméra dans le mur ; de trop
+ * loin, l'accroche ne se sentirait plus à portée de main.
  */
-export const MUR_X = 3.5
+export const MUR_X = 4.2
 
 /*
  * Les valeurs de RÉFÉRENCE — celles de Yasuke.
@@ -48,6 +78,24 @@ export const MUR_HAUTEUR = 1.6
  * apporte déjà 0,48 rad.
  */
 export const MUR_PENCHE = 0.18
+/**
+ * ————— La RETOMBÉE après une paroi —————
+ *
+ * Quitter un mur ne rend pas la main tout de suite : le corps doit d'abord
+ * RENTRER sur sa ligne. Tant qu'il est encore au large, on ne peut ni changer
+ * de voie, ni se raccrocher à quoi que ce soit.
+ *
+ * Sans ça, la paroi devenait une boucle : on se relâchait encore collé au
+ * flanc et l'on se raccrochait dans la foulée, sans jamais revenir dans le
+ * couloir — on longeait un convoi entier d'un bout à l'autre sans risque.
+ *
+ * ⚠️ La condition est le RETOUR SUR LA VOIE, et rien d'autre. On a essayé d'y
+ * ajouter une perte d'altitude (redescendre sous 1,2 m) : ça marchait, mais ça
+ * rendait la main un demi-temps trop tard, et la reprise traînait. Le retour
+ * sur la ligne suffit — il prend déjà ~0,25 s de glissement, et c'est LUI qu'on
+ * voulait forcer. Le reste du vol se pilote normalement.
+ */
+const MUR_RETOUR_X = 0.25
 const SLIDE_TIME = 0.55 // durée d'une glissade (secondes)
 /**
  * Durée de la montée quand on escalade une plateforme sans rampe.
@@ -167,6 +215,7 @@ export class Player {
     this.attackT = 0
     this.mur = 0
     this.murT = 0
+    this.retour = false
     this.mesh.position.set(LANES[lane], 0, 0)
     this.mesh.scale.y = 1
     this.mesh.rotation.z = 0
@@ -221,8 +270,18 @@ export class Player {
     return this.sliding > 0
   }
 
+  /**
+   * Est-on dans la retombée qui suit une paroi ? Tant que c'est vrai, le corps
+   * rentre tout seul sur sa ligne et n'obéit plus. (cf. MUR_RETOUR_Y)
+   */
+  private retour = false
+  get enRetour() {
+    return this.retour
+  }
+
   moveLeft() {
     if (this.lane === 0) return // déjà au bord : pas de virage dans le vide
+    if (this.mur !== 0 || this.retour) return // collé, ou en train de rentrer
     this.lane--
     this.vire = -1
     this.vireT = VIRAGE_TEMPS
@@ -230,6 +289,7 @@ export class Player {
 
   moveRight() {
     if (this.lane === 2) return
+    if (this.mur !== 0 || this.retour) return
     this.lane++
     this.vire = 1
     this.vireT = VIRAGE_TEMPS
@@ -337,7 +397,9 @@ export class Player {
    * que de FACE, alors que de côté on doit pouvoir le longer.
    */
   accrocheMur(cote: -1 | 1, x = cote * MUR_X): boolean {
-    if (this.mur !== 0 || this.onGround) return false
+    // `retour` : on n'enchaîne pas deux parois sans être redescendu entre les
+    // deux. C'est ce qui empêche de longer un convoi entier d'une traite.
+    if (this.mur !== 0 || this.onGround || this.retour) return false
     this.mur = cote
     this.murX = x
     this.murT = MUR_DUREE
@@ -356,6 +418,10 @@ export class Player {
     this.mur = 0
     this.murT = 0
     this.vy = JUMP_SPEED * this.fighter.jump
+    // On part en l'air, mais SANS la main : le corps doit d'abord rentrer sur
+    // sa ligne et redescendre (cf. MUR_RETOUR_Y). C'est la fin du mouvement,
+    // pas un nouveau départ.
+    this.retour = true
   }
 
   /** Glisse au sol (renvoie la durée) ou plonge en l'air (renvoie 0). */
@@ -423,6 +489,20 @@ export class Player {
     } else {
       this.mesh.position.y = this.sol
       this.vy = 0
+    }
+
+    /*
+     * ————— Fin de la retombée —————
+     * Une seule condition : être rentré sur sa ligne. Dès que le corps est
+     * dans son couloir, il obéit de nouveau — même en plein vol.
+     *
+     * Le contact du sol libère aussi, dans tous les cas : un joueur qui court
+     * ne doit jamais se retrouver sans commandes, même si un cas de figure
+     * imprévu l'amenait ici à plat.
+     */
+    if (this.retour) {
+      const rentre = Math.abs(this.mesh.position.x - LANES[this.lane]) < MUR_RETOUR_X
+      if (this.onGround || rentre) this.retour = false
     }
 
     // Glissade : le perso s'aplatit puis se relève
