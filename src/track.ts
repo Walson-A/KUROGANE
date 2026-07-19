@@ -471,6 +471,18 @@ export class Track {
     return null
   }
 
+  /**
+   * 🎋 Cette plateforme est-elle montée sur pilotis, ouverte dessous ?
+   *
+   * Le biome d'une plateforme se déduit de sa distance — c'est déjà comme ça
+   * qu'on choisit son apparence (cf. spawnPlateforme). On lit donc la MÊME
+   * source : impossible qu'un radeau se dessine ajouré tout en se comportant
+   * comme un bloc plein.
+   */
+  private ajouree(d: number): boolean {
+    return BIOMES[indexBiome(d, this.courseLength)].plateformeAjouree === true
+  }
+
   supportSous(x: number, pieds: number): { sol: number; heurte: boolean } {
     let sol = 0
     let heurte = false
@@ -502,11 +514,16 @@ export class Track {
         // On garde la PLUS HAUTE : deux plateaux peuvent se chevaucher d'un
         // cheveu au moment où l'on passe de l'un à l'autre.
         sol = Math.max(sol, p.plan.hauteur)
-      } else {
+      } else if (!this.ajouree(p.plan.d)) {
         // Les pieds sous le plateau : on lui rentre dedans. À 2,40 m, c'est
         // forcément le cas quand il n'y a pas de rampe — d'où l'escalade.
         heurte = true
       }
+      /*
+       * 🎋 Sous un radeau de bambou, en revanche, ON PASSE — il est monté sur
+       * pilotis et son dessin l'annonce. Le bloquer revenait à démentir ce
+       * qu'on voit, et à fermer le seul passage bas de la course.
+       */
     }
     return { sol, heurte }
   }
@@ -538,6 +555,40 @@ export class Track {
       }
     }
     return plusProche
+  }
+
+  /**
+   * La première plateforme PLEINE qui barre cette ligne entre `d1` et `d2`.
+   *
+   * 🎋 Les radeaux ajourés sont ignorés : ils tiennent sur pilotis, et un
+   * projectile file dessous comme un coureur y passe. Sans cette exception,
+   * l'arme la plus lente du jeu aurait été arrêtée par du vide.
+   */
+  premierePlateforme(lane: number, d1: number, d2: number): number | null {
+    let plusProche: number | null = null
+    for (const p of this.plateformePlan) {
+      if (p.lane !== lane || this.ajouree(p.d)) continue
+      if (p.d > d1 && p.d <= d2 && (plusProche === null || p.d < plusProche)) {
+        plusProche = p.d
+      }
+    }
+    return plusProche
+  }
+
+  /**
+   * Ce qui arrête un projectile dans cette ligne : un mur ou une plateforme
+   * pleine, le plus proche des deux.
+   *
+   * Les sorts ne consultaient que les murs et TRAVERSAIENT les plateformes —
+   * un kunaï passait au travers d'un wagon massif. C'est ici qu'on répare, en
+   * un seul endroit, pour que tout ce qui vole obéisse à la même piste.
+   */
+  premierBarrage(lane: number, d1: number, d2: number): number | null {
+    const mur = this.premierMur(lane, d1, d2)
+    const pf = this.premierePlateforme(lane, d1, d2)
+    if (mur === null) return pf
+    if (pf === null) return mur
+    return Math.min(mur, pf)
   }
 
   /**

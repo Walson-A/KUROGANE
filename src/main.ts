@@ -3078,8 +3078,8 @@ function tick(now?: number) {
       )
       if (lance === 'onmyoji') {
         // Un bot ne vise pas mieux que nous : son portail part droit devant et
-        // meurt au premier mur, exactement comme le nôtre.
-        const mur = track.premierMur(b.ligne, b.distance, distance)
+        // meurt au premier obstacle, exactement comme le nôtre.
+        const mur = track.premierBarrage(b.ligne, b.distance, distance)
         if (devant === null && b.ligne === player.currentLane && mur === null && distance > b.distance) {
           const sien = b.distance
           b.distance = distance
@@ -3101,8 +3101,10 @@ function tick(now?: number) {
       const lo = Math.min(avant, portail.d)
       const hi = Math.max(avant, portail.d)
 
-      // Un mur l'avale : c'est la piste qui borne sa portée, pas un chiffre
-      const mur = track.premierMur(portail.lane, lo, hi)
+      // Un mur OU une plateforme pleine l'avale : c'est la piste qui borne sa
+      // portée, pas un chiffre. Les radeaux de bambou, eux, le laissent filer
+      // dessous — ils sont sur pilotis.
+      const mur = track.premierBarrage(portail.lane, lo, hi)
       // Qui croise-t-il dans sa ligne cette image ? Bots (solo) ET rivaux (en
       // ligne) confondus — le PLUS PROCHE l'emporte. On teste le franchissement :
       // à ~83 m/s il parcourt ~1,4 m par image, un test de proximité le raterait.
@@ -3454,10 +3456,22 @@ function tick(now?: number) {
       (touche === 'mur' ||
         track.supportSous(player.mesh.position.x, player.mesh.position.y).heurte)
 
-    if (stumble <= 0 && aGrimper && armure === 0 && player.escalader(PLATEFORME_H)) {
-      escaladeT = ESCALADE_FREIN_DUREE
+    /*
+     * ⚠️ L'escalade ne dépend PLUS de l'armure.
+     *
+     * La condition portait `armure === 0`, et l'intention était bonne : sous
+     * armure, on ne devait pas payer le freinage. Mais la branche suivante ne
+     * traite que les obstacles de `track.hits()` — une plateforme n'en est pas
+     * un. Résultat : armure levée, on heurtait un wagon massif et il ne se
+     * passait RIEN. On le traversait de part en part.
+     *
+     * La géométrie reste de la géométrie : on se hisse toujours. C'est le
+     * FREIN que l'armure épargne, pas le mur lui-même.
+     */
+    if (stumble <= 0 && aGrimper && player.escalader(PLATEFORME_H)) {
+      if (armure === 0) escaladeT = ESCALADE_FREIN_DUREE
       jouerBruit('chute')
-      toast('🧗 Escalade !')
+      toast(armure > 0 ? "🛡️ L'armure encaisse l'escalade" : '🧗 Escalade !')
     } else if (stumble <= 0 && touche && !player.escalade) {
       if (armure > 0) {
         // 🛡️ L'armure avale le choc : on garde toute sa vitesse. Mais un mur

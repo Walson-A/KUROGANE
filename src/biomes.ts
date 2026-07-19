@@ -89,6 +89,19 @@ export interface Biome {
    * puisque les allonger est justement ce qu'on veut.
    */
   fabriquePlateforme?: (hauteur: number) => THREE.Group
+
+  /**
+   * 🎋 Sa plateforme est-elle AJOURÉE — montée sur pilotis, ouverte dessous ?
+   *
+   * Ce n'est pas une coquetterie d'apparence mais une règle de jeu, et c'est
+   * pour ça qu'elle vit ici et pas dans la fabrique. Sous un radeau de bambou
+   * on doit pouvoir courir, et un kunaï doit filer dessous ; sous un wagon
+   * plein, non — on lui rentre dedans et on l'escalade.
+   *
+   * La collision LIT ce drapeau. Sans lui elle traitait tout comme plein, et
+   * le radeau bloquait un passage que son propre dessin annonce ouvert.
+   */
+  plateformeAjouree?: boolean
 }
 
 /**
@@ -555,6 +568,8 @@ const BAMBOUS: Biome = {
    * le langage des surfaces qu'on UTILISE, par opposition aux obstacles qu'on
    * subit.
    */
+  plateformeAjouree: true,
+
   fabriquePlateforme: (hauteur) => {
     const p: Piece[] = []
 

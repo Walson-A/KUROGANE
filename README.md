@@ -121,6 +121,35 @@ kurogane/
 l'aperçu 3D lisent tous la même fiche. Pour ajouter un guerrier, il suffit
 d'ajouter une entrée dans `ROSTER` — le reste du jeu suit tout seul.
 
+## 🎋 Les plateformes arrêtent — sauf le radeau de bambou
+
+Une plateforme **pleine** arrête le corps *et* les sorts. Le **radeau de
+bambou**, lui, est monté sur pilotis : on court dessous, et un projectile y file
+aussi. C'est le seul passage bas de la course, et son dessin l'annonce — le
+bloquer reviendrait à démentir ce qu'on voit.
+
+C'est une **règle de jeu**, pas une coquetterie : le drapeau `plateformeAjouree`
+vit sur le biome, à côté de sa fabrique, et la collision le **lit**. Impossible
+qu'un radeau se dessine ouvert tout en se comportant comme un bloc plein.
+
+Trois défauts réparés, tous invisibles au typage :
+
+1. **Les sorts traversaient tout.** Ils ne consultaient que les murs — un kunaï
+   passait au travers d'un wagon massif. `premierBarrage` prend désormais le
+   plus proche des deux, en un seul endroit pour tout ce qui vole.
+2. **Le bambou bloquait.** La collision ignorait le biome et traitait le radeau
+   comme plein, fermant le passage que sa propre silhouette promet.
+3. **L'armure faisait traverser les plateformes.** L'escalade était conditionnée
+   à `armure === 0` — bonne intention (ne pas payer le freinage), mais la
+   branche de secours ne traite que les obstacles, et une plateforme n'en est
+   pas un. Armure levée, on passait au travers d'un wagon. La géométrie reste de
+   la géométrie : on se hisse toujours, c'est le **frein** que l'armure épargne.
+
+```bash
+npm run plateformes:test   # 27 plateformes sur une vraie course : 21 arrêtent,
+                           # 6 laissent passer dessous, 27 portent sur le dessus
+```
+
 ## ⛩️ Le portique et sa forme creuse
 
 Le torii rouge a une boîte de collision qui **épouse sa forme** : deux piliers,
