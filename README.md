@@ -121,6 +121,37 @@ kurogane/
 l'aperçu 3D lisent tous la même fiche. Pour ajouter un guerrier, il suffit
 d'ajouter une entrée dans `ROSTER` — le reste du jeu suit tout seul.
 
+## ⛩️ Le portique et sa forme creuse
+
+Le torii rouge a une boîte de collision qui **épouse sa forme** : deux piliers,
+deux traverses, et le grand trou au milieu. Une seule boîte autour du tout
+aurait barré la piste entière — on teste donc les quatre pièces séparément. La
+charpente est définie **une seule fois**, en données (`TORII_PIECES`), et le
+portique comme sa collision se bâtissent à partir de là : bouger une poutre
+déplace du même coup ce qui l'arrête.
+
+**Il a fallu le monter de 3 m**, et ce n'est pas décoratif. Ses traverses barrent
+*toute* la piste : à leur place d'origine (dessous à 3,50 m), la tête de Yasuke
+les heurtait dès un saut au sol (3,57 m) et **Hana s'y écrasait à 4,39 m** —
+punie pour sa qualité même. Comme les torii défilent tous les 70 m sans rien
+savoir des obstacles tirés au sort, on se serait retrouvé forcé de sauter une
+barrière pile sous une traverse.
+
+L'ouverture dégage maintenant le saut le plus ample du jeu (5,99 m, Hana depuis
+une paroi) avec **51 cm de garde** — pas le centimètre qu'aurait donné le strict
+nécessaire, parce qu'un centimètre n'est pas une marge.
+
+> ⚠️ **À cette hauteur, la collision ne peut pas se déclencher**, et c'est
+> assumé : un torii, ça s'enjambe. Elle donne au portique la forme qu'il annonce
+> et prendra vie le jour où l'on rapprochera ses piliers — ils sont à 5 cm du
+> couloir de course sur mur, une seule valeur à changer pour qu'ils arrêtent
+> enfin celui qui longe la paroi.
+
+```bash
+npm run torii:test   # aucun saut ne doit heurter le portique, et les 3 voies
+                     # plus les 2 couloirs de paroi doivent rester libres
+```
+
 ## 🧭 Le chemin de retour dans les menus
 
 Les écrans retiennent **d'où l'on vient** dans une **pile**, pas dans un repère

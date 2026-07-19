@@ -1027,6 +1027,29 @@ export class Track {
     }
     return null
   }
+
+  /**
+   * Le portique rouge touche-t-il le coureur ?
+   *
+   * Sa forme est CREUSE : deux piliers et deux traverses, avec une grande
+   * ouverture au milieu. Une seule boîte autour du tout barrerait la piste
+   * entière. On teste donc les quatre pièces séparément — d'où « exactement sa
+   * forme » : on passe par le trou, on bute sur le bois.
+   */
+  heurteTorii(playerBox: THREE.Box3): boolean {
+    const box = new THREE.Box3()
+    const M = 0.12 // la même tolérance que les obstacles
+    for (const t of this.toriis) {
+      const z = t.position.z
+      if (Math.abs(z) > 2.5) continue // trop loin, on ne teste pas
+      for (const p of TORII_PIECES) {
+        box.min.set(p.x - p.larg / 2 + M, p.y - p.haut / 2 + M, z - p.prof / 2 + M)
+        box.max.set(p.x + p.larg / 2 - M, p.y + p.haut / 2 - M, z + p.prof / 2 - M)
+        if (box.intersectsBox(playerBox)) return true
+      }
+    }
+    return false
+  }
 }
 
 /**
@@ -1715,20 +1738,44 @@ function makeFinishGate(): THREE.Group {
 }
 
 /** Un torii : deux piliers + deux linteaux, tout en rouge vermillon */
-function makeTorii(): THREE.Group {
+/**
+ * ————— La charpente du torii —————
+ *
+ * Les quatre pièces, en DONNÉES : `[largeur, hauteur, profondeur]` et le centre.
+ * Le portique et sa boîte de collision se construisent tous les deux à partir
+ * d'ici — c'est la seule façon de garantir qu'ils ne divergeront jamais. Bouger
+ * une poutre déplace du même coup ce qui l'arrête.
+ *
+ * ⚠️ LA HAUTEUR N'EST PAS DÉCORATIVE. Les deux traverses barrent TOUTE la
+ * piste : à leur place d'origine (dessous à 3,50 m) la tête de Yasuke les
+ * heurtait dès un saut au sol (3,57 m) et Hana s'y écrasait à 4,39 m — punie
+ * pour sa qualité même. Et comme les torii défilent tous les 70 m sans rien
+ * savoir des obstacles tirés au sort, on se serait retrouvé forcé de sauter une
+ * barrière pile sous une traverse. Le portique est donc monté de 2,5 m : son
+ * ouverture passe au-dessus du saut le plus haut du jeu (5,99 m, Hana depuis
+ * une paroi), AVEC UNE VRAIE GARDE : 3 m de montée laissent 51 cm de dégagement
+ * plutôt que le centimètre qu'aurait donné le strict nécessaire. Un centimètre
+ * n'est pas une marge — la moindre retouche de l'impulsion l'aurait effacé en
+ * silence. Voir `npm run torii:test`, qui exige ce dégagement.
+ */
+const TORII_MONTEE = 3
+
+export const TORII_PIECES: { larg: number; haut: number; prof: number; x: number; y: number }[] = [
+  { larg: 0.5, haut: 4.4 + TORII_MONTEE, prof: 0.5, x: -3.6, y: (4.4 + TORII_MONTEE) / 2 },
+  { larg: 0.5, haut: 4.4 + TORII_MONTEE, prof: 0.5, x: 3.6, y: (4.4 + TORII_MONTEE) / 2 },
+  { larg: 7.6, haut: 0.4, prof: 0.6, x: 0, y: 3.7 + TORII_MONTEE }, // la traverse
+  { larg: 9, haut: 0.55, prof: 0.8, x: 0, y: 4.6 + TORII_MONTEE }, // le linteau
+]
+
+export function makeTorii(): THREE.Group {
   const g = new THREE.Group()
   const mat = new THREE.MeshStandardMaterial({ color: 0xc33a2c, roughness: 0.6 })
 
-  for (const x of [-3.6, 3.6]) {
-    const pillar = new THREE.Mesh(new THREE.BoxGeometry(0.5, 4.4, 0.5), mat)
-    pillar.position.set(x, 2.2, 0)
-    g.add(pillar)
+  for (const p of TORII_PIECES) {
+    const m = new THREE.Mesh(new THREE.BoxGeometry(p.larg, p.haut, p.prof), mat)
+    m.position.set(p.x, p.y, 0)
+    g.add(m)
   }
-  const top = new THREE.Mesh(new THREE.BoxGeometry(9, 0.55, 0.8), mat)
-  top.position.y = 4.6
-  const mid = new THREE.Mesh(new THREE.BoxGeometry(7.6, 0.4, 0.6), mat)
-  mid.position.y = 3.7
-  g.add(top, mid)
 
   return g
 }

@@ -3483,6 +3483,32 @@ function tick(now?: number) {
         if (online) net.sendAction({ t: 'stumble', keep: player.grip })
       }
     }
+    /*
+     * ⛩️ Percuter le portique rouge — ses piliers ou ses traverses.
+     *
+     * Pas de garde `surMur` ici, contrairement à la jarre : un pilier est du
+     * bois massif qu'on longe une paroi ou non.
+     *
+     * ⚠️ AUJOURD'HUI CE TEST NE PEUT PAS SE DÉCLENCHER, et c'est voulu. Le
+     * portique est monté assez haut pour dégager le saut le plus ample du jeu
+     * (cf. TORII_MONTEE dans track.ts), et ses piliers se dressent au-delà des
+     * parois. Un torii, ça s'enjambe : le rendre franchement mortel punirait au
+     * hasard, puisqu'ils défilent sans rien savoir des obstacles tirés au sort.
+     *
+     * On garde quand même la collision : elle donne au portique la forme qu'il
+     * annonce, et le jour où l'on rapprochera ses piliers — pour qu'ils
+     * arrêtent enfin celui qui longe la paroi — elle prendra vie sans qu'on
+     * touche à cette ligne.
+     */
+    if (stumble <= 0 && track.heurteTorii(player.hitbox())) {
+      speed = Math.max(6, speed * player.grip)
+      stumble = 1.2
+      flash()
+      jouerBruit('chute')
+      toast('⛩️ Portique percuté !')
+      if (online) net.sendAction({ t: 'stumble', keep: player.grip })
+    }
+
     // 🏺 Percuter une jarre : la poterie éclate et on accuse le choc. En vol
     // on passe au-dessus — une chaîne bien menée traverse la grappe sans
     // jamais rien percuter, c'est là sa récompense.
