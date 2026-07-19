@@ -41,11 +41,37 @@ export const GOOGLE_DISPO = Boolean(
   process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET
 )
 
-if (!secret && process.env.NODE_ENV === 'production') {
-  // En production on refuse de démarrer plutôt que de tourner avec un secret
-  // par défaut : un serveur qui marche « quand même » est le pire des cas,
-  // parce que personne ne remarque le trou.
-  throw new Error('AUTH_SECRET manquante — refus de démarrer en production.')
+/**
+ * Sommes-nous DÉPLOYÉS ? — et surtout, on ne le demande pas à `NODE_ENV`.
+ *
+ * ⚠️ Le garde-fou ne tenait qu'à `NODE_ENV === 'production'`, une variable que
+ * l'hébergeur pose *en général*. Si elle manquait, le serveur démarrait avec le
+ * secret de repli ci-dessous — celui qui est écrit en clair dans le dépôt.
+ * N'importe qui pouvait alors forger un jeton et se faire passer pour un autre
+ * joueur, sans que rien ne le signale.
+ *
+ * Le commentaire d'origine avait raison : « un serveur qui marche quand même
+ * est le pire des cas ». Le garde-fou souffrait exactement de ce défaut, parce
+ * qu'il reposait sur une hypothèse invérifiable.
+ *
+ * On se fie donc à des signes qu'on CONTRÔLE, et un seul suffit :
+ *  · `PUBLIC_URL` posée — on nous a donné une adresse publique ;
+ *  · une base qui n'est pas sur cette machine ;
+ *  · `NODE_ENV` à production, quand l'hébergeur veut bien la poser.
+ */
+const baseDistante = Boolean(
+  process.env.DATABASE_URL &&
+    !/(localhost|127\.0\.0\.1)/.test(process.env.DATABASE_URL)
+)
+const deploye =
+  Boolean(process.env.PUBLIC_URL) || baseDistante || process.env.NODE_ENV === 'production'
+
+if (!secret && deploye) {
+  throw new Error(
+    'AUTH_SECRET manquante alors que le serveur est déployé — refus de démarrer.\n' +
+      "  Pose-la dans les variables d'environnement de l'hébergeur. Pour en générer une :\n" +
+      '  node -e "console.log(require(\'crypto\').randomBytes(32).toString(\'hex\'))"'
+  )
 }
 
 /**
