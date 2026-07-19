@@ -687,12 +687,32 @@ export class Track {
      * LOOKAHEAD), pas d'après nos pieds : un bambou planté à 85 m devant alors
      * qu'on entre déjà dans le village nous arriverait dessus en pleine
      * fournaise. Le décor doit anticiper la frontière, les couleurs non.
+     *
+     * ⚠️ INDEXBIOME, PAS AMBIANCEA. `ambianceA(...).index` bascule au MILIEU
+     * du fondu de couleur — à 90 % du biome — pour que le décor ait le temps de
+     * changer avant que le sol finisse de changer de teinte. Utilisé ici, ça
+     * faisait basculer le décor de la forêt vers le village **133 m avant la
+     * vraie frontière** (mesuré par simulation) : la bambouseraie arrêtait de
+     * pousser alors que le sol était encore vert à 100 %, laissant ~85 m sans
+     * un seul bambou avant même que la couleur ait commencé à changer.
+     *
+     * indexBiome() est la frontière STRICTE, sans fondu : le décor ne bascule
+     * qu'au moment où le point 85 m devant franchit VRAIMENT la ligne. Le
+     * décalage résiduel (ces mêmes 85 m) est incompressible — c'est le prix de
+     * planter le décor en avance pour qu'il ait le temps d'apparaître dans la
+     * brume.
      */
-    const devant = enCourse
-      ? ambianceA(distance + LOOKAHEAD, this.courseLength).index
-      : 0
+    const devant = enCourse ? indexBiome(distance + LOOKAHEAD, this.courseLength) : 0
     const biome = BIOMES[devant]
-    if (this.prochainDecor === 0) this.prochainDecor = parcouru + 20
+    /*
+     * ⚠️ Aucun offset au premier semis.
+     *
+     * `parcouru + 20` laissait 20 m totalement nus autour de la ligne de
+     * départ — pile ce qu'on regarde en tournant la tête pendant le décompte.
+     * Semer dès `parcouru - 10` (un peu derrière, pour couvrir ce qu'on voit
+     * aussi en se retournant) fait exister la forêt dès le premier instant.
+     */
+    if (this.prochainDecor === 0) this.prochainDecor = parcouru - 10
     while (this.prochainDecor <= parcouru + LOOKAHEAD) {
       // Un élément de chaque côté, mais jamais à la même distance : deux rangées
       // symétriques feraient une allée de cimetière, pas une forêt.
