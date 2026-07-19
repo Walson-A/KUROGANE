@@ -2,7 +2,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'node:ht
 import { Server, LobbyRoom, WebSocketTransport } from 'colyseus'
 import { toNodeHandler } from 'better-auth/node'
 import { RaceRoom } from './RaceRoom.js'
-import { auth, GOOGLE_DISPO, BASE_URL } from './auth.js'
+import { auth, GOOGLE_DISPO, BASE_URL, migreAuth } from './auth.js'
 import { baseDispo, migrer } from './db.js'
 import { assureProfil, crediter } from './profil.js'
 import { acheter, catalogue } from './boutique.js'
@@ -48,6 +48,11 @@ const port = Number(process.env.PORT ?? 2567)
 // échoue de façon incompréhensible, plusieurs minutes plus tard.
 if (baseDispo()) {
   await migrer()
+  // Puis les tables d'IDENTITÉ, qui appartiennent à Better Auth et vivent hors
+  // de nos fichiers .sql. Sans cet appel il fallait lancer sa CLI à la main —
+  // ce que personne n'avait fait sur la production, d'où un serveur qui
+  // répondait `relation "user" does not exist` à chaque connexion.
+  await migreAuth()
 }
 
 const authHandler = auth ? toNodeHandler(auth) : null

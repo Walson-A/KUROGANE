@@ -1,4 +1,5 @@
 import { betterAuth } from 'better-auth'
+import { getMigrations } from 'better-auth/db/migration'
 import { anonymous, bearer } from 'better-auth/plugins'
 import { pool } from './db.js'
 import { fusionner } from './profil.js'
@@ -84,8 +85,17 @@ if (!secret && deploye) {
  */
 export const BASE_URL = process.env.PUBLIC_URL ?? `http://localhost:${process.env.PORT ?? 2567}`
 
-export const auth = pool
-  ? betterAuth({
+/*
+ * La configuration est SORTIE de l'appel à `betterAuth` pour être réutilisable.
+ *
+ * Better Auth gère ses propres tables (`user`, `session`, `account`,
+ * `verification`) et son migrateur a besoin de LA MÊME configuration que le
+ * serveur — les plugins ajoutent des colonnes (le plugin anonyme en ajoute une
+ * à `user`). Deux configurations séparées finiraient par diverger en silence :
+ * les tables ne correspondraient plus au code qui les interroge.
+ */
+const options = pool
+  ? {
       database: pool,
       secret: secret ?? 'secret-de-developpement-local-uniquement',
       baseURL: BASE_URL,
@@ -152,8 +162,39 @@ export const auth = pool
         'http://localhost:5173',
         ...(process.env.ORIGINES_AUTORISEES?.split(',').map((o) => o.trim()) ?? []),
       ],
-    })
+    }
   : null
+
+export const auth = options ? betterAuth(options) : null
+
+/**
+ * Crée les tables de Better Auth si elles manquent.
+ *
+ * ⚠️ CETTE ÉTAPE N'EXISTAIT PAS, et la production est tombée dessus.
+ *
+ * Nos migrations SQL (`server/migrations/*.sql`) ne décrivent que le PROFIL DE
+ * JEU — monnaies, boutique, classement. L'IDENTITÉ appartient à Better Auth,
+ * qui gère ses propres tables et les crée d'ordinaire via sa CLI, à la main.
+ *
+ * Personne n'a lancé cette commande contre la base de production. Résultat :
+ * nos six tables étaient là, les quatre siennes absentes, et le serveur
+ * répondait à chaque tentative de connexion par
+ * `relation "user" does not exist` — une base à moitié prête, ce que rien
+ * dans le déploiement ne signalait.
+ *
+ * Une étape manuelle qu'on ne peut pas oublier vaut mieux qu'une étape
+ * manuelle documentée : elle tourne donc au démarrage, comme les autres.
+ * `getMigrations` compare le schéma réel à ce que la configuration exige et
+ * n'applique que ce qui manque — relancer est donc sans effet.
+ */
+export async function migreAuth(): Promise<void> {
+  if (!options) return
+  const { toBeCreated, toBeAdded, runMigrations } = await getMigrations(options)
+  if (toBeCreated.length === 0 && toBeAdded.length === 0) return
+  const tables = [...toBeCreated, ...toBeAdded].map((t: { table: string }) => t.table)
+  await runMigrations()
+  console.log(`🔐 tables d'identité créées : ${[...new Set(tables)].join(', ')}`)
+}
 
 /** L'authentification est-elle disponible ? (elle exige la base) */
 export function authDispo() {
