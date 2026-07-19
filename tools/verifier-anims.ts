@@ -18,7 +18,7 @@ import { Anim, animerGuerrier, clipDe, type Action } from '../src/anims.ts'
 /** La pose de garde attendue pour l'épaule armée (cf. ARME_EPAULE dans anims). */
 const ARME_EPAULE_ATTENDUE = new THREE.Quaternion().setFromEuler(new THREE.Euler(-0.3, 0, 0))
 import { ROSTER, buildFighter, customFighter, fighterById, DEFAULT_CUSTOM, type Corps, type Fighter } from '../src/roster.ts'
-import { MUR_PENCHE } from '../src/player.ts'
+import { MUR_ECART, MUR_PENCHE } from '../src/player.ts'
 
 let echecs = 0
 function verifier(titre: string, ok: boolean, detail = '') {
@@ -438,6 +438,29 @@ console.log('\n————— La course sur mur —————')
     'l\'inclinaison totale au mur reste lisible',
     total < 0.8,
     `${Math.abs(propre).toFixed(2)} (clip) + ${MUR_PENCHE} (jeu) = ${total.toFixed(2)} rad, ${((total * 180) / Math.PI).toFixed(0)}°`
+  )
+}
+
+console.log('\n————— Personne ne s\'enfonce dans la paroi —————')
+for (const f of PERSOS) {
+  const nom = f.id === 'perso' ? `perso(${f.head})` : f.id
+  const { racine } = corpsDe(f)
+  racine.updateMatrixWorld(true)
+  const b = new THREE.Box3().setFromObject(racine)
+  const demi = Math.max(Math.abs(b.min.x), Math.abs(b.max.x))
+  /*
+   * MUR_X designe le CENTRE du bloc ; la face qu'on longe est une
+   * demi-epaisseur plus pres de la piste, et le coureur se tient en retrait de
+   * MUR_ECART. On verifie que son point le plus large ne traverse pas la face.
+   *
+   * Sans ce retrait, l'axe du corps etait plante au milieu du bloc : 0,76 de
+   * penetration, on ne voyait plus qu'un bras et une jambe depasser.
+   */
+  const penetration = demi - MUR_ECART
+  verifier(
+    `${nom.padEnd(16)} ne traverse pas la paroi`,
+    penetration < 0.25,
+    `${penetration > 0 ? 'frole de ' : 'degage de '}${Math.abs(penetration).toFixed(2)}`
   )
 }
 

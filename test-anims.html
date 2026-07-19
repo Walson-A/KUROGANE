@@ -54,7 +54,7 @@
       import { Anim, animerGuerrier, aUnClip } from '/src/anims.ts'
       // Les mesures du mur viennent du JEU, jamais recopiées : sinon le banc
       // d'essai montrerait une pose que personne ne verra en course.
-      import { MUR_HAUTEUR, MUR_PENCHE } from '/src/player.ts'
+      import { MUR_HAUTEUR, MUR_PENCHE, MUR_ECART, MUR_EPAISSEUR } from '/src/player.ts'
 
       // ————— La scène : juste ce qu'il faut pour REGARDER un mouvement —————
       // On ne charge pas le jeu : pas de piste, pas de course, pas de menu. Une
@@ -227,11 +227,12 @@
          * montrerait une pose que personne ne verra jamais en course. */
         const auMur = ACTIONS[iAction] === 'mur'
         mur.visible = auMur
-        /* En course, le mur et le coureur partagent la MÊME abscisse : le mur
-         * est posé à `cote * MUR_X` (spawnMur) et le joueur y vient exactement
-         * (player.update). On les laisse donc tous deux à l'origine du banc —
-         * les décaler mentirait sur ce qu'on voit vraiment en jeu.
+        /* Le coureur se tient EN RETRAIT de la face qu'il longe (MUR_ECART),
+         * et cette face est une demi-épaisseur en deçà du centre du bloc. On
+         * garde le coureur à l'origine et on pose le mur à l'écart exact du
+         * jeu — les deux constantes sont importées, jamais recopiées.
          * Le mur reste planté au sol : son centre est à 1,5 pour 3 m de haut. */
+        mur.position.x = murCote * (MUR_ECART + MUR_EPAISSEUR / 2)
         mur.position.y = 1.5
         corps.position.y = auMur ? MUR_HAUTEUR : 0
         corps.rotation.z += ((auMur ? murCote * MUR_PENCHE : 0) - corps.rotation.z) * Math.min(1, dt * 14)

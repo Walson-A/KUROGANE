@@ -327,6 +327,14 @@ Le rival la montre aussi : la manœuvre passe désormais par le réseau
 (`{ t: 'mur', cote }`), relayée telle quelle par le serveur. Rien ne la
 transmettait, alors que c'est la plus spectaculaire du jeu.
 
+> ⚠️ **Le coureur se tient EN RETRAIT de la paroi** (`MUR_ECART = 0,5`). Son
+> axe était planté au milieu du bloc : **0,76 de pénétration**, on ne voyait
+> plus qu'un bras et une jambe dépasser. Viser la face ne suffit pas — le corps
+> a une épaisseur, et c'est son axe qu'on positionne. Mesuré après correction :
+> les plus fins gardent un souffle d'écart, l'épaulière d'Oni-Maru frôle de
+> 0,15. C'est le chiffre à retoucher si le coureur paraît trop collé ou trop
+> loin. La même correction vaut pour les **flancs de plateforme**.
+
 > ⚠️ **Le clip penche déjà le buste de 0,48 rad.** Le jeu ajoutait 0,55 par
 > dessus — réglés à l'époque où le corps restait droit, faute d'animation — ce
 > qui portait le total à **59°** : le coureur basculait presque à l'horizontale.

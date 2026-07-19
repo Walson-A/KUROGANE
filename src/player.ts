@@ -13,6 +13,30 @@ export const LANES = [-2.2, 0, 2.2]
  */
 export const MUR_X = 3.5
 
+/**
+ * L'épaisseur du bandeau de paroi (cf. `makeMurMesh` dans track.ts). `MUR_X`
+ * en désigne le CENTRE : la face intérieure, celle qu'on longe, est donc une
+ * demi-épaisseur plus près de la piste.
+ */
+export const MUR_EPAISSEUR = 0.5
+
+/**
+ * De combien le corps se tient en RETRAIT de la surface qu'il longe.
+ *
+ * Sans lui, le coureur était planté au milieu du bloc et disparaissait dedans :
+ * on ne voyait plus qu'un bras et une jambe dépasser. Il ne suffit pas de viser
+ * la face — le corps a une épaisseur, et c'est son AXE qu'on positionne.
+ *
+ * Mesuré sur les corps montés : la demi-largeur va de 0,39 (Tamae) à 0,65
+ * (Oni-Maru, ses épaulières). À 0,5, les plus fins gardent un souffle d'écart
+ * et les plus larges frôlent la paroi de l'épaule — ce qui se lit comme un
+ * appui, pas comme une noyade. L'inclinaison au mur penche d'ailleurs le buste
+ * vers la piste, ce qui dégage encore le haut du corps.
+ *
+ * C'est LE chiffre à retoucher si le coureur paraît trop collé ou trop loin.
+ */
+export const MUR_ECART = 0.5
+
 /*
  * Les valeurs de RÉFÉRENCE — celles de Yasuke.
  * Chaque guerrier les multiplie par ses propres réglages (cf. roster.ts).
@@ -350,10 +374,12 @@ export class Player {
    * flanc d'une plateforme est une paroi comme une autre : on n'escalade un mur
    * que de FACE, alors que de côté on doit pouvoir le longer.
    */
-  accrocheMur(cote: -1 | 1, x = cote * MUR_X): boolean {
+  accrocheMur(cote: -1 | 1, surface = cote * (MUR_X - MUR_EPAISSEUR / 2)): boolean {
     if (this.mur !== 0 || this.onGround) return false
     this.mur = cote
-    this.murX = x
+    // `surface` est la FACE qu'on longe ; le corps se tient en retrait, sinon
+    // son axe serait dans la matière et on ne verrait plus que ses membres.
+    this.murX = surface - cote * MUR_ECART
     this.murT = MUR_DUREE
     this.vy = 0 // on se colle : plus de gravité tant qu'on tient
     this.sliding = 0
