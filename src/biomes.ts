@@ -1583,37 +1583,68 @@ const PONT: Biome = {
     const corps: Piece[] = []
     const lueurs: Piece[] = []
 
-    // Poteau + lisse. Serrés (8 m) : c'est leur défilement rapide qui donne la
-    // sensation de vitesse au-dessus du vide.
-    corps.push({
-      geo: GEO.bloc.clone().scale(0.22, 1.5, 0.22),
-      couleur: 0x4a3a4e, x: 0, y: 0.75, z: 0,
-    })
-    corps.push({
-      geo: GEO.bloc.clone().scale(0.14, 0.14, 8.2),
-      couleur: 0x53425a, x: 0, y: 1.35, z: 0,
-    })
-    // La poutre de tablier, sous le niveau du sol : on devine la structure qui
-    // nous porte, et donc le vide en dessous.
-    corps.push({
-      geo: GEO.bloc.clone().scale(0.3, 0.4, 8.2),
-      couleur: 0x342a3a, x: 0, y: -0.25, z: 0,
-    })
+    /*
+     * ⚠️ PAS DE RAMBARDE ICI — c'était un DOUBLON.
+     *
+     * Ce décor portait un poteau et une lisse, soit une clôture complète, à
+     * 5,6 m du centre. Or la bordure du jeu court déjà à 4,2 m
+     * (`fabriqueBarriere`), alignée avec les murs qu'on longe. Le pont était
+     * donc le seul biome à montrer DEUX traits parallèles.
+     *
+     * On garde la barrière commune — c'est elle qui reste continue avec les
+     * murs, dont elle est le prolongement bas — et ce décor ne dit plus que ce
+     * qu'elle ne peut pas dire : la STRUCTURE sous les pieds, et le vide
+     * qu'elle enjambe.
+     */
 
-    // Un haubanage de loin en loin : le pont a l'air tenu par quelque chose.
-    if (rng() < 0.25) {
-      const h = 4 + rng() * 3
+    /*
+     * ⚠️ RIEN SOUS LE NIVEAU DU SOL.
+     *
+     * Ce décor posait une poutre de tablier à y = −0,25 pour « laisser deviner
+     * la structure ». Elle n'a jamais rien laissé deviner : le sol de forêt
+     * court à y = −0,03 sur 260 m de large et l'enterre complètement. C'était
+     * des triangles payés pour de l'invisible.
+     *
+     * Le pont s'exprime donc par ce qui DÉPASSE : des pylônes hauts, qu'aucun
+     * œil ne confondra avec une clôture, et ses lanternes.
+     */
+
+    /*
+     * Les pylônes. Hauts (4 à 8 m) et espacés : c'est ce qui distingue un
+     * portique de pont d'une rangée de piquets. Un sur deux environ — assez
+     * pour border la voie, trop peu pour faire une ligne continue.
+     */
+    if (rng() < 0.55) {
+      const h = 4 + rng() * 4
       corps.push({
-        geo: GEO.bloc.clone().scale(0.26, h, 0.26),
-        couleur: 0x3e3145, x: 0, y: h / 2, z: 0,
+        geo: GEO.bloc.clone().scale(0.3, h, 0.3),
+        couleur: teinte(0x463a52, 0x2b2334, rng()),
+        x: 0, y: h / 2, z: 0,
+      })
+      // La traverse qui le relie vers l'extérieur : un pylône seul a l'air
+      // planté au hasard, relié il a l'air de tenir quelque chose.
+      corps.push({
+        geo: GEO.bloc.clone().scale(1.6, 0.16, 0.16),
+        couleur: 0x3e3145,
+        x: 0.8, y: h * 0.78, z: 0,
       })
     }
 
-    // Une lanterne : le seul point chaud du biome le plus froid.
+    /*
+     * Une lanterne, sur son PROPRE mât.
+     *
+     * Elle se dressait sur le poteau de rambarde ; sans lui, elle flotterait.
+     * Un mât isolé tous les ~30 m ne refait pas une clôture — c'est une
+     * ponctuation, et le seul point chaud du biome le plus froid.
+     */
     if (rng() < 0.28) {
+      corps.push({
+        geo: GEO.bloc.clone().scale(0.14, 1.9, 0.14),
+        couleur: 0x4a3a4e, x: 0, y: 0.95, z: 0,
+      })
       lueurs.push({
         geo: GEO.bloc.clone().scale(0.42, 0.6, 0.42),
-        couleur: 0xffcf87, x: 0, y: 1.95, z: 0,
+        couleur: 0xffcf87, x: 0, y: 2.1, z: 0,
       })
     }
 
