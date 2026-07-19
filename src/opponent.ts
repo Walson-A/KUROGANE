@@ -2,7 +2,7 @@ import * as THREE from 'three'
 import { LANES, MUR_DUREE, MUR_PENCHE, VIRAGE_TEMPS } from './player'
 import { NameTag } from './nametag'
 import { buildFighter, clearFighter, cssColor, fighterById, type Fighter } from './roster'
-import { Anim, animerGuerrier, type Action } from './anims'
+import { Anim, MUR_COTE_NATIF, animerGuerrier, type Action } from './anims'
 import type { OppAction } from './net'
 
 /** Ce que le réseau nous apprend sur l'adversaire à chaque message */
@@ -245,9 +245,11 @@ export class Opponent {
     this.tAnim += dt
     this.vireT = Math.max(0, this.vireT - dt)
     this.murT = Math.max(0, this.murT - dt)
+    // 🪞 Même règle que chez nous : retournée sur la paroi opposée
+    this.anim.miroir = this.murT > 0 && this.murCote !== MUR_COTE_NATIF
     // Le corps bascule vers la paroi, puis se redresse — meme inclinaison que
     // chez le joueur (cf. player.update).
-    const penche = this.murT > 0 ? this.murCote * MUR_PENCHE : 0
+    const penche = this.murT > 0 ? -this.murCote * MUR_PENCHE : 0
     this.mesh.rotation.z += (penche - this.mesh.rotation.z) * Math.min(1, dt * 14)
     animerGuerrier(this.racine, this.fighter, this.anim, this.action(), dt, this.tAnim)
 

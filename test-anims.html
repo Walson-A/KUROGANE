@@ -235,7 +235,7 @@
         mur.position.x = murCote * (MUR_ECART + MUR_EPAISSEUR / 2)
         mur.position.y = 1.5
         corps.position.y = auMur ? MUR_HAUTEUR : 0
-        corps.rotation.z += ((auMur ? murCote * MUR_PENCHE : 0) - corps.rotation.z) * Math.min(1, dt * 14)
+        corps.rotation.z += ((auMur ? -murCote * MUR_PENCHE : 0) - corps.rotation.z) * Math.min(1, dt * 14)
 
         // ————— La caméra —————
         const VITESSE_TOUR = 1.8 // rad/s

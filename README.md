@@ -335,6 +335,22 @@ transmettait, alors que c'est la plus spectaculaire du jeu.
 > 0,15. C'est le chiffre à retoucher si le coureur paraît trop collé ou trop
 > loin. La même correction vaut pour les **flancs de plateforme**.
 
+### 🪞 Une seule paroi capturée, les deux jouées
+
+`Wall Run` a été capturé sur la paroi de **gauche** : le buste y penche vers −X
+et c'est la **main gauche** qui va chercher le mur. Rejoué tel quel à droite, le
+coureur se penchait dans le vide.
+
+Plutôt que réclamer un second fichier, on **retourne le mouvement**. Retourner,
+c'est deux choses : **échanger les membres** (ce que faisait le bras gauche, le
+droit le fait) et **retourner chaque rotation** — une réflexion à travers le
+plan sagittal envoie le quaternion `(x, y, z, w)` sur `(x, −y, −z, w)`, ce qui
+conserve les balancements avant/arrière et inverse les mouvements latéraux.
+Mesuré : l'image obtenue est **exactement** l'inverse, à 0,0000 près.
+
+Le **bras armé reste à droite** des deux côtés, et c'est voulu : on tient son
+sabre de la même main où qu'on coure. C'est la seule asymétrie assumée.
+
 > ⚠️ **Le clip penche déjà le buste de 0,48 rad.** Le jeu ajoutait 0,55 par
 > dessus — réglés à l'époque où le corps restait droit, faute d'animation — ce
 > qui portait le total à **59°** : le coureur basculait presque à l'horizontale.

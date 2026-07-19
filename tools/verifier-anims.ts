@@ -464,6 +464,70 @@ for (const f of PERSOS) {
   )
 }
 
+console.log('\n————— La course sur mur, retournee pour l\'autre paroi —————')
+{
+  /*
+   * Wall Run a ete capture sur la paroi de GAUCHE : le buste y penche vers -X
+   * et la main gauche va chercher le mur. Sur la paroi de droite on le rejoue
+   * RETOURNE, faute de quoi le coureur se penche dans le vide.
+   *
+   * On mesure sur le clip SEUL (`appliquer`), pas via `animerGuerrier` : les
+   * finitions verrouillent le bras arme a droite quel que soit le cote — c'est
+   * voulu, on tient son sabre de la meme main — mais ca casserait la symetrie.
+   */
+  const f = PERSOS[0]
+  const clip = clipDe(f, 'mur')
+  if (clip) {
+    const lire = (miroir: boolean) => {
+      const { racine, corps } = corpsDe(f)
+      const anim = new Anim()
+      anim.miroir = miroir
+      const buste: number[] = []
+      const mainG: number[] = []
+      const mainD: number[] = []
+      const p = new THREE.Vector3()
+      for (let i = 0; i < 30; i++) {
+        anim.jouer('mur')
+        anim.appliquer(f, corps, clip.duree / 30, 1)
+        racine.updateMatrixWorld(true)
+        p.set(0, 1, 0); corps.torse.localToWorld(p); racine.worldToLocal(p); buste.push(p.x)
+        p.set(0, -0.38, 0); corps.brasG.bas.localToWorld(p); racine.worldToLocal(p); mainG.push(p.x)
+        p.set(0, -0.38, 0); corps.brasD.bas.localToWorld(p); racine.worldToLocal(p); mainD.push(p.x)
+      }
+      return { buste, mainG, mainD }
+    }
+    const droit = lire(false)
+    const inverse = lire(true)
+    let pire = 0
+    for (let i = 0; i < droit.buste.length; i++) {
+      pire = Math.max(
+        pire,
+        Math.abs(droit.buste[i] + inverse.buste[i]),
+        Math.abs(droit.mainG[i] + inverse.mainD[i]),
+        Math.abs(droit.mainD[i] + inverse.mainG[i])
+      )
+    }
+    verifier(`le miroir donne l'image exactement inverse`, pire < 0.01, `ecart ${pire.toFixed(4)}`)
+
+    const moy = (a: number[]) => a.reduce((s, v) => s + v, 0) / a.length
+    /*
+     * L'inclinaison que le jeu ajoute doit RENFORCER celle du clip, jamais la
+     * combattre. Une rotation Z negative bascule le haut du corps vers +X,
+     * d'ou le `-cote` : appliquee a l'endroit, elle penchait vers la piste et
+     * annulait la moitie de la pose.
+     */
+    for (const [cote, m] of [[-1, droit], [1, inverse]] as const) {
+      const clipX = moy(m.buste)
+      const jeuX = -(-cote * MUR_PENCHE) // le sens vers lequel bascule le buste
+      verifier(
+        `paroi ${cote === -1 ? 'gauche' : 'droite'} : le jeu renforce le clip`,
+        Math.sign(clipX) === Math.sign(jeuX),
+        `clip ${clipX.toFixed(2)}, jeu ${jeuX.toFixed(2)}`
+      )
+    }
+  }
+}
+
 console.log('\n————— Le repos respire sans courir —————')
 {
   /*

@@ -1,7 +1,7 @@
 import * as THREE from 'three'
 import { NameTag } from './nametag'
 import { ROSTER, buildFighter, clearFighter, cssColor, type Fighter } from './roster'
-import { Anim, animerGuerrier, type Action, type Geste } from './anims'
+import { Anim, MUR_COTE_NATIF, animerGuerrier, type Action, type Geste } from './anims'
 
 /** Les 3 lignes de course (positions X dans le monde 3D) */
 export const LANES = [-2.2, 0, 2.2]
@@ -68,8 +68,14 @@ export const MUR_HAUTEUR = 1.6
 /**
  * Le RESTE d'inclinaison qu'ajoute le jeu par-dessus le clip de course sur mur.
  * Exporté : le rival penche pareil chez nous (cf. opponent.ts).
- * C'est le chiffre à retoucher si la pose au mur ne plaît pas — le clip, lui,
- * apporte déjà 0,48 rad.
+ *
+ * ⚠️ Il s'applique en `-cote * MUR_PENCHE`, et le signe compte plus que la
+ * valeur. Une rotation Z négative bascule le haut du corps vers +X : pour
+ * pencher VERS la paroi — ce qui donne l'appui — il faut donc le signe opposé
+ * au côté. Appliqué à l'endroit, le jeu penchait vers la piste et COMBATTAIT
+ * le clip, qui penche de 0,48 rad vers le mur. Les deux s'ajoutent maintenant.
+ *
+ * C'est le chiffre à retoucher si la pose au mur ne plaît pas.
  */
 export const MUR_PENCHE = 0.18
 const SLIDE_TIME = 0.55 // durée d'une glissade (secondes)
@@ -411,6 +417,9 @@ export class Player {
   update(dt: number) {
     this.tAnim += dt
     this.vireT = Math.max(0, this.vireT - dt)
+    // 🪞 La course sur mur n'existe que pour UNE paroi : sur l'autre, on la
+    // rejoue retournée plutôt que de réclamer un second fichier.
+    this.anim.miroir = this.mur !== 0 && this.mur !== MUR_COTE_NATIF
     // Le mouvement suit l'ÉTAT, pas une horloge : au sol on court, en l'air on
     // joue le saut, au ras du sol la glissade, sur la paroi la course de mur.
     // Le lecteur enchaîne en fondu.
@@ -431,7 +440,7 @@ export class Player {
         // mur : celui-ci penche déjà le buste de 0,48 rad à lui seul. Les 0,55
         // d'origine, calés à l'époque où le corps restait droit, portaient le
         // total à 59° — le coureur basculait presque à l'horizontale.
-        this.mesh.rotation.z += (this.mur * MUR_PENCHE - this.mesh.rotation.z) * k
+        this.mesh.rotation.z += (-this.mur * MUR_PENCHE - this.mesh.rotation.z) * k
         this.sliding = 0
         return // ni voie, ni gravité, ni glissade tant qu'on tient
       }

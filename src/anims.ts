@@ -237,6 +237,51 @@ const EN_BOUCLE: Record<Action, boolean> = {
   mur: false,
 }
 
+/**
+ * ————— Le miroir —————
+ *
+ * `Wall Run` a été capturé sur la paroi de GAUCHE : le buste y penche vers -X
+ * et c'est la main gauche qui va chercher le mur. Rejoué tel quel à droite, le
+ * coureur se penche dans le vide — et il COMBAT l'inclinaison que le jeu ajoute
+ * au lieu de s'y ajouter. Plutôt que réclamer un second fichier, on retourne
+ * le mouvement.
+ *
+ * Retourner, c'est deux choses. D'abord ÉCHANGER les membres : ce que faisait
+ * le bras gauche, c'est le droit qui le fait. Ensuite retourner chaque
+ * rotation : une réflexion à travers le plan sagittal envoie le quaternion
+ * (x, y, z, w) sur (x, -y, -z, w) — un balancement avant/arrière est conservé,
+ * un mouvement latéral est inversé, ce qui est exactement ce qu'on veut.
+ */
+export const MUR_COTE_NATIF = -1
+
+const MIROIR: Record<string, string> = {
+  brasG: 'brasD',
+  brasD: 'brasG',
+  brasGbas: 'brasDbas',
+  brasDbas: 'brasGbas',
+  jambeG: 'jambeD',
+  jambeD: 'jambeG',
+  jambeGbas: 'jambeDbas',
+  jambeDbas: 'jambeGbas',
+  // torse et tete n'ont pas de jumeau : ils se retournent sur eux-mêmes.
+}
+
+/** Lit une articulation, éventuellement en miroir. */
+function lireCote(
+  clip: Clip,
+  joint: string,
+  t: number,
+  sortie: THREE.Quaternion,
+  boucle: boolean,
+  miroir: boolean
+) {
+  lire(clip, miroir ? MIROIR[joint] ?? joint : joint, t, sortie, boucle)
+  if (miroir) {
+    sortie.y = -sortie.y
+    sortie.z = -sortie.z
+  }
+}
+
 /** Les articulations du haut du corps — celles que pilote un geste superposé. */
 const JOINTS_HAUT = new Set(['torse', 'tete', 'brasG', 'brasGbas', 'brasD', 'brasDbas'])
 
@@ -249,8 +294,13 @@ export class Anim {
   private action: Action = 'course'
   private t: number
   private clipCourant: Clip | null = null
+  /**
+   * 🪞 Rejouer le mouvement retourné. Posé par l'appelant, qui seul sait de
+   * quel côté est la paroi.
+   */
+  miroir = false
   /** Le mouvement qu'on quitte, gardé le temps du fondu */
-  private avant: { clip: Clip; action: Action; t: number } | null = null
+  private avant: { clip: Clip; action: Action; t: number; miroir: boolean } | null = null
   private fondu = 0
   /** Horloge de la foulee calculee : monotone et sensible a la cadence */
   private tSecours = 0
@@ -287,7 +337,11 @@ export class Anim {
     // Sans clip en cours (première image, ou guerrier sans animation), il n'y
     // a rien à quitter : on démarre net plutôt que de fondre depuis le vide.
     const sortant = this.clipCourant
-    this.avant = sortant ? { clip: sortant, action: this.action, t: this.t } : null
+    // On garde AUSSI l'état du miroir : sans lui, quitter la paroi de droite
+    // relisait la pose sortante à l'endroit, et le corps sautait d'un coup.
+    this.avant = sortant
+      ? { clip: sortant, action: this.action, t: this.t, miroir: this.miroir }
+      : null
     this.fondu = sortant ? FONDU : 0
     this.action = action
     this.t = 0
@@ -323,12 +377,19 @@ export class Anim {
     for (const joint of Object.keys(clip.pistes)) {
       const cible = membre(g, joint)
       if (!cible) continue
-      lire(clip, joint, this.t, cible.quaternion, boucle)
+      lireCote(clip, joint, this.t, cible.quaternion, boucle, this.miroir)
 
       // Le fondu : on revient vers la pose qu'on quittait, pour ne pas
       // téléporter les membres d'un mouvement à l'autre.
       if (melange > 0 && this.avant) {
-        lire(this.avant.clip, joint, this.avant.t, qTmp, EN_BOUCLE[this.avant.action])
+        lireCote(
+          this.avant.clip,
+          joint,
+          this.avant.t,
+          qTmp,
+          EN_BOUCLE[this.avant.action],
+          this.avant.miroir
+        )
         cible.quaternion.slerp(qTmp, melange)
       }
 
@@ -380,7 +441,7 @@ export class Anim {
       if (!JOINTS_HAUT.has(joint)) continue
       const cible = membre(g, joint)
       if (!cible) continue
-      lire(clip, joint, this.tGeste, qTmp, false)
+      lireCote(clip, joint, this.tGeste, qTmp, false, this.miroir)
       cible.quaternion.slerp(qTmp, poids)
     }
   }
