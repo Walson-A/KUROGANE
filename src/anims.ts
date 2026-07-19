@@ -18,6 +18,7 @@ import cuites from './anims-cuites.json' with { type: 'json' }
 import { CUSTOM_STYLE, animerCourse, type Corps, type Fighter } from './roster'
 
 export type Action =
+  | 'repos'
   | 'course'
   | 'courseRapide'
   | 'courseGenee'
@@ -220,6 +221,7 @@ function membre(g: Corps, joint: string): THREE.Object3D | null {
 
 /** Les actions qui tournent en rond ; les autres se jouent une fois et tiennent. */
 const EN_BOUCLE: Record<Action, boolean> = {
+  repos: true,
   course: true,
   courseRapide: true,
   courseGenee: true,
@@ -504,6 +506,24 @@ export function animerGuerrier(
   if (!g) return
   anim.jouer(action)
   if (!anim.appliquer(f, g, dt, intensite)) {
+    /*
+     * 🧍 L'attente sans clip : personne n'a encore déposé de « Standing Idle »
+     * dans animation/. On ne fait PAS courir le guerrier sur place — sur une
+     * grille de départ, ce serait ridicule. On le pose en position de repos et
+     * on le fait RESPIRER : un souffle lent, décalé par l'horloge propre de
+     * chaque coureur pour que la grille ne respire pas à l'unisson.
+     */
+    if (action === 'repos') {
+      animerCourse(racine, 0, 0) // la pose de repos, immobile
+      const souffle = Math.sin(anim.horloge * 1.7)
+      g.torse.rotation.x = 0.02 + souffle * 0.022
+      g.tete.rotation.x = -souffle * 0.015
+      g.bassin.position.y = 0.72 + souffle * 0.008
+      // Les bras se décollent un rien du corps à l'inspiration
+      g.brasG.pivot.rotation.z = 0.04 + souffle * 0.02
+      g.brasD.pivot.rotation.z = -0.04 - souffle * 0.02
+      return
+    }
     // Son horloge à lui, pas celle de l'appelant : elle suit la cadence, donc
     // ce guerrier s'emballe aussi sous le vent et dans le sprint.
     animerCourse(racine, anim.horloge, intensite)

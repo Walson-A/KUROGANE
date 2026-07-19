@@ -78,7 +78,7 @@ const PERSOS: Fighter[] = [
  *
  * C'est `npm run anims` qui dit quel dossier réclame quoi, avec son tableau.
  */
-const ACTIONS: Action[] = ['course', 'courseRapide', 'courseGenee', 'saut', 'glissade', 'chute', 'lancer', 'virageG', 'virageD', 'impact', 'attaque']
+const ACTIONS: Action[] = ['repos', 'course', 'courseRapide', 'courseGenee', 'saut', 'glissade', 'chute', 'lancer', 'virageG', 'virageD', 'impact', 'attaque']
 console.log('\n————— Couverture : qui a quoi (constat) —————')
 for (const f of PERSOS) {
   const dispo = ACTIONS.filter((a) => clipDe(f, a))
@@ -439,6 +439,35 @@ console.log('\n————— La course sur mur —————')
     total < 0.8,
     `${Math.abs(propre).toFixed(2)} (clip) + ${MUR_PENCHE} (jeu) = ${total.toFixed(2)} rad, ${((total * 180) / Math.PI).toFixed(0)}°`
   )
+}
+
+console.log('\n————— Le repos respire sans courir —————')
+{
+  /*
+   * L'attente sur la grille n'a pas de clip : elle est CALCULEE. Deux choses a
+   * garantir : les jambes ne pedalent pas (un coureur qui court sur place
+   * pendant le decompte serait ridicule), et le buste bouge quand meme (une
+   * statue serait pire). Le controle ne vaut que pour le REPLI : si un vrai
+   * clip « Standing Idle » arrive un jour, il aura le droit de bouger plus.
+   */
+  const f = PERSOS[0]
+  if (!clipDe(f, 'repos')) {
+    const { racine, corps } = corpsDe(f)
+    const anim = new Anim()
+    let jambes = 0
+    let buste = 0
+    let pj = corps.jambeG.pivot.quaternion.clone()
+    let pt = corps.torse.rotation.x
+    for (let i = 0; i < 120; i++) {
+      animerGuerrier(racine, f, anim, 'repos', 1 / 60, i / 60)
+      jambes += pj.angleTo(corps.jambeG.pivot.quaternion)
+      pj = corps.jambeG.pivot.quaternion.clone()
+      buste += Math.abs(corps.torse.rotation.x - pt)
+      pt = corps.torse.rotation.x
+    }
+    verifier('au repos, les jambes ne courent pas', jambes < 0.2, `${jambes.toFixed(2)} rad cumules`)
+    verifier('au repos, le buste respire', buste > 0.05, `${buste.toFixed(2)} rad cumules`)
+  }
 }
 
 console.log('\n————— Le repli quand le mouvement manque —————')

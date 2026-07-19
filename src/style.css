@@ -348,6 +348,44 @@ body {
   background-repeat: no-repeat;
 }
 /* Le « ploop » : l'encre gicle sur l'écran d'un coup, avec un petit rebond */
+/* ——— 🎯 La terre du kunai ——— */
+/* Des éclaboussures de boue COLLÉES aux bords : le centre reste lisible — on
+   est gêné, pas aveuglé. Contrairement à la fumée, elle n'a pas de minuteur :
+   elle tient jusqu'au 🍵 thé (cf. subirSort / lancerParchemin). */
+#terre {
+  position: fixed;
+  inset: -4%;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.5s ease;
+  background:
+    /* les paquets de boue, tous ancrés sur le POURTOUR : brun terreux, bord net */
+    radial-gradient(ellipse 16% 22% at 0% 18%, rgba(74, 52, 30, 0.85) 0 55%, transparent 78%),
+    radial-gradient(ellipse 13% 17% at 2% 62%, rgba(58, 41, 24, 0.8) 0 52%, transparent 76%),
+    radial-gradient(ellipse 15% 20% at 100% 30%, rgba(74, 52, 30, 0.85) 0 55%, transparent 78%),
+    radial-gradient(ellipse 12% 15% at 98% 74%, rgba(58, 41, 24, 0.8) 0 52%, transparent 76%),
+    radial-gradient(ellipse 20% 12% at 26% 0%, rgba(66, 46, 26, 0.78) 0 50%, transparent 74%),
+    radial-gradient(ellipse 17% 11% at 74% 100%, rgba(66, 46, 26, 0.78) 0 50%, transparent 74%),
+    radial-gradient(ellipse 14% 10% at 88% 2%, rgba(58, 41, 24, 0.72) 0 48%, transparent 72%),
+    radial-gradient(ellipse 15% 11% at 12% 98%, rgba(58, 41, 24, 0.72) 0 48%, transparent 72%);
+}
+#terre.on {
+  opacity: 1;
+  transition: none;
+  animation: gicleeTerre 0.3s cubic-bezier(0.2, 1.4, 0.4, 1);
+}
+/* La giclée : la boue arrive de face puis s'écrase sur la vitre */
+@keyframes gicleeTerre {
+  0% {
+    opacity: 0;
+    transform: scale(1.6);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
 #fumee.show {
   opacity: 1;
   transition: none;

@@ -62,6 +62,13 @@ const MAX_CLIENTS = 10
 
 /** Décompte avant le GO, une fois la partie lancée (ms). */
 const COUNTDOWN_MS = 10_000
+/**
+ * 👻 La trêve du départ : 5 s après le GO, aucune attaque ne passe — ni sort,
+ * ni coup. Le client affiche la même fenêtre ; ICI elle est appliquée pour de
+ * vrai, car un client trafiqué peut envoyer ce qu'il veut. Même valeur que
+ * FANTOME_DUREE côté client (main.ts) : les deux doivent bouger ensemble.
+ */
+const FANTOME_MS = 5_000
 
 /** ⚠️ À garder en phase avec COURSE_LENGTH dans src/main.ts */
 const COURSE_LENGTH = 1920
@@ -259,6 +266,8 @@ export class RaceRoom extends Room<{ state: RaceState }> {
     this.onMessage('spell', (client, data: any) => {
       const p = this.state.players.get(client.sessionId)
       if (!p || this.state.phase !== 'racing' || p.finished) return
+      // 👻 Trêve du départ : le serveur jette le sort, quoi qu'en dise le client
+      if (Date.now() < this.state.startAt + FANTOME_MS) return
       if (!SORTS_OFFENSIFS.includes(String(data?.kind))) return
 
       const msg = {
@@ -284,6 +293,8 @@ export class RaceRoom extends Room<{ state: RaceState }> {
      */
     this.onMessage('pvp', (client, data: any) => {
       if (this.state.phase !== 'racing') return
+      // 👻 Trêve du départ : pas de coup non plus
+      if (Date.now() < this.state.startAt + FANTOME_MS) return
       const moi = this.state.players.get(client.sessionId)
       if (!moi || moi.finished) return
 

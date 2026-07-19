@@ -93,6 +93,8 @@ export class Player {
   gene = false
   /** 🔥 Vrai sous le Souffle de Vent ou dans le sprint final : la foulée s'emballe. */
   presse = false
+  /** 🧍 Vrai pendant le décompte : on attend sur la grille, on ne court pas. */
+  auRepos = false
   private vire = 0 // le côté du virage en cours : -1 gauche, +1 droite
   private vireT = 0 // ce qu'il en reste
 
@@ -108,6 +110,8 @@ export class Player {
     if (this.sliding > 0) return 'glissade'
     if (!this.onGround) return 'saut'
     if (this.vireT > 0) return this.vire < 0 ? 'virageG' : 'virageD'
+    // 🧍 Sur la grille de départ : on attend, on ne piétine pas sur place.
+    if (this.auRepos) return 'repos'
     // La gêne l'emporte sur la hâte : empoisonné, on titube même porté par le
     // vent — sinon un sort offensif se verrait annulé à l'écran.
     if (this.gene) return 'courseGenee'
@@ -245,6 +249,16 @@ export class Player {
    * rejouer le même saut chez l'adversaire.
    */
   jump(grue = false): number {
+    /*
+     * 🧱 Sauter DEPUIS la paroi la lâche aussitôt : elle nous renvoie en l'air
+     * (lacheMur donne l'impulsion) et la gravité nous ramène sur la voie.
+     * Un seul saut suffit donc à rentrer sur le terrain, sans attendre la fin
+     * du passage — et l'impulsion est renvoyée pour que le réseau la rejoue.
+     */
+    if (this.mur !== 0) {
+      this.lacheMur()
+      return this.vy
+    }
     if (this.onGround) {
       this.vy = JUMP_SPEED * this.fighter.jump
       this.sliding = 0

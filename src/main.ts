@@ -303,6 +303,8 @@ const toastEl = document.getElementById('toast')!
 const countEl = document.getElementById('count')!
 const flashEl = document.getElementById('flash')!
 const fumeeEl = document.getElementById('fumee')!
+/** 🎯 La terre du kunai : des éclaboussures sur les BORDS de l'écran, jusqu'au 🍵 thé */
+const terreEl = document.getElementById('terre')!
 const progressEl = document.getElementById('progressfill')!
 const gapEl = document.getElementById('gap')!
 const aspiEl = document.getElementById('aspi')!
@@ -428,7 +430,18 @@ let senbonFin = 0 // ☠️ l'écran ondule
 const PORTAIL_BLEU = 0x4db8ff
 
 /** 🔮 Le portail en vol : il file tout droit dans SA ligne jusqu'au 1er mur. */
-let portail: { d: number; lane: number; couleur: number } | null = null
+let portail: { d: number; lane: number; couleur: number; sens: 1 | -1 } | null = null
+
+/**
+ * 👻 La trêve du départ : pendant les 5 premières secondes, personne ne peut
+ * attaquer personne. Ni lame, ni sort, ni portail — le peloton se déploie
+ * d'abord. Sans elle, le premier kunai partait sur la grille, avant même
+ * d'avoir pu esquiver quoi que ce soit.
+ * Le serveur applique LA MÊME fenêtre (cf. RaceRoom) : un client trafiqué qui
+ * enverrait un sort plus tôt serait simplement ignoré.
+ */
+const FANTOME_DUREE = 5
+const enTreve = () => state === 'course' && time < FANTOME_DUREE
 
 const portailGroup = new THREE.Group()
 // Le cœur : presque blanc, c'est lui qui « brûle » au centre
@@ -1660,6 +1673,8 @@ function subirSort(
   srcMesh: THREE.Object3D | null = null,
   fromId = ''
 ): boolean {
+  // 👻 La trêve du départ protège tout le monde — même d'un client trafiqué
+  if (enTreve()) return false
   if (time < miroirFin) {
     miroirFin = 0 // la parade est à usage unique
     toast('🪞 Parade Miroir — renvoyé !')
@@ -1691,6 +1706,9 @@ function subirSort(
     }
     speed = Math.max(6, speed * 0.35)
     stumble = 1.2
+    // 🎯 L'explosion te crache de la terre au visage : les BORDS de l'écran se
+    // salissent, le centre reste lisible. Et elle COLLE — seul le 🍵 thé lave.
+    terreEl.classList.add('on')
     toast('🎯 Kunai en pleine course !')
   } else if (kind === 'fumigene') {
     fumigeneFin = time + FUMIGENE_DUREE
@@ -1785,6 +1803,7 @@ function lancerParchemin() {
     // encore empoisonné et entravé alors qu'on vient de se purifier.
     libererChaines(player.mesh) // ⛓️ les chaînes tombent
     dissiperBrume(player.mesh) // ☠️ la brume se lève
+    terreEl.classList.remove('on') // 🎯 la terre du kunai s'en va avec le reste
     theFin = time + THE_DUREE // 🍵 les cercles montent
     sonDeSoin()
   }
@@ -1792,8 +1811,16 @@ function lancerParchemin() {
   else if (kind === 'onmyoji') {
     // La couleur voyage AVEC le portail jusqu'à la brûlure qu'il laissera sur
     // le mur : c'est lui qui la porte, pas les maillages.
+    if (enTreve()) {
+      // 👻 Même le portail attend la fin de la trêve : il échange des places,
+      // c'est bien une attaque. Le rouleau est rendu, rien n'est perdu.
+      toast('👻 Trêve du départ — encore un instant !')
+      slots.unshift(kind)
+      drawSlots()
+      return
+    }
     const couleur = PORTAIL_BLEU
-    portail = { d: distance, lane: player.currentLane, couleur }
+    portail = { d: distance, lane: player.currentLane, couleur, sens: 1 }
     player.geste('lancer') // 🔥 le bras jette le portail devant lui
     for (const m of [portailHalo, portailAnneau]) {
       ;(m.material as THREE.MeshBasicMaterial).color.setHex(couleur)
@@ -1802,16 +1829,26 @@ function lancerParchemin() {
   }
   // ————— Offensif : ça part chez quelqu'un —————
   else if (p.cible === 'adversaire') {
+    if (enTreve()) {
+      // 👻 On ne bloque pas le rouleau pour toujours : on le REND. La trêve
+      // est un délai, pas une punition.
+      toast('👻 Trêve du départ — encore un instant !')
+      slots.unshift(kind)
+      drawSlots()
+      return
+    }
     if (online) {
       // Il vise le rival le plus proche DEVANT — comme en solo, mais parmi les
       // 9 autres. Le serveur ne l'applique qu'à celui-là.
       const cible = rivalDevant()
       if (!cible) {
+        /*
+         * Comme à l'entraînement : en tête, le sort part dans le vide et le
+         * slot SE LIBÈRE. On rendait le rouleau, et un joueur en tête se
+         * retrouvait les mains pleines à jamais — impossible de vider ses
+         * slots pour ramasser mieux. La file en souffrait plus que le sort.
+         */
         toast(`${p.icone} …mais tu mènes déjà !`)
-        // On a quand même retiré le rouleau du slot : on le rend, sinon on
-        // aurait payé un sort perdu.
-        slots.unshift(kind)
-        drawSlots()
         return
       }
       lancerProjet(kind, player.mesh.position, cible.opp.mesh.position, cible.opp.mesh)
@@ -1926,7 +1963,7 @@ function gagneParchemin(kind: ParcheminKind) {
  * ESTIMÉE (extrapolée), la seule honnête — mais le serveur revérifiera.
  */
 function rivalAuContact() {
-  if (!online) return null
+  if (!online || enTreve()) return null // 👻 pas de cible pendant la trêve
   for (const r of rivals.values()) {
     if (!r.opp.active || r.finished) continue
     if (r.opp.laneNow !== player.currentLane) continue
@@ -1996,7 +2033,7 @@ function tenteMur(cote: -1 | 1): boolean {
 }
 
 function botAuContact(): Bot | null {
-  if (online) return null
+  if (online || enTreve()) return null // 👻 pas de cible pendant la trêve
   for (let i = 0; i < nbBots; i++) {
     const b = bots[i]
     if (!b.actif || b.ligne !== player.currentLane) continue
@@ -2175,6 +2212,7 @@ function startRace(seed: number) {
   fumigeneFin = 0
   senbonFin = 0
   portail = null
+  terreEl.classList.remove('on') // pas de boue d'une course sur la suivante
   portailGroup.visible = false
   impactGroup.visible = false // ni orbe ni brûlure ne survivent à une course
   impactFin = 0
@@ -2866,8 +2904,13 @@ function tick(now?: number) {
       // part directement à la vitesse de croisière (≈ 0,3 s de gagnées) —
       // toujours moins qu'un trébuchement : ça départage, ça ne décide pas.
       speed = 12 + 10 * sprintCharge
+      player.auRepos = false // 🧍→🏃 fin de l'attente, la foulée reprend
       if (sprintCharge > 0.75) toast('🚀 Départ canon !')
-      if (online) for (const r of rivals.values()) r.opp.go()
+      if (online)
+        for (const r of rivals.values()) {
+          r.opp.repos = false
+          r.opp.go()
+        }
       sprintTaps = []
       sprintCharge = 0
       sprintEl.classList.add('hidden')
@@ -2877,10 +2920,12 @@ function tick(now?: number) {
       net.leave()
       backToMenu('⚠️ Connexion perdue au départ.')
     }
+    // 🧍 Pendant le décompte, tout le monde ATTEND sur la grille : personne ne
+    // court sur place. Le drapeau retombe au GO, juste au-dessus.
+    player.auRepos = true
     player.update(dt)
     for (const r of rivals.values()) {
-      // Chacun entre dans le sprint a SA distance, pas a la notre
-      r.opp.presse = r.opp.distanceNow >= COURSE_LENGTH - SPRINT_ZONE
+      r.opp.repos = true
       r.opp.update(dt, distance)
     }
     // Les rivaux sont déjà sur la ligne de départ pendant le décompte
@@ -3001,24 +3046,32 @@ function tick(now?: number) {
     // ————— 🔮 Le portail en vol —————
     if (portail) {
       const avant = portail.d
-      portail.d += (speed + ONMYOJI_VITESSE) * dt
+      // Le sens : +1 vers l'avant, -1 quand une 🪞 parade l'a renvoyé
+      portail.d += (speed + ONMYOJI_VITESSE) * dt * portail.sens
+      const lo = Math.min(avant, portail.d)
+      const hi = Math.max(avant, portail.d)
 
       // Un mur l'avale : c'est la piste qui borne sa portée, pas un chiffre
-      const mur = track.premierMur(portail.lane, avant, portail.d)
+      const mur = track.premierMur(portail.lane, lo, hi)
       // Qui croise-t-il dans sa ligne cette image ? Bots (solo) ET rivaux (en
       // ligne) confondus — le PLUS PROCHE l'emporte. On teste le franchissement :
       // à ~83 m/s il parcourt ~1,4 m par image, un test de proximité le raterait.
       const botTouche = botsEnCourse()
-        .filter((b) => b.ligne === portail!.lane && b.distance > avant && b.distance <= portail!.d)
+        .filter((b) => b.ligne === portail!.lane && b.distance > lo && b.distance <= hi)
         .sort((a, b) => a.distance - b.distance)[0]
       const rivalTouche = [...rivals.values()]
         .filter(
           (r) =>
             r.opp.currentLane === portail!.lane &&
-            r.opp.distanceNow > avant &&
-            r.opp.distanceNow <= portail!.d
+            r.opp.distanceNow > lo &&
+            r.opp.distanceNow <= hi
         )
         .sort((a, b) => a.opp.distanceNow - b.opp.distanceNow)[0]
+      // 🔮 En marche ARRIÈRE, la boule peut retomber sur son lanceur : c'est la
+      // seule « cible » qu'elle n'échange pas — on ne troque pas sa place avec
+      // soi-même. Elle s'y éteint, et la parade aura coûté un portail.
+      const retourAuLanceur =
+        portail.sens === -1 && player.currentLane === portail.lane && distance >= lo && distance <= hi
 
       const dMur = mur ?? Infinity
       const dBot = botTouche ? botTouche.distance : Infinity
@@ -3034,12 +3087,31 @@ function tick(now?: number) {
         portail = null
         portailGroup.visible = false
         toast('🔮 Le portail se brise sur un mur…')
-      } else if (botTouche && dBot <= dRival) {
-        const sien = botTouche.distance
-        botTouche.distance = distance
+      } else if (retourAuLanceur && dBot === Infinity) {
         portail = null
         portailGroup.visible = false
-        echangerAvec(sien, botTouche.profil.nom, botTouche.mesh)
+        toast(`🔮 Ton portail te revient… et s'éteint.`)
+      } else if (botTouche && dBot <= dRival) {
+        /*
+         * 🪞 La Parade Miroir renvoie AUSSI le portail : la boule repart en
+         * marche arrière, telle quelle. Sur le chemin du retour elle obéit aux
+         * mêmes lois — un joueur croisé échange sa place avec le lanceur, un
+         * mur la brise. `subir` consomme la parade et ne fait rien d'autre
+         * pour un portail : les afflictions n'y connaissent pas ce sort.
+         */
+        if (botTouche.subir('onmyoji', time)) {
+          portail.sens = (portail.sens === 1 ? -1 : 1) as 1 | -1
+          // La boule repart JUSTE DERRIÈRE lui : sans ce décalage, elle le
+          // recroisait à l'image suivante — et l'échangeait, parade ou pas.
+          portail.d = botTouche.distance + 0.6 * portail.sens
+          toast(`🪞 ${botTouche.profil.nom} renvoie le portail !`)
+        } else {
+          const sien = botTouche.distance
+          botTouche.distance = distance
+          portail = null
+          portailGroup.visible = false
+          echangerAvec(sien, botTouche.profil.nom, botTouche.mesh)
+        }
       } else if (rivalTouche) {
         // En ligne : on lui envoie NOTRE place, il prendra la sienne. Chacun
         // calcule l'échange de son côté — à 100 ms de ping, l'écart est de ~3 m.
@@ -3048,10 +3120,10 @@ function tick(now?: number) {
         portail = null
         portailGroup.visible = false
         echangerAvec(sien, rivalTouche.name, rivalTouche.opp.mesh)
-      } else if (portail.d > COURSE_LENGTH) {
+      } else if (portail.d > COURSE_LENGTH || portail.d < 0) {
         // Aucun plafond de distance : sa portée est INFINIE. Seuls un rival ou
-        // un mur l'arrêtent. Faute de quoi il finit par franchir le torii, et
-        // il n'y a plus personne à échanger derrière.
+        // un mur l'arrêtent. Faute de quoi il finit par franchir le torii —
+        // ou, renvoyé, par repasser la ligne de départ — et s'éteint.
         portail = null
         portailGroup.visible = false
       } else {

@@ -80,6 +80,10 @@ const JOINTS = [
  * C'est la dérive latérale des hanches qui tranche, plus bas.
  */
 const ACTIONS = {
+  // 🧍 L'attente sur la grille de départ. Aucun fichier déposé pour l'instant :
+  // le jeu respire en calculé (cf. anims.ts). Déposer un « Standing Idle.fbx »
+  // dans un dossier suffira, il sera pris ici sans toucher au code.
+  repos: [/Idle/i, /Standing/i, /Breathing/i],
   virage: [/Arc/i],
   lancer: [/Fireball/i],
   impact: [/Impact/i],
@@ -125,7 +129,7 @@ const DECOUPES = {
  *   mauvais saut d'obstacle.
  */
 function note(action, m) {
-  if (action === 'course' || action === 'courseGenee') {
+  if (action === 'course' || action === 'courseGenee' || action === 'repos') {
     // Boucler est éliminatoire, mais entre deux clips qui bouclent bien, le
     // départage se fait à la VITESSE. On est dans une course : un jogging à
     // côté de sprinteurs se lit comme un coureur à la traîne, même s'il
@@ -402,7 +406,7 @@ const clips = {}
  * un passage de 0,95 s (MUR_DUREE) — il tombe presque juste. L'exiger en
  * boucle le faisait refuser pour rien, et le mur restait sans animation.
  */
-const boucles = new Set(['course', 'courseGenee'])
+const boucles = new Set(['course', 'courseGenee', 'repos'])
 
 for (const [cle, liste] of [...candidats].sort()) {
   const action = cle.split('/')[1]

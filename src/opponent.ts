@@ -67,6 +67,8 @@ export class Opponent {
    * Le vent, lui, ne transite pas par le réseau — on ne peut pas le savoir.
    */
   presse = false
+  /** 🧍 Vrai pendant le décompte : il attend sur la grille comme nous. */
+  repos = false
 
   /** 🧱 Ce qu'il lui reste à courir sur la paroi (secondes) */
   private murT = 0
@@ -79,6 +81,7 @@ export class Opponent {
     if (this.sliding || this.slideTimer > 0) return 'glissade'
     if (this.mesh.position.y > 0.001) return 'saut'
     if (this.vireT > 0) return this.vire < 0 ? 'virageG' : 'virageD'
+    if (this.repos) return 'repos' // 🧍 sur la grille de départ
     return this.presse ? 'courseRapide' : 'course'
   }
 

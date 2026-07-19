@@ -45,6 +45,15 @@ avec Claude Code comme développeur.
   giclent vers les bords quand on martèle ou qu'on dash
 - 👣 **Poussière d'atterrissage** : un petit nuage s'étale au sol quand un
   coureur retombe d'un saut — **tout le monde**, bots et rivaux en ligne compris
+- 👻 **La trêve du départ** : pendant les **5 premières secondes**, aucune
+  attaque ne passe — ni lame, ni sort, ni portail. Le peloton se déploie
+  d'abord. Le serveur applique la même fenêtre : un client trafiqué qui
+  enverrait un sort plus tôt est simplement ignoré
+- 🧍 **Sur la grille**, pendant le décompte, chacun **attend** — personne ne
+  court sur place. Faute de clip « Standing Idle » déposé, la respiration est
+  calculée, décalée par coureur pour que la grille ne respire pas à l'unisson
+- 🧱 **Sauter depuis la paroi** la lâche aussitôt : elle te renvoie en l'air et
+  tu retombes sur ta voie — un seul saut suffit à rentrer sur le terrain
 
 ### Contrôles
 
@@ -739,6 +748,34 @@ Elles ne sont **pas écrites dans le HTML**. `EFFETS`, dans
 **calcule** au lieu de les recopier : « +35 % pendant 1,5 s » sort de
 `VENT_BOOST` et `VENT_DUREE`. Retoucher un réglage corrige donc l'aide toute
 seule — un texte figé aurait menti au joueur dès le premier ajustement.
+
+### 🪞 La parade renvoie AUSSI le portail
+
+La Parade Miroir renvoyait déjà tous les sorts ciblés à leur lanceur. Elle
+renvoie maintenant le 🔮 **portail** : la boule repart **en marche arrière**,
+telle quelle. Sur le chemin du retour elle obéit aux mêmes lois — un coureur
+croisé **échange sa place avec le lanceur**, un mur la **brise**, et si elle
+revient jusqu'au lanceur lui-même, elle s'y éteint : on n'échange pas sa place
+avec soi-même. La parade est consommée, comme pour n'importe quel sort.
+
+> En ligne, la parade ne renvoie **pas** le portail (l'échange y est calculé
+> des deux côtés en même temps — le refaire à l'envers demanderait un
+> arbitrage serveur). C'est le seul écart entre solo et en ligne, et il est
+> assumé plutôt que faux.
+
+### 🎯 La terre du kunai
+
+Prendre un kunai te crache de la **terre au visage** : des éclaboussures de
+boue collées aux **bords** de l'écran — le centre reste lisible, on est gêné,
+pas aveuglé. Contrairement à la fumée, elle n'a **pas de minuteur** : elle
+colle jusqu'au 🍵 **thé**, qui la lave avec le reste.
+
+### 📤 En ligne, les slots se vident aussi en tête
+
+En tête de course, un sort ciblé partait… nulle part, et on te **rendait** le
+rouleau. Résultat : impossible de vider ses mains, la file de deux restait
+pleine à jamais. Désormais, comme à l'entraînement, le sort part dans le vide
+et le **slot se libère** — c'est la file qui compte, pas le sort perdu.
 
 On ramasse des rouleaux sur la piste (environ un toutes les **7 secondes**).
 **Tous les rouleaux se ressemblent** : on ne sait ce qu'on a décroché qu'une
