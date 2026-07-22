@@ -5,9 +5,6 @@
 > Incarne **Yasuke**, le samouraï africain d'Oda Nobunaga, et fonce vers le
 > torii sacré avant ton rival.
 
-Jeu créé en 2 jours, en duo (un chef de projet de 15 ans 🥷 + un co-pilote),
-avec Claude Code comme développeur.
-
 ---
 
 ## 🎮 Le jeu
